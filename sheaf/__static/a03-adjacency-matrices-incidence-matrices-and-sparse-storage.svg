@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure A03 — one edge across adjacency, incidence and sparse storage</title>
+  <desc id="d">Four panels tracking TF1→GeneA: graph arrow, adjacency cell, incidence column, and sparse COO storage with the scaling argument.</desc>
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="150" cy="60" r="230" fill="#4dd7ff" opacity="0.05"/><circle cx="820" cy="430" r="250" fill="#a78bfa" opacity="0.05"/>
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE A03 &#183; ADJACENCY, INCIDENCE &amp; SPARSE STORAGE</text>
+  <text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">One regulatory edge, four equivalent storage forms</text>
+
+  <!-- (a) GRAPH -->
+  <g>
+    <rect x="40" y="82" width="244" height="248" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="82" width="244" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="110" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/><text x="64" y="115" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Graph arrow</text><text x="86" y="124" fill="#8a99ad" font-size="12">direction = the claim</text>
+    <line x1="100" y1="180" x2="200" y2="180" stroke="#fbbf24" stroke-width="3.5" marker-end="url(#ar)"/>
+    <circle cx="100" cy="180" r="17" fill="#4dd7ff" stroke="#0a1322" stroke-width="2"/><text x="100" y="214" fill="#9fe0ff" font-size="11" text-anchor="middle">TF1</text>
+    <circle cx="200" cy="180" r="15" fill="#e7a13a" stroke="#0a1322" stroke-width="2"/><text x="200" y="212" fill="#fbd089" font-size="11" text-anchor="middle">GeneA</text>
+    <text x="150" y="168" fill="#fde68a" font-size="12" text-anchor="middle">0.92</text>
+    <line x1="100" y1="180" x2="150" y2="262" stroke="#5b7fa8" stroke-width="2" marker-end="url(#ar)"/><circle cx="150" cy="270" r="13" fill="#3f74c4" stroke="#0a1322" stroke-width="2"/><text x="150" y="298" fill="#9fb4cc" font-size="10.5" text-anchor="middle">GeneB</text>
+    <line x1="150" y1="270" x2="232" y2="262" stroke="#5b7fa8" stroke-width="2" marker-end="url(#ar)"/><circle cx="240" cy="258" r="13" fill="#244f7f" stroke="#0a1322" stroke-width="2"/><text x="244" y="288" fill="#9fb4cc" font-size="10.5">State</text>
+    <text x="162" y="318" fill="#8a99ad" font-size="11.5" text-anchor="middle">TF1 regulates GeneA, not the reverse.</text>
+  </g>
+
+  <!-- (b) ADJACENCY -->
+  <g>
+    <rect x="326" y="82" width="244" height="248" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="326" y="82" width="244" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="350" cy="110" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/><text x="350" y="115" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="372" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Adjacency A[target, source]</text><text x="372" y="124" fill="#8a99ad" font-size="12">one edge = one cell</text>
+    <g font-size="9" text-anchor="middle" fill="#7f93a8">
+      <text x="430" y="150">TF1</text><text x="462" y="150">GA</text><text x="494" y="150">GB</text><text x="526" y="150">St</text>
+    </g>
+    <g transform="translate(414,156)">
+      <!-- 4x4 grid; lit: (1,0)=.92 highlighted, (2,0)=.56, (3,2)=.78 -->
+      <g font-size="10" text-anchor="end" fill="#9fb4cc"><text x="-4" y="14">TF1</text><text x="-4" y="46">GA</text><text x="-4" y="78">GB</text><text x="-4" y="110">St</text></g>
+      <!-- row0 TF1 -->
+      <rect x="0" y="2" width="28" height="28" rx="3" fill="#0c1622"/><rect x="32" y="2" width="28" height="28" rx="3" fill="#0c1622"/><rect x="64" y="2" width="28" height="28" rx="3" fill="#0c1622"/><rect x="96" y="2" width="28" height="28" rx="3" fill="#0c1622"/>
+      <!-- row1 GeneA: col0 .92 highlighted -->
+      <rect x="0" y="34" width="28" height="28" rx="3" fill="#fbbf24"/><text x="14" y="52" fill="#3a2a08" font-size="11" text-anchor="middle" font-weight="700">.92</text><rect x="32" y="34" width="28" height="28" rx="3" fill="#0c1622"/><rect x="64" y="34" width="28" height="28" rx="3" fill="#0c1622"/><rect x="96" y="34" width="28" height="28" rx="3" fill="#0c1622"/>
+      <!-- row2 GeneB: col0 .56 -->
+      <rect x="0" y="66" width="28" height="28" rx="3" fill="#2f6fb0"/><text x="14" y="84" fill="#06101f" font-size="10" text-anchor="middle">.56</text><rect x="32" y="66" width="28" height="28" rx="3" fill="#0c1622"/><rect x="64" y="66" width="28" height="28" rx="3" fill="#0c1622"/><rect x="96" y="66" width="28" height="28" rx="3" fill="#0c1622"/>
+      <!-- row3 State: col2 .78 -->
+      <rect x="0" y="98" width="28" height="28" rx="3" fill="#0c1622"/><rect x="32" y="98" width="28" height="28" rx="3" fill="#0c1622"/><rect x="64" y="98" width="28" height="28" rx="3" fill="#2c7fb8"/><text x="78" y="116" fill="#06101f" font-size="10" text-anchor="middle">.78</text><rect x="96" y="98" width="28" height="28" rx="3" fill="#0c1622"/>
+    </g>
+    <text x="448" y="300" fill="#fde68a" font-size="11.5" text-anchor="middle">A[GeneA, TF1] = 0.92</text>
+    <text x="448" y="318" fill="#8a99ad" font-size="11" text-anchor="middle">13/16 cells zero — 81% sparse.</text>
+  </g>
+
+  <!-- (c) INCIDENCE -->
+  <g>
+    <rect x="612" y="82" width="244" height="248" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="612" y="82" width="244" height="4" rx="2" fill="#fbbf24"/>
+    <circle cx="636" cy="110" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/><text x="636" y="115" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="658" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Incidence B (±1 columns)</text><text x="658" y="124" fill="#8a99ad" font-size="12">−1 source, +1 target</text>
+    <g font-size="9" text-anchor="middle" fill="#7f93a8"><text x="704" y="150">e0</text><text x="736" y="150">e1</text><text x="768" y="150">e2</text></g>
+    <g transform="translate(688,156)">
+      <g font-size="10" text-anchor="end" fill="#9fb4cc"><text x="-4" y="14">TF1</text><text x="-4" y="46">GA</text><text x="-4" y="78">GB</text><text x="-4" y="110">St</text></g>
+      <!-- e0: -1 TF1, +1 GeneA ; e1: -1 TF1, +1 GeneB ; e2: -1 GeneB, +1 State -->
+      <rect x="0" y="2" width="28" height="28" rx="3" fill="#fb7185"/><text x="14" y="20" fill="#3a0b14" font-size="11" text-anchor="middle" font-weight="700">−1</text><rect x="32" y="2" width="28" height="28" rx="3" fill="#fb7185"/><text x="46" y="20" fill="#3a0b14" font-size="11" text-anchor="middle" font-weight="700">−1</text><rect x="64" y="2" width="28" height="28" rx="3" fill="#0c1622"/>
+      <rect x="0" y="34" width="28" height="28" rx="3" fill="#34d399"/><text x="14" y="52" fill="#06281c" font-size="11" text-anchor="middle" font-weight="700">+1</text><rect x="32" y="34" width="28" height="28" rx="3" fill="#0c1622"/><rect x="64" y="34" width="28" height="28" rx="3" fill="#0c1622"/>
+      <rect x="0" y="66" width="28" height="28" rx="3" fill="#0c1622"/><rect x="32" y="66" width="28" height="28" rx="3" fill="#34d399"/><text x="46" y="84" fill="#06281c" font-size="11" text-anchor="middle" font-weight="700">+1</text><rect x="64" y="66" width="28" height="28" rx="3" fill="#fb7185"/><text x="78" y="84" fill="#3a0b14" font-size="11" text-anchor="middle" font-weight="700">−1</text>
+      <rect x="0" y="98" width="28" height="28" rx="3" fill="#0c1622"/><rect x="32" y="98" width="28" height="28" rx="3" fill="#0c1622"/><rect x="64" y="98" width="28" height="28" rx="3" fill="#34d399"/><text x="78" y="116" fill="#06281c" font-size="11" text-anchor="middle" font-weight="700">+1</text>
+    </g>
+    <text x="734" y="302" fill="#8a99ad" font-size="11" text-anchor="middle">column e0 = [−1, +1, 0, 0]ᵀ</text>
+    <text x="734" y="320" fill="#8a99ad" font-size="11" text-anchor="middle">B Bᵀ = D − A (the Laplacian).</text>
+  </g>
+
+  <!-- (d) SPARSE + SCALING -->
+  <g>
+    <rect x="40" y="342" width="816" height="150" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="342" width="816" height="4" rx="2" fill="#fb7185"/>
+    <circle cx="64" cy="370" r="13" fill="#3a0b14" stroke="#fb7185" stroke-width="1"/><text x="64" y="375" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="86" y="366" fill="#cfe0f0" font-size="14" font-weight="700">Sparse storage — store only the nonzeros</text>
+    <text x="100" y="404" fill="#9fb4cc" font-size="12.5" font-family="'Cascadia Mono',monospace">COO edge_index = [[0, 0, 2],</text>
+    <text x="100" y="424" fill="#9fb4cc" font-size="12.5" font-family="'Cascadia Mono',monospace">                  [1, 2, 3]]   (row0 = source, row1 = target)</text>
+    <text x="100" y="448" fill="#7f93a8" font-size="12.5" font-family="'Cascadia Mono',monospace">edge_attr = [0.92, 0.56, 0.78]</text>
+    <g transform="translate(540,378)">
+      <rect x="0" y="0" width="120" height="40" rx="7" fill="#3a1420"/><text x="60" y="18" fill="#fda4b0" font-size="12" text-anchor="middle">dense |V|²</text><text x="60" y="33" fill="#fda4b0" font-size="13" text-anchor="middle" font-weight="700">1.6 GB</text>
+      <text x="138" y="26" fill="#8a99ad" font-size="16">→</text>
+      <rect x="158" y="0" width="120" height="40" rx="7" fill="#0f3a2a"/><text x="218" y="18" fill="#7fe7c0" font-size="12" text-anchor="middle">sparse COO</text><text x="218" y="33" fill="#7fe7c0" font-size="13" text-anchor="middle" font-weight="700">1.2 MB</text>
+    </g>
+    <text x="660" y="448" fill="#34d399" font-size="13" text-anchor="middle" font-weight="700">~1300× smaller</text>
+    <text x="660" y="464" fill="#8a99ad" font-size="11" text-anchor="middle">(20k genes, 50k edges)</text>
+  </g>
+
+  <line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="538" font-size="13" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure A03. </tspan><tspan>The five storage forms are views of one object — trace a single edge through all of them. </tspan><tspan fill="#9fe0ff" font-weight="700">(a)</tspan><tspan> The arrow TF1→GeneA</tspan>
+    <tspan x="40" dy="21">carries the biology; its direction is the claim. </tspan><tspan fill="#c4b5fd" font-weight="700">(b)</tspan><tspan> In the adjacency matrix it is the single cell A[GeneA, TF1] = 0.92 (row = target, column = source);</tspan>
+    <tspan x="40" dy="21">transpose it and the model predicts the target regulates the factor. </tspan><tspan fill="#fde68a" font-weight="700">(c)</tspan><tspan> The incidence matrix makes each edge a column with −1 at the source and +1</tspan>
+    <tspan x="40" dy="21">at the target, recording direction by sign. </tspan><tspan fill="#fda4b0" font-weight="700">(d)</tspan><tspan> Almost every cell is zero, so only the nonzeros are stored (COO/CSR): at genome scale sparse is ~1300× smaller.</tspan>
+  </text>
+</svg>

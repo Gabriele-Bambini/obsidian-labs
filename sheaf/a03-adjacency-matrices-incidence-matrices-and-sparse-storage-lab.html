@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A03 · Graph ↔ adjacency ↔ incidence ↔ sparse</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  const frac=x=>x-Math.floor(x);
+  const NAME=["TF1","GeneA","GeneB","State"];
+  function model(n,density,undirected,selfloop){
+    const names=[]; for(let i=0;i<n;i++)names.push(i<4?NAME[i]:"G"+i);
+    const E=[];
+    const base=[[0,1,0.92],[0,2,0.56],[2,3,0.78]];
+    for(const e of base) if(e[0]<n&&e[1]<n) E.push({s:e[0],t:e[1],w:e[2]});
+    for(let i=4;i<n;i++){ if(frac(i*0.61+0.2)<density){ const s=(i%3===0)?i-1:0; E.push({s:s,t:i,w:0.4+0.5*frac(i*0.7)}); } }
+    const A=Array.from({length:n},()=>new Float64Array(n));
+    for(const e of E){ A[e.t][e.s]=e.w; if(undirected)A[e.s][e.t]=e.w; }
+    if(selfloop)for(let i=0;i<n;i++)A[i][i]=Math.max(A[i][i],1);
+    let nnz=0; for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(A[r][c]!==0)nnz++;
+    return {names,E,A,nnz};
+  }
+  function cyl(api,a,b,r,col){const T=api.THREE,dir=b.clone().sub(a),len=dir.length();
+    const m=new T.Mesh(new T.CylinderGeometry(r,r,len,9),new T.MeshStandardMaterial({color:col,roughness:0.45,emissive:col.clone().multiplyScalar(0.25),emissiveIntensity:0.3}));
+    m.position.copy(a).add(b).multiplyScalar(0.5);m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());return m;}
+  function pos3(sp,x,y,z){sp.position.set(x,y,z);return sp;}
+  function fmtB(b){return b>=1e9?(b/1e9).toFixed(1)+" GB":b>=1e6?(b/1e6).toFixed(1)+" MB":b>=1e3?(b/1e3).toFixed(1)+" KB":b+" B";}
+  let scene={};
+
+  function build(api){
+    const T=api.THREE, s=api.state, n=Math.round(s.nodes);
+    const M=model(n,s.density,s.directed===1,s.selfloop===1), A=M.A, E=M.E, names=M.names;
+    const sel=s.sel||{};
+    const gG=api.group("graph"), eG=api.group("edges"), mG=api.group("matrix"), lG=api.group("labels");
+    const gx=-3.4, R=1.2+n*0.12, gpos=[];
+    for(let i=0;i<n;i++){const a=-Math.PI/2+i/n*Math.PI*2;gpos.push([gx+Math.cos(a)*R, 0.2, Math.sin(a)*R]);}
+    for(const e of E){
+      const a=new T.Vector3(gpos[e.s][0],gpos[e.s][1],gpos[e.s][2]), b=new T.Vector3(gpos[e.t][0],gpos[e.t][1],gpos[e.t][2]);
+      const isSel=sel.edge&&sel.edge.s===e.s&&sel.edge.t===e.t;
+      const cy=cyl(api,a,b,0.03+0.05*e.w,isSel?new T.Color("#fbbf24"):new T.Color("#5b7fa8")); if(isSel)cy.material.emissiveIntensity=0.85;
+      api.pick(cy,{edge:{s:e.s,t:e.t,w:e.w}}); eG.add(cy);
+      const dir=b.clone().sub(a).normalize();const head=new T.Mesh(new T.ConeGeometry(0.1,0.22,10),new T.MeshBasicMaterial({color:isSel?0xfbbf24:0x8fb4d8}));
+      head.position.copy(b).addScaledVector(dir,-0.24);head.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);eG.add(head);
+    }
+    for(let i=0;i<n;i++){const isTF=i===0;const col=isTF?new T.Color("#4dd7ff"):api.ramp(i/n,"#3b6fd6","#a78bfa");
+      const m=new T.Mesh(new T.SphereGeometry(isTF?0.26:0.2,20,20),new T.MeshStandardMaterial({color:col,roughness:0.4,metalness:0.1,emissive:col.clone().multiplyScalar(0.3),emissiveIntensity:0.3}));
+      m.position.set(gpos[i][0],gpos[i][1],gpos[i][2]);gG.add(m);
+      const lb=api.label(names[i],isTF?"#9fe0ff":"#cfe0f0",0.44);lb.position.set(gpos[i][0],gpos[i][1]+0.42,gpos[i][2]);lG.add(lb);}
+    gG.add(pos3(api.bigLabel("graph  G","#9fb4cc",1.6),gx,2.2,0));
+    // matrix (right)
+    const incidence=(s.mode==="incidence");
+    const cols=incidence?Math.max(1,E.length):n, rows=n;
+    const step=Math.min(0.62, 5.0/Math.max(rows,cols)), mx=1.4, mz=-(rows-1)*step/2;
+    const tileGeo=new T.BoxGeometry(step*0.86,0.12,step*0.86), liftGeo=new T.BoxGeometry(step*0.86,0.46,step*0.86);
+    const cellVal=(r,c)=>{ if(!incidence) return A[r][c]; const e=E[c]; return e?(e.s===r?-1:(e.t===r?1:0)):0; };
+    for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+      const v=cellVal(r,c), nz=v!==0; let col,emis=null,ei=0,lift=0;
+      if(!incidence){ col=nz?api.ramp(Math.min(1,Math.abs(v)),"#10243f","#4dd7ff"):new T.Color("#0c1622"); if(nz)lift=0.16+0.3*Math.abs(v); }
+      else { col=v>0?new T.Color("#34d399"):(v<0?new T.Color("#fb7185"):new T.Color("#0c1622")); if(nz)lift=0.3; }
+      const selCell=sel.cell&&sel.cell.r===r&&sel.cell.c===c, selByEdge=!incidence&&sel.edge&&sel.edge.t===r&&sel.edge.s===c;
+      if(selCell||selByEdge){emis=new T.Color("#fbbf24");ei=0.85;lift=Math.max(lift,0.5);} else if(nz){emis=col;ei=0.35;}
+      const mesh=new T.Mesh(lift>0?liftGeo:tileGeo,new T.MeshStandardMaterial({color:col,roughness:0.5,emissive:emis||new T.Color("#000000"),emissiveIntensity:ei}));
+      mesh.position.set(mx+c*step, lift>0?lift/2:0, mz+r*step);
+      api.pick(mesh,{cell:{r,c,v}}); mG.add(mesh);
+      if(nz&&rows<=8&&cols<=8){const nl=api.flatNum(incidence?(v>0?"+1":"−1"):v.toFixed(2),"#06101f",step*0.7);nl.position.set(mesh.position.x,mesh.position.y+(lift>0?0.24:0.08),mesh.position.z);mG.add(nl);}
+    }
+    for(let i=0;i<n;i++){const rl=api.label(names[i].slice(0,5),"#9fb4cc",0.4);rl.position.set(mx-step*0.95,0.12,mz+i*step);lG.add(rl);}
+    if(!incidence){for(let i=0;i<n;i++){const cl=api.label(names[i].slice(0,5),"#7f93a8",0.38);cl.position.set(mx+i*step,0.12,mz-step*0.95);lG.add(cl);}}
+    else {for(let c=0;c<cols;c++){const cl=api.label("e"+c,"#7f93a8",0.36);cl.position.set(mx+c*step,0.12,mz-step*0.95);lG.add(cl);}}
+    mG.add(pos3(api.bigLabel(incidence?"incidence  B  (|V|×|E|)":"adjacency  A[target, source]","#cfe0f0",4.4),mx+(cols-1)*step/2,0.06,mz+rows*step+0.5));
+    if(!incidence)mG.add(pos3(api.bigLabel("sources →","#7f93a8",1.5),mx+(cols-1)*step/2,0.06,mz-step*1.8));
+    scene={n,E:E.length,edges:E,nnz:M.nnz,A,names,rows,cols};
+    const dens=(M.nnz/(n*n)*100), denseB=n*n*4, sparseB=M.nnz*12;
+    let badge,formula,insight,state;
+    if(s.mode==="adjacency"){badge="Adjacency A · "+M.nnz+" nonzeros";
+      formula="A[target, source] = weight · "+(s.directed?"undirected (symmetric)":"directed")+(s.selfloop?" · +self-loops":"")+".";
+      insight="The same edge lives in two places: an arrow TF1→GeneA on the graph, and one cell A[GeneA, TF1] in the matrix. Incoming-row convention — row = target, column = source. Click an edge or a cell; they light up together.";
+      state="Density "+dens.toFixed(1)+"% — "+(n*n-M.nnz)+" of "+(n*n)+" cells are zero. Direction is the cell's address; transpose it and the biology inverts.";}
+    else if(s.mode==="incidence"){badge="Incidence B · "+E.length+" edge columns";
+      formula="B[source, e] = −1, B[target, e] = +1 · shape |V|×|E|.";
+      insight="Each edge becomes a column with one −1 (source, rose) and one +1 (target, green). The sign records direction explicitly; B Bᵀ = D − A recovers the graph Laplacian.";
+      state=E.length+" edge columns — every column has exactly one source and one target.";}
+    else {badge="Sparsity · "+dens.toFixed(1)+"% full";
+      formula="dense = |V|²·4B = "+fmtB(denseB)+" · sparse(COO) = nnz·12B = "+fmtB(sparseB)+".";
+      insight="Most of A is empty. Dense storage costs |V|² no matter what; sparse stores only nonzeros. At 20k genes dense ≈ 1.6 GB, a 50k-edge GRN ≈ 1.2 MB — ~1300× smaller. Sparse is mandatory, not an optimization.";
+      state="Here dense "+fmtB(denseB)+" vs sparse "+fmtB(sparseB)+" → "+(denseB/Math.max(1,sparseB)).toFixed(1)+"× smaller.";}
+    return {badge,formula,insight,state,
+      metrics:{nodes:n,edges:E.length,nnz:M.nnz,density:dens.toFixed(1)+"%"},
+      focus:{center:[-0.6,0.5,0],radius:Math.min(24,Math.max(11,n*0.9+6))}};
+  }
+
+  MathLab.create({
+    id:"a03", kind:"graph-matrix",
+    eyebrow:"Block A · Adjacency, incidence & sparse storage", title:"A03 · Graph ↔ matrix, one edge tracked",
+    subtitle:"The same regulatory edge is an arrow, an adjacency cell A[target,source], an incidence column, and a sparse entry. Click an edge or a cell to see them light up together.",
+    selectedLabel:"Selected", selectedHint:"Click an edge or a matrix cell — they link.",
+    modes:[{value:"adjacency",label:"Adjacency A[target,source]"},{value:"incidence",label:"Incidence B (±1 columns)"},{value:"sparsity",label:"Sparsity & storage cost"}],
+    params:[
+      {key:"nodes",label:"nodes",min:4,max:10,step:1,value:4},
+      {key:"density",label:"extra edge density",min:0,max:1,step:0.1,value:0.6,fmt:v=>v.toFixed(1)},
+      {key:"directed",label:"orientation",min:0,max:1,step:1,value:0,fmt:v=>v?"undirected":"directed",modes:["adjacency","sparsity"]},
+      {key:"selfloop",label:"self-loops (A+I)",min:0,max:1,step:1,value:0,fmt:v=>v?"on":"off",modes:["adjacency","sparsity"]}
+    ],
+    metrics:[{key:"nodes",label:"Nodes |V|",accent:"cyan"},{key:"edges",label:"Edges |E|",accent:"violet"},
+      {key:"nnz",label:"Nonzeros",accent:"amber"},{key:"density",label:"Density",accent:"rose"}],
+    layers:[{group:"edges",label:"Edges"},{group:"matrix",label:"Matrix"},{group:"labels",label:"Labels"}],
+    primary:{label:"Trace strongest edge",on:api=>{const sc=scene;if(sc.edges&&sc.edges.length){const best=sc.edges.reduce((a,b)=>b.w>a.w?b:a);api.state.sel={edge:{s:best.s,t:best.t,w:best.w}};api.setSelected("strongest "+sc.names[best.s]+"→"+sc.names[best.t]+" (w="+best.w.toFixed(2)+") = A["+sc.names[best.t]+","+sc.names[best.s]+"]");}}},
+    secondary:{label:"Toggle orientation",on:api=>{if(api.state.mode!=="incidence")api.setParam("directed",api.state.directed?0:1);}},
+    defaultCam:{theta:-0.5,phi:0.7,r:13},
+    hint:'<b>cyan</b>=adjacency weight · <span class="g">green +1</span>/<span class="r">rose −1</span>=incidence · <span class="a">amber</span>=linked edge↔cell · empty=structural zero.',
+    onParam(api){api.frame([-0.6,0.5,0],Math.min(24,Math.max(11,Math.round(api.state.nodes)*0.9+6)));},
+    onSelect(api,d){const sc=scene;
+      if(d.edge){api.setSelected("edge "+sc.names[d.edge.s]+"→"+sc.names[d.edge.t]+" (w="+d.edge.w.toFixed(2)+")  =  A["+sc.names[d.edge.t]+", "+sc.names[d.edge.s]+"] = "+d.edge.w.toFixed(2));}
+      else if(d.cell){const v=d.cell.v;
+        if(sc.cols===sc.n && v!==0) api.setSelected("A["+sc.names[d.cell.r]+", "+sc.names[d.cell.c]+"] = "+v.toFixed(2)+"  →  edge "+sc.names[d.cell.c]+"→"+sc.names[d.cell.r]);
+        else if(v!==0) api.setSelected("B["+sc.names[d.cell.r]+", e"+d.cell.c+"] = "+(v>0?"+1 (target)":"−1 (source)"));
+        else api.setSelected("zero cell — no edge here (structural sparsity).");}},
+    build,
+    snapshot(s){const sc=scene;return {mode:s.mode,nodes:Math.round(s.nodes),edges:sc.E,nnz:sc.nnz,directed:Math.round(s.directed)};}
+  });
+})();
+</script>
+</body>
+</html>

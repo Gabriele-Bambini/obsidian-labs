@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A05 · Graph Laplacian — energy, smoothing, spectrum</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  function jacobi(Ain,n){
+    const A=Ain.map(r=>r.slice()), V=Array.from({length:n},(_,i)=>Array.from({length:n},(_,j)=>i===j?1:0));
+    for(let sweep=0;sweep<60;sweep++){
+      let off=0; for(let p=0;p<n;p++)for(let q=p+1;q<n;q++)off+=A[p][q]*A[p][q];
+      if(off<1e-12)break;
+      for(let p=0;p<n;p++)for(let q=p+1;q<n;q++){
+        if(Math.abs(A[p][q])<1e-14)continue;
+        const th=(A[q][q]-A[p][p])/(2*A[p][q]); const t=Math.sign(th||1)/(Math.abs(th)+Math.sqrt(th*th+1));
+        const c=1/Math.sqrt(t*t+1), sN=t*c;
+        for(let i=0;i<n;i++){const aip=A[i][p],aiq=A[i][q];A[i][p]=c*aip-sN*aiq;A[i][q]=sN*aip+c*aiq;}
+        for(let i=0;i<n;i++){const api=A[p][i],aqi=A[q][i];A[p][i]=c*api-sN*aqi;A[q][i]=sN*api+c*aqi;}
+        for(let i=0;i<n;i++){const vip=V[i][p],viq=V[i][q];V[i][p]=c*vip-sN*viq;V[i][q]=sN*vip+c*viq;}
+      }
+    }
+    const val=[],idx=[]; for(let i=0;i<n;i++){val.push(A[i][i]);idx.push(i);}
+    idx.sort((a,b)=>val[a]-val[b]);
+    return {val:idx.map(i=>val[i]), vec:idx.map(i=>V.map(r=>r[i]))};
+  }
+  const NAMES=["TF1","GeneA","GeneB","Hub","MYC","CDK2","E2F1","PCNA","G8","G9"];
+  function graph(s){
+    const sz=Math.round(s.moduleSize), n=2*sz; const pos=[],comm=[];
+    for(let m=0;m<2;m++)for(let i=0;i<sz;i++){const a=i/sz*Math.PI*2;
+      pos.push([(m?3.0:-3.0)+Math.cos(a)*1.3, 0, Math.sin(a)*1.3]); comm.push(m);}
+    const A=Array.from({length:n},()=>new Float64Array(n));
+    const add=(i,j,w)=>{A[i][j]=w;A[j][i]=w;};
+    for(let m=0;m<2;m++){const off=m*sz;for(let i=0;i<sz;i++)for(let j=i+1;j<sz;j++)add(off+i,off+j,0.8);}
+    add(sz-1, sz, 0.22);
+    const D=new Float64Array(n); for(let i=0;i<n;i++){let d=0;for(let j=0;j<n;j++)d+=A[i][j];D[i]=d;}
+    const L=Array.from({length:n},(_,i)=>Array.from({length:n},(_,j)=>(i===j?D[i]:0)-A[i][j]));
+    return {n,sz,pos,comm,A,D,L};
+  }
+  function Lmat(g,type){const n=g.n;
+    if(type===0)return g.L;
+    const M=Array.from({length:n},()=>new Float64Array(n));
+    for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+      if(type===1){const di=g.D[i]||1,dj=g.D[j]||1; M[i][j]=(i===j?1:0)-g.A[i][j]/Math.sqrt(di*dj);}
+      else {const di=g.D[i]||1; M[i][j]=(i===j?1:0)-g.A[i][j]/di;}
+    } return M;
+  }
+  let scene={}, SMOOTH={sig:"",x:null,steps:0};
+  function baseSignal(g,rough){const x=new Float64Array(g.n);
+    for(let i=0;i<g.n;i++){const hi=g.comm[i]===0?0.85:0.25; x[i]=hi + rough*0.6*((i%2)?1:-1);} return x;}
+  function energy(g,x){let E=0,emax=0;const per={};
+    for(let i=0;i<g.n;i++)for(let j=i+1;j<g.n;j++)if(g.A[i][j]>0){const e=g.A[i][j]*(x[i]-x[j])*(x[i]-x[j]);per[i+"_"+j]=e;E+=e;if(e>emax)emax=e;}
+    return {E,emax,per};}
+  function build(api){
+    const T=api.THREE,s=api.state,g=graph(s);scene.g=g;
+    const eig=jacobi(g.L.map(r=>Array.from(r)),g.n);
+    const lam2=eig.val[1]||0, comps=eig.val.filter(v=>v<1e-6).length;
+    const sig=s.mode+"|"+g.n+"|"+s.rough.toFixed(2);
+    let x, modeLam=null, steps=0;
+    if(s.mode==="spectral"){
+      const fe=jacobi(Lmat(g,Math.round(s.lapType)).map(r=>Array.from(r)),g.n);
+      const k=Math.min(Math.round(s.freq),g.n-1); const v=fe.vec[k]; let mx=Math.max.apply(null,v.map(Math.abs))||1;
+      x=v.map(z=>z/mx*0.7+0.5); modeLam=fe.val[k];
+    } else if(s.mode==="smoothing"){
+      if(SMOOTH.sig!==sig){SMOOTH={sig,x:Array.from(baseSignal(g,s.rough)),steps:0};}
+      x=SMOOTH.x; steps=SMOOTH.steps;
+    } else { x=baseSignal(g,s.rough); }
+    const en=energy(g,x);
+    const nG=api.group("nodes"),eG=api.group("edges"),lG=api.group("labels");
+    const mean=x.reduce((a,b)=>a+b,0)/g.n;
+    for(let i=0;i<g.n;i++)for(let j=i+1;j<g.n;j++)if(g.A[i][j]>0){
+      const a=new T.Vector3(g.pos[i][0],0.1+x[i]*2,g.pos[i][2]), b=new T.Vector3(g.pos[j][0],0.1+x[j]*2,g.pos[j][2]);
+      const e=en.per[i+"_"+j]||0, t=en.emax>0?e/en.emax:0;
+      const col=api.ramp(t,"#244055","#ff4d6d"); const d=b.clone().sub(a),Ln=d.length();
+      const m=new T.Mesh(new T.CylinderGeometry(0.03+0.07*t,0.03+0.07*t,Ln,9),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.3+0.7*t),emissiveIntensity:0.3+0.6*t,roughness:0.4}));
+      m.position.copy(a).add(b).multiplyScalar(0.5);m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.clone().normalize());
+      api.pick(m,{edge:{i,j,w:g.A[i][j],e}});eG.add(m);
+    }
+    for(let i=0;i<g.n;i++){const v=x[i], dv=v-mean;
+      const col=dv>=0?api.ramp(Math.min(1,dv*2.2),"#1b2a3a","#4dd7ff"):api.ramp(Math.min(1,-dv*2.2),"#1b2a3a","#fb7185");
+      const y=0.1+v*2;
+      const m=new T.Mesh(new T.SphereGeometry(0.22,22,22),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),emissiveIntensity:0.45,roughness:0.35}));
+      m.position.set(g.pos[i][0],y,g.pos[i][2]);nG.add(m);
+      const stem=new T.Mesh(new T.CylinderGeometry(0.012,0.012,Math.max(0.02,y),6),new T.MeshBasicMaterial({color:0x24384a}));stem.position.set(g.pos[i][0],y/2,g.pos[i][2]);nG.add(stem);
+      const lb=api.label(NAMES[i]+" "+v.toFixed(2),"#cfe0f0",0.36);lb.position.set(g.pos[i][0],y+0.34,g.pos[i][2]);lG.add(lb);
+    }
+    [[-3,0],[3,1]].forEach(function(p){const cx=p[0],m=p[1];const r=new T.Mesh(new T.RingGeometry(1.55,1.7,40),new T.MeshBasicMaterial({color:m?0x3a2a48:0x143040,side:T.DoubleSide,transparent:true,opacity:0.5}));r.rotation.x=-Math.PI/2;r.position.set(cx,0.01,0);eG.add(r);});
+    scene.x=x;
+    const lapName=["standard L = D−A","symmetric Lₛym","random-walk L_rw"][Math.round(s.lapType)];
+    let insight,state,badge;
+    if(s.mode==="energy"){badge="Energy E(x) = "+en.E.toFixed(3);
+      insight="The Laplacian is a disagreement meter: every edge contributes w·(xᵢ−xⱼ)². Smooth signals (neighbors agree) cost almost nothing; a strong edge spanning very different values lights up red. Energy asks 'is this signal consistent with the graph?' — not 'is it biologically true'.";
+      state="Hottest edges are the biological surprises — an activator high while its target is low (repressor, lag, or post-transcriptional block). Raise 'intra disagreement' to roughen the signal and watch E climb.";}
+    else if(s.mode==="smoothing"){badge="Smoothing step "+steps+" · E="+en.E.toFixed(3);
+      insight="One smoothing step x ← x − η·Lx pulls every node toward its neighbors. Repeat and the signal flows downhill in energy toward the constant vector (eigenvalue 0) — the DC / housekeeping mode. This is what a GCN layer does each pass; too many steps = oversmoothing (A12).";
+      state="Press 'Smooth one step' to diffuse. η="+s.eta.toFixed(2)+". Energy → 0 as the signal flattens; sharp biology (boundaries, repression) is erased along the way.";}
+    else {badge="Spectral mode k="+Math.round(s.freq)+" · λ="+(modeLam||0).toFixed(3);
+      insight="Eigenvectors of L are graph-frequency modes (the graph Fourier basis). k=0 is the flat constant (λ=0). k=1 is the Fiedler vector — the smoothest split, blue vs rose = the two modules. Higher k oscillates faster. An eigenvector's energy equals its eigenvalue.";
+      state=lapName+" · λ range "+(Math.round(s.lapType)===0?"[0, λmax]":"[0, 2]")+". k=1 (Fiedler) cuts growth-vs-proliferation; λ₂="+lam2.toFixed(3)+" is algebraic connectivity (small = bottleneck).";}
+    return {badge,
+      formula:"E(x) = xᵀLx = Σ_edges w_ij (xᵢ − xⱼ)²   ·   "+lapName,
+      insight,state,
+      metrics:{E:en.E.toFixed(3),lam2:lam2.toFixed(3),emax:en.emax.toFixed(3),extra:s.mode==="spectral"?(modeLam||0).toFixed(3):(s.mode==="smoothing"?("step "+steps):(comps+" comp"))},
+      focus:{center:[0,1.0,0],radius:12}};
+  }
+  function stepSmooth(api){const g=scene.g,s=api.state;if(!g)return;
+    if(SMOOTH.sig!==(s.mode+"|"+g.n+"|"+s.rough.toFixed(2)))return;
+    const x=SMOOTH.x,n=g.n,nx=new Float64Array(n);
+    for(let i=0;i<n;i++){let lx=0;for(let j=0;j<n;j++)lx+=g.L[i][j]*x[j];nx[i]=x[i]-s.eta*lx;}
+    SMOOTH.x=Array.from(nx);SMOOTH.steps++;
+  }
+  MathLab.create({
+    id:"a05", kind:"laplacian",
+    eyebrow:"Block A · Graph Laplacians & spectral operators", title:"A05 · The Laplacian as a disagreement meter",
+    subtitle:"A biological signal sits on the graph (node height = value). Each edge glows with its energy w·(xᵢ−xⱼ)². Smooth it, or read the graph-Fourier modes.",
+    selectedLabel:"Edge", selectedHint:"Click an edge to read its energy.",
+    modes:[{value:"energy",label:"Energy  xᵀLx"},{value:"smoothing",label:"Smoothing  x←x−ηLx"},{value:"spectral",label:"Spectral modes (Fourier)"}],
+    params:[
+      {key:"moduleSize",label:"module size",min:2,max:5,step:1,value:3},
+      {key:"rough",label:"intra disagreement",min:0,max:1,step:0.1,value:0.2,fmt:v=>v.toFixed(1),modes:["energy","smoothing"]},
+      {key:"eta",label:"step size η",min:0.05,max:0.5,step:0.05,value:0.20,fmt:v=>v.toFixed(2),modes:["smoothing"]},
+      {key:"freq",label:"mode k",min:0,max:9,step:1,value:1,modes:["spectral"]},
+      {key:"lapType",label:"Laplacian",min:0,max:2,step:1,value:0,fmt:v=>["standard","symmetric","random-walk"][v],modes:["spectral"]}
+    ],
+    metrics:[{key:"E",label:"Energy E(x)",accent:"rose"},{key:"lam2",label:"λ₂ (alg. conn.)",accent:"cyan"},
+      {key:"emax",label:"Max edge E",accent:"amber"},{key:"extra",label:"Mode / steps",accent:"violet"}],
+    layers:[{group:"edges",label:"Edges (energy)"},{group:"nodes",label:"Signal"},{group:"labels",label:"Labels"}],
+    primary:{label:"Smooth one step",on:api=>{if(api.state.mode!=="smoothing"){const st=document.getElementById('ml-mode');st.value="smoothing";st.dispatchEvent(new Event('change'));} stepSmooth(api);}},
+    secondary:{label:"Cycle Laplacian",on:api=>{if(api.state.mode==="spectral")api.setParam("lapType",(Math.round(api.state.lapType)+1)%3);}},
+    defaultCam:{theta:-0.6,phi:0.62,r:12},
+    hint:'node height = signal value · <span class="a">red edge</span> = high disagreement w(xᵢ−xⱼ)² · <span style="color:#4dd7ff">blue</span>/<span class="r">rose</span> nodes = above/below mean · k=1 = Fiedler split.',
+    onParam(api){api.frame([0,1.0,0],12);},
+    onSelect(api,d){if(d.edge)api.setSelected("edge "+NAMES[d.edge.i]+"–"+NAMES[d.edge.j]+" · w="+d.edge.w.toFixed(2)+" · energy w(Δx)² = "+d.edge.e.toFixed(4)+(d.edge.e>0.05?"  ← a surprise":"  (smooth)"));},
+    build,
+    snapshot(s){const g=scene.g;return {mode:s.mode,n:g?g.n:0,rough:s.rough,eta:s.eta,freq:Math.round(s.freq),lapType:Math.round(s.lapType),steps:SMOOTH.steps,energy:scene.x&&scene.g?+energy(scene.g,scene.x).E.toFixed(3):0};}
+  });
+})();
+</script>
+</body>
+</html>

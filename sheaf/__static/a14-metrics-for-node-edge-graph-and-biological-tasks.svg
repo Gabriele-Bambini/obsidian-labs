@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure A14 — metrics for node, edge, graph, and biological tasks</title>
+  <desc id="d">Four panels: confusion-matrix metrics, the accuracy trap, AUROC vs AUPRC under rarity, and the top-K discovery playbook.</desc>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="160" cy="70" r="230" fill="#34d399" opacity="0.05"/><circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE A14 &#183; METRICS — MATCH THE SCORE TO THE DECISION</text>
+  <text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">A metric is the rule that says which mistake matters</text>
+
+  <!-- (a) confusion -->
+  <g>
+    <rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="110" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/><text x="64" y="115" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Every metric is a view of four cells</text>
+    <g transform="translate(70,128)">
+      <rect x="0" y="0" width="60" height="34" rx="4" fill="#15302a"/><text x="30" y="21" fill="#34d399" font-size="12" text-anchor="middle">TP</text>
+      <rect x="64" y="0" width="60" height="34" rx="4" fill="#33270a"/><text x="94" y="21" fill="#fbbf24" font-size="12" text-anchor="middle">FN</text>
+      <rect x="0" y="38" width="60" height="34" rx="4" fill="#3a1420"/><text x="30" y="59" fill="#fb7185" font-size="12" text-anchor="middle">FP</text>
+      <rect x="64" y="38" width="60" height="34" rx="4" fill="#16202c"/><text x="94" y="59" fill="#8a99ad" font-size="12" text-anchor="middle">TN</text>
+    </g>
+    <g font-size="11.5" font-family="'Cascadia Mono',monospace">
+      <text x="220" y="142" fill="#9fd0ff">precision = TP/(TP+FP)</text>
+      <text x="220" y="162" fill="#7fe7c0">recall    = TP/(TP+FN)</text>
+      <text x="220" y="182" fill="#fde68a">F1 = harmonic(P,R)</text>
+      <text x="220" y="202" fill="#c4b5fd">accuracy = (TP+TN)/all</text>
+    </g>
+    <text x="86" y="222" fill="#8a99ad" font-size="11">never read accuracy before class balance.</text>
+  </g>
+
+  <!-- (b) accuracy trap -->
+  <g>
+    <rect x="486" y="82" width="370" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="82" width="370" height="4" rx="2" fill="#fb7185"/>
+    <circle cx="510" cy="110" r="13" fill="#3a0b14" stroke="#fb7185" stroke-width="1"/><text x="510" y="115" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The accuracy trap</text>
+    <text x="510" y="134" fill="#9fb4cc" font-size="11.5">1000 candidate edges · 20 real · predict ALL negative:</text>
+    <g font-size="12" font-family="'Cascadia Mono',monospace">
+      <text x="520" y="160" fill="#c4b5fd">accuracy = 980/1000 = 0.98</text>
+      <text x="520" y="182" fill="#fb7185">recall   = 0/20      = 0.00</text>
+    </g>
+    <text x="520" y="210" fill="#fda4b0" font-size="11.5">98% correct, zero regulation discovered.</text>
+    <text x="520" y="226" fill="#8a99ad" font-size="11">true negatives dominate when positives are rare.</text>
+  </g>
+
+  <!-- (c) ROC vs PR -->
+  <g>
+    <rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+    <circle cx="64" cy="272" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/><text x="64" y="277" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">AUROC vs AUPRC under rarity</text>
+    <!-- ROC -->
+    <g transform="translate(80,300)"><line x1="0" y1="120" x2="120" y2="120" stroke="#3a4a5e"/><line x1="0" y1="0" x2="0" y2="120" stroke="#3a4a5e"/>
+      <path d="M0 120 Q10 30 120 6" fill="none" stroke="#4dd7ff" stroke-width="2.5"/><line x1="0" y1="120" x2="120" y2="0" stroke="#46627e" stroke-dasharray="3 3"/>
+      <text x="60" y="138" fill="#7f93a8" font-size="9" text-anchor="middle">FPR</text><text x="60" y="-4" fill="#9fd0ff" font-size="10" text-anchor="middle">ROC: 0.95</text></g>
+    <!-- PR -->
+    <g transform="translate(280,300)"><line x1="0" y1="120" x2="120" y2="120" stroke="#3a4a5e"/><line x1="0" y1="0" x2="0" y2="120" stroke="#3a4a5e"/>
+      <path d="M0 30 Q40 70 120 112" fill="none" stroke="#34d399" stroke-width="2.5"/><line x1="0" y1="116" x2="120" y2="116" stroke="#fb7185" stroke-dasharray="3 3"/>
+      <text x="60" y="138" fill="#7f93a8" font-size="9" text-anchor="middle">recall</text><text x="60" y="-4" fill="#7fe7c0" font-size="10" text-anchor="middle">PR: 0.30</text>
+      <text x="124" y="120" fill="#fda4b0" font-size="8">baseline = prevalence</text></g>
+    <text x="86" y="466" fill="#9fb4cc" font-size="11.5">AUROC rewards beating easy negatives; AUPRC asks if</text>
+    <text x="86" y="484" fill="#9fb4cc" font-size="11.5">predicted positives are real. Random AUPRC ≈ prevalence.</text>
+  </g>
+
+  <!-- (d) discovery -->
+  <g>
+    <rect x="486" y="244" width="370" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="244" width="370" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="510" cy="272" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/><text x="510" y="277" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Match the metric to the task</text>
+    <g font-size="11.5">
+      <text x="506" y="298" fill="#4dd7ff" font-weight="700">node labels →</text><text x="640" y="298" fill="#9fb4cc">macro-F1 · balanced acc · MCC</text>
+      <text x="506" y="320" fill="#34d399" font-weight="700">edge ranking →</text><text x="640" y="320" fill="#9fb4cc">AUPRC · Hits@K · precision@K</text>
+      <text x="506" y="342" fill="#fbbf24" font-weight="700">graph class →</text><text x="640" y="342" fill="#9fb4cc">AUROC + AUPRC + recall@prec</text>
+      <text x="506" y="364" fill="#fb7185" font-weight="700">graph regress →</text><text x="640" y="364" fill="#9fb4cc">MAE · RMSE · R² (with units)</text>
+      <text x="506" y="386" fill="#a78bfa" font-weight="700">discovery →</text><text x="640" y="386" fill="#9fb4cc">top-K utility under lab budget</text>
+    </g>
+    <text x="506" y="418" fill="#fde68a" font-size="11.5">if you can test 20 edges, precision@20 is the truth.</text>
+    <text x="506" y="442" fill="#fda4b0" font-size="11">choose the primary metric BEFORE training — picking the</text>
+    <text x="506" y="460" fill="#fda4b0" font-size="11">metric that wins is leakage. report baselines + seed variance.</text>
+  </g>
+
+  <line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="538" font-size="13" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure A14. </tspan><tspan>A metric grades a particular mistake. </tspan><tspan fill="#9fe0ff" font-weight="700">(a)</tspan><tspan> Precision, recall, F1 and accuracy are all views of the confusion matrix. </tspan><tspan fill="#fda4b0" font-weight="700">(b)</tspan><tspan> Under rare positives</tspan>
+    <tspan x="40" dy="21">a do-nothing model scores 98% accuracy and discovers nothing. </tspan><tspan fill="#fde68a" font-weight="700">(c)</tspan><tspan> AUROC can look strong while AUPRC — whose random baseline is the prevalence — stays modest.</tspan>
+    <tspan x="40" dy="21"></tspan><tspan fill="#c4b5fd" font-weight="700">(d)</tspan><tspan> Match the metric to the unit of prediction and the decision cost, weigh it against baselines, and — like the split in A13 — choose it before you train, not after.</tspan>
+  </text>
+</svg>

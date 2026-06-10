@@ -1,0 +1,141 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A02 Â· Feature & evidence ledger â€” X, Z, u</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  const frac=x=>x-Math.floor(x);
+  const NAME=["TF1","GeneA","GeneB","GeneC"];
+  const CH=["motif","access","perturb","prior"];
+  const CHCOL=["#4dd7ff","#34d399","#fbbf24","#a78bfa"];     // motif cyan Â· access green Â· perturb amber Â· prior violet
+  // node feature columns X = [expression, accessibility, TF-indicator]
+  function model(n,ctx){
+    const node=[];
+    for(let i=0;i<n;i++){
+      const isTF=i===0, role=isTF?"tf":((i===3||i%4===0)?"isolated":"target");
+      let expr=i===0?0.92:i===1?0.45:i===2?0.31:i===3?0.88:(0.25+0.6*frac(i*0.37+0.11));
+      let access=i===0?0.85:i===1?0.71:i===2?0.55:i===3?0.43:(0.4+0.45*frac(i*0.41+0.2));
+      if(ctx===1 && !isTF){access*=0.58; expr=0.3+0.7*frac(i*0.83+0.3);}   // neural-progenitor context u
+      node.push({name:i<4?NAME[i]:"G"+i,isTF,role,X:[expr,access,isTF?1:0]});
+    }
+    return node;
+  }
+  function edges(node){const E=[];node.forEach((d,i)=>{if(d.role==="target"){
+    const Z=[ i===1?0.87:i===2?0.34:(0.3+0.5*frac(i*0.7)),
+              i===1?0.72:i===2?0.61:(0.4+0.4*frac(i*0.41)),
+              i===1?0.41:(i%3===0?0.5*frac(i*0.9+0.1):0.0),
+              i===1?1:(i%2) ];
+    E.push({s:0,t:i,Z});}});return E;}
+  function layout(node){const pos=[],tg=[],iso=[];node.forEach((d,i)=>{if(d.role==="target")tg.push(i);else if(d.role==="isolated")iso.push(i);});
+    pos[0]=[-2.7,0];tg.forEach((i,k)=>{const a=-0.95+(tg.length>1?1.9*k/(tg.length-1):0);pos[i]=[-2.7+3.6*Math.cos(a),3.6*Math.sin(a)];});
+    iso.forEach((i,k)=>{pos[i]=[2.4+0.9*(k%2),-2.4-1.0*Math.floor(k/2)];});return pos;}
+  function cyl(api,a,b,r,col){const T=api.THREE,dir=b.clone().sub(a),len=dir.length();
+    const m=new T.Mesh(new T.CylinderGeometry(r,r,len,10),new T.MeshStandardMaterial({color:col,roughness:0.45,emissive:col.clone().multiplyScalar(0.25),emissiveIntensity:0.3}));
+    m.position.copy(a).add(b).multiplyScalar(0.5);m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());return m;}
+  let scene={};
+
+  function build(api){
+    const T=api.THREE, s=api.state, n=Math.round(s.genes), ctx=Math.round(s.context);
+    const node=model(n,ctx), E=edges(node), pos=layout(node);
+    const ch=Math.round(s.channel); // 0=all,1..4=channel index+? we use 0=all else c-1
+    const focus=ch===0?-1:ch-1;
+    const Eshown=E.filter(e=>focus<0?true:e.Z[focus]>=s.thresh);
+    const missCount=Math.min(n-1,Math.floor(s.missing*n));
+    const missing=new Set(); for(let i=1;i<=missCount;i++)missing.add(((i*3)%(n-1))+1); // deterministic masked genes (access)
+    const gG=api.group("graph"),eG=api.group("edges"),bG=api.group("bars"),lG=api.group("labels");
+    const P=pos.map((p,i)=>[p[0],0.25+node[i].X[0]*1.5,p[1]]);
+    const sel=s.sel||{};
+    // edges + evidence bars
+    for(const e of Eshown){
+      const a=new T.Vector3(P[e.s][0],P[e.s][1],P[e.s][2]),b=new T.Vector3(P[e.t][0],P[e.t][1],P[e.t][2]);
+      const strength=focus<0?(e.Z[0]+e.Z[1]+e.Z[2]+e.Z[3])/4:e.Z[focus];
+      const isSel=sel.edge===e.t;
+      const cylMesh=cyl(api,a,b,0.03+0.07*strength,focus<0?new T.Color("#5b7fa8"):new T.Color(CHCOL[focus]).multiplyScalar(0.7+0.3*e.Z[focus]));
+      api.pick(cylMesh,{edge:e.t}); if(isSel)cylMesh.material.emissiveIntensity=0.8; eG.add(cylMesh);
+      // arrowhead
+      const dir=b.clone().sub(a).normalize();const head=new T.Mesh(new T.ConeGeometry(0.12,0.26,12),new T.MeshBasicMaterial({color:focus<0?0x8fb4d8:CHCOL[focus]}));
+      head.position.copy(b).addScaledVector(dir,-0.28);head.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);eG.add(head);
+      // 4-channel evidence mini-bar at midpoint (Z mode)
+      if(s.mode==="evidence"){const mid=a.clone().add(b).multiplyScalar(0.5);mid.y+=0.5;
+        for(let c=0;c<4;c++){const h=0.05+e.Z[c]*0.7,dim=(focus>=0&&focus!==c);
+          const bar=new T.Mesh(new T.BoxGeometry(0.12,h,0.12),new T.MeshStandardMaterial({color:new T.Color(CHCOL[c]),transparent:true,opacity:dim?0.28:1,emissive:new T.Color(CHCOL[c]),emissiveIntensity:dim?0.05:0.4}));
+          bar.position.set(mid.x+(c-1.5)*0.16,mid.y+h/2,mid.z);bG.add(bar);}}
+    }
+    // nodes
+    for(let i=0;i<n;i++){
+      const d=node[i],isSel=sel.node===i;
+      const col=d.isTF?new T.Color("#4dd7ff"):(d.role==="isolated"?new T.Color("#6b7a8d"):api.ramp(d.X[0],"#3b6fd6","#fbbf24"));
+      const rad=d.isTF?0.3:0.22;
+      const m=new T.Mesh(new T.SphereGeometry(rad*(isSel?1.3:1),22,22),new T.MeshStandardMaterial({color:col,roughness:0.4,metalness:0.1,emissive:col.clone().multiplyScalar(isSel?0.85:0.28),emissiveIntensity:isSel?0.7:0.3}));
+      m.position.set(P[i][0],P[i][1],P[i][2]);api.pick(m,{node:i});gG.add(m);
+      if(d.role==="isolated"){const ring=new T.Mesh(new T.TorusGeometry(rad+0.07,0.02,8,28),new T.MeshBasicMaterial({color:0xfb7185}));ring.position.copy(m.position);ring.rotation.x=Math.PI/2;gG.add(ring);}
+      const lb=api.label(d.name,d.isTF?"#9fe0ff":(d.role==="isolated"?"#fda4b0":"#cfe0f0"),0.46);lb.position.set(P[i][0],P[i][1]+rad+0.24,P[i][2]);lG.add(lb);
+      // node feature mini-bars (X mode): [expr, access, tf]
+      if(s.mode==="features"){const cols=["#3b82f6","#34d399","#4dd7ff"];
+        for(let c=0;c<3;c++){const masked=(c===1&&missing.has(i));const v=masked?0.04:d.X[c];const h=0.05+v*0.7;
+          const bar=new T.Mesh(new T.BoxGeometry(0.1,h,0.1),new T.MeshStandardMaterial({color:masked?new T.Color("#5a6470"):new T.Color(cols[c]),emissive:masked?new T.Color("#0a0e14"):new T.Color(cols[c]),emissiveIntensity:masked?0:0.35}));
+          bar.position.set(P[i][0]+rad+0.18+c*0.14,P[i][1]+h/2-0.1,P[i][2]);bG.add(bar);}}
+    }
+    const ttl=s.mode==="features"?"node features  X âˆˆ â„^(|V|Ã—d)  Â·  [expr, access, TF]":(s.mode==="evidence"?"edge evidence  Z  Â·  [motif, access, perturb, prior]":"graph context  u  Â·  "+(ctx?"neural progenitor":"hepatocyte"));
+    gG.add((sp=>(sp.position.set(0,2.8,-3.4),sp))(api.bigLabel(ttl,"#d4e4f4",7)));
+    scene={n,node,E,Eshown:Eshown.length,missing,ch:focus,ctx};
+    const meanCh=Eshown.length?(Eshown.reduce((a,e)=>a+(focus<0?(e.Z[0]+e.Z[1]+e.Z[2]+e.Z[3])/4:e.Z[focus]),0)/Eshown.length):0;
+    let badge,formula,insight,state;
+    if(s.mode==="features"){badge="Node features X";
+      formula="d = 3 channels Â· [expression, accessibility, TF-flag] Â· "+missing.size+" masked.";
+      insight="A GNN learns from the vectors on nodes, not their names. Each gene carries a feature row X[i]; mini-bars show expr (blue), access (green), TF-flag (cyan). Masked (grey) = not measured â‰  zero.";
+      state=missing.size?missing.size+" gene(s) have missing accessibility â€” recorded as NA, not 0.":"All node features observed.";}
+    else if(s.mode==="evidence"){badge="Edge evidence Z";
+      formula=(focus<0?"all 4 channels":CH[focus]+" channel")+" Â· threshold â‰¥ "+s.thresh.toFixed(2)+" Â· "+Eshown.length+"/"+E.length+" edges.";
+      insight="Each edge is a multi-channel evidence vector, not one number. Tall mini-bars = strong evidence in that channel. Motifâ‰ accessibilityâ‰ perturbationâ‰ prior â€” different claims, different reliability.";
+      state="Mean "+(focus<0?"evidence":CH[focus])+" = "+meanCh.toFixed(2)+". Perturbation is causal but sparse; co-expression-like channels are abundant but weak.";}
+    else{badge="Context u Â· "+(ctx?"neural":"hepatocyte");
+      formula="graph-level u rescales accessibility & expression for the cell type.";
+      insight="Same nodes and edges, different context u. Switching hepatocyteâ†’neural changes the chromatin landscape: accessibility drops and expression shifts. A context-blind model can't tell these apart.";
+      state="Context = "+(ctx?"neural progenitor (lower accessibility)":"hepatocyte")+". Toggle to compare.";}
+    return {badge,formula,insight,state,
+      metrics:{nodes:n,edges:Eshown.length,meanch:meanCh.toFixed(2),missing:missing.size},
+      metricLabels:{meanch:(focus<0?"Mean evidence":"Mean "+CH[focus])},
+      focus:{center:[0,0.8,0],radius:13}};
+  }
+
+  MathLab.create({
+    id:"a02", kind:"feature-ledger",
+    eyebrow:"Block A Â· Node, edge & graph features", title:"A02 Â· Feature & evidence ledger",
+    subtitle:"A graph is a skeleton; features are the tissue. Inspect node features X, multi-channel edge evidence Z, and graph context u â€” the ledger that decides what the model can claim.",
+    selectedLabel:"Selected", selectedHint:"Click a node (its X vector) or an edge (its Z channels).",
+    modes:[{value:"features",label:"X Â· node features"},{value:"evidence",label:"Z Â· edge evidence channels"},{value:"context",label:"u Â· graph context"}],
+    params:[
+      {key:"genes",label:"genes",min:5,max:12,step:1,value:7},
+      {key:"channel",label:"evidence channel",min:0,max:4,step:1,value:0,fmt:v=>["all","motif","access","perturb","prior"][Math.round(v)],modes:["evidence"]},
+      {key:"thresh",label:"evidence â‰¥",min:0,max:0.9,step:0.05,value:0,fmt:v=>v.toFixed(2),modes:["evidence"]},
+      {key:"missing",label:"missing X",min:0,max:0.5,step:0.05,value:0,fmt:v=>v.toFixed(2),modes:["features"]},
+      {key:"context",label:"context u",min:0,max:1,step:1,value:0,fmt:v=>v?"neural":"hepato"}
+    ],
+    metrics:[{key:"nodes",label:"Nodes |V|",accent:"cyan"},{key:"edges",label:"Edges shown",accent:"violet"},
+      {key:"meanch",label:"Mean evidence",accent:"amber"},{key:"missing",label:"Masked X",accent:"rose"}],
+    layers:[{group:"edges",label:"Edges"},{group:"bars",label:"Bars"},{group:"labels",label:"Labels"}],
+    primary:{label:"Next evidence channel",on:api=>{api.setParam("channel",(Math.round(api.state.channel)+1)%5);if(api.state.mode!=="evidence"){var s=document.getElementById('ml-mode');s.value='evidence';s.dispatchEvent(new Event('change'));}}},
+    secondary:{label:"Swap context",on:api=>{api.setParam("context",api.state.context?0:1);}},
+    defaultCam:{theta:-0.62,phi:0.64,r:12},
+    hint:'<b>X</b> bars: expr/access/TF Â· <b>Z</b> bars: <span style="color:#4dd7ff">motif</span>/<span class="g">access</span>/<span class="a">perturb</span>/<span class="v">prior</span> Â· <span class="r">rose ring</span>=isolated Â· grey=missing.',
+    onParam(api){api.frame([0,0.8,0],13);},
+    onSelect(api,d){const sc=scene;if(!sc.node){api.setSelected("Click a node or edge.");return;}
+      if(d.node!=null){const nd=sc.node[d.node];api.setSelected(nd.name+" Â· X=["+nd.X.map(v=>v.toFixed(2)).join(", ")+"]  (expr, access, TF)"+(sc.missing.has(d.node)?"  access=NA":""));}
+      else if(d.edge!=null){const e=sc.E.find(x=>x.t===d.edge);if(e)api.setSelected("TF1â†’"+sc.node[d.edge].name+" Â· Z=["+e.Z.map(v=>v.toFixed(2)).join(", ")+"]  (motif, access, perturb, prior)");}},
+    build,
+    snapshot(s){const sc=scene;return {mode:s.mode,nodes:Math.round(s.genes),channel:Math.round(s.channel),edges:sc.Eshown,missing:sc.missing?sc.missing.size:0,context:Math.round(s.context)};}
+  });
+})();
+</script>
+</body>
+</html>
+

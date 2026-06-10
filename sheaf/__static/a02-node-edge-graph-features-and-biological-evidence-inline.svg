@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 900 230" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t">
+  <title id="t">A02 concept — node features X, edge evidence Z, context u</title>
+  <rect x="0" y="0" width="900" height="230" rx="12" fill="#070b14"/>
+  <text x="28" y="32" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="1.5">A02 · THE FEATURE LEDGER  X · Z · u</text>
+
+  <!-- X: node + feature bars -->
+  <text x="120" y="62" fill="#8a99ad" font-size="12" text-anchor="middle">node features X</text>
+  <circle cx="120" cy="120" r="20" fill="#4dd7ff" stroke="#0a1322" stroke-width="2"/><text x="120" y="124" fill="#062430" font-size="11" text-anchor="middle">gene</text>
+  <g><rect x="150" y="96" width="11" height="44" fill="#3b82f6"/><rect x="164" y="108" width="11" height="32" fill="#34d399"/><rect x="178" y="118" width="11" height="22" fill="#4dd7ff"/></g>
+  <text x="170" y="158" fill="#7f93a8" font-size="10" text-anchor="middle">expr·acc·TF</text>
+
+  <text x="262" y="120" fill="#5a6b80" font-size="22" text-anchor="middle">+</text>
+
+  <!-- Z: edge 4-channel evidence -->
+  <text x="400" y="62" fill="#8a99ad" font-size="12" text-anchor="middle">edge evidence Z (4 channels)</text>
+  <line x1="320" y1="120" x2="430" y2="120" stroke="#5b7fa8" stroke-width="5"/>
+  <circle cx="320" cy="120" r="13" fill="#4dd7ff" stroke="#0a1322" stroke-width="2"/><circle cx="430" cy="120" r="13" fill="#e7a13a" stroke="#0a1322" stroke-width="2"/>
+  <g><rect x="356" y="84" width="11" height="40" fill="#4dd7ff"/><rect x="370" y="92" width="11" height="32" fill="#34d399"/><rect x="384" y="106" width="11" height="18" fill="#fbbf24"/><rect x="398" y="80" width="11" height="44" fill="#a78bfa"/></g>
+  <text x="382" y="150" fill="#7f93a8" font-size="9.5" text-anchor="middle">motif·access·perturb·prior</text>
+
+  <text x="498" y="120" fill="#5a6b80" font-size="22" text-anchor="middle">+</text>
+
+  <!-- u: context -->
+  <text x="600" y="62" fill="#8a99ad" font-size="12" text-anchor="middle">context u</text>
+  <rect x="540" y="100" width="60" height="26" rx="13" fill="#173a2a" stroke="#34d399"/><text x="570" y="117" fill="#7fe7c0" font-size="11" text-anchor="middle">hepato</text>
+  <text x="618" y="118" fill="#8a99ad" font-size="13">⇄</text>
+  <rect x="632" y="100" width="60" height="26" rx="13" fill="#241a40" stroke="#a78bfa"/><text x="662" y="117" fill="#c4b5fd" font-size="11" text-anchor="middle">neural</text>
+  <text x="616" y="152" fill="#7f93a8" font-size="10" text-anchor="middle">same X,E — different regulation</text>
+
+  <line x1="726" y1="100" x2="726" y2="146" stroke="rgba(150,170,200,.2)" stroke-width="1"/>
+  <text x="812" y="108" fill="#cfe0f0" font-size="13" font-weight="700" text-anchor="middle">the ledger</text>
+  <text x="812" y="126" fill="#cfe0f0" font-size="13" font-weight="700" text-anchor="middle">decides what</text>
+  <text x="812" y="144" fill="#cfe0f0" font-size="13" font-weight="700" text-anchor="middle">the model claims</text>
+
+  <text x="450" y="206" fill="#6b7a8d" font-size="11" text-anchor="middle">structure is the skeleton · X, Z, u are the tissue — record provenance and missingness, or the claim is unknown</text>
+</svg>

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A07 · Homophily, heterophily & signed regulation</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  function compute(s){
+    const act=Math.round(s.actCount), rep=Math.round(s.repCount), tf=s.tfVal;
+    const actV=Math.min(0.97,tf-0.04), repV=Math.max(0.03,1-tf);
+    const edges=[];
+    for(let i=0;i<act;i++)edges.push({sign:+1,tgt:"act"+i,val:actV});
+    for(let i=0;i<rep;i++)edges.push({sign:-1,tgt:"rep"+i,val:repV});
+    let En=0,Es=0,same=0,sa=0,sr=0;
+    edges.forEach(e=>{const exp=e.sign>0?tf:(1-tf);
+      e.rNaive=(tf-e.val)*(tf-e.val); e.rSigned=(exp-e.val)*(exp-e.val); e.msgN=tf; e.msgS=exp;
+      En+=e.rNaive; Es+=e.rSigned;
+      const lblTF=tf>0.5, lblT=e.val>0.5, agree=(lblTF===lblT);
+      e.agree=agree; if(agree)same++; if(e.sign>0&&agree)sa++; if(e.sign<0&&agree)sr++;
+    });
+    const H=edges.length?same/edges.length:0, Hact=act?sa/act:0, Hrep=rep?sr/rep:0;
+    return {act,rep,tf,actV,repV,edges,En,Es,H,Hact,Hrep};
+  }
+  function cyl(api,a,b,r,col,emi){const T=api.THREE,d=b.clone().sub(a),L=d.length();
+    const m=new T.Mesh(new T.CylinderGeometry(r,r,L,10),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(emi),emissiveIntensity:emi>0.4?0.7:0.3,roughness:0.4}));
+    m.position.copy(a).add(b).multiplyScalar(0.5);m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.clone().normalize());return m;}
+  let scene={};
+  function build(api){
+    const T=api.THREE,s=api.state,M=compute(s);scene=M;
+    const nG=api.group("nodes"),eG=api.group("edges"),gh=api.group("ghost"),bG=api.group("bars"),lG=api.group("labels");
+    const TF=new T.Vector3(-3.4,0.1+M.tf*2,0);
+    const tm=new T.Mesh(new T.SphereGeometry(0.34,26,26),new T.MeshStandardMaterial({color:0x4dd7ff,emissive:0x12506e,emissiveIntensity:0.5,roughness:0.35}));
+    tm.position.copy(TF);nG.add(tm);
+    nG.add(stem(api,TF.x,TF.z,TF.y));
+    lG.add(setP(api.label("TF1  "+M.tf.toFixed(2),"#9fe0ff",0.46),TF.x,TF.y+0.42,TF.z));
+    const N=M.edges.length;
+    M.edges.forEach((e,i)=>{
+      const isAct=e.sign>0;
+      // activated targets upper arc, repressed lower arc
+      const grp=isAct?M.edges.filter(x=>x.sign>0):M.edges.filter(x=>x.sign<0);
+      const gi=grp.indexOf(e), gn=grp.length;
+      const ang=(gn>1?gi/(gn-1):0.5)-0.5;
+      const px=2.2+Math.abs(ang)*0.6, pz=(isAct?-1:1)*(1.2+gn*0.35)*(0.4+ (gn>1?gi/(gn-1):0.5));
+      const P=new T.Vector3(px,0.1+e.val*2,(isAct?-1:1)*(0.8+Math.abs(ang)*3.2)+ (isAct? -0.0:0.0));
+      // simpler vertical fan
+      P.set(2.4, 0.1+e.val*2, (isAct?-1:1)*(0.7+ (gn>1?gi:0)*0.9));
+      const col=isAct?new T.Color("#34d399"):new T.Color("#fb7185");
+      const m=new T.Mesh(new T.SphereGeometry(0.22,22,22),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),emissiveIntensity:0.4,roughness:0.35}));
+      m.position.copy(P);nG.add(m);nG.add(stem(api,P.x,P.z,P.y));
+      lG.add(setP(api.label((isAct?"act":"rep")+" "+e.val.toFixed(2),isAct?"#7fe7c0":"#fda4b0",0.38),P.x,P.y+0.34,P.z));
+      // edge color by mode
+      let ecol,emi=0.3,resid=0;
+      if(s.mode==="homophily"){ecol=e.agree?new T.Color("#34d399"):new T.Color("#fbbf24");emi=e.agree?0.4:0.7;}
+      else {resid=(s.mode==="naive")?e.rNaive:e.rSigned;const t=Math.min(1,resid/0.45);ecol=api.ramp(t,"#2a4a3a",isAct?"#ff8a5c":"#ff4d6d");emi=0.3+0.6*t;}
+      eG.add(cyl(api,TF.clone(),P.clone(),0.03+(isAct?0.02:0.04),ecol,emi));
+      // sign glyph midpoint
+      const mid=TF.clone().add(P).multiplyScalar(0.5);
+      bG.add(setP(api.flatNum(isAct?"+":"−",isAct?"#0a2018":"#2a0a10",1.0),mid.x,Math.max(0.05,mid.y),mid.z));
+      // message ghost at target (predicted by current model)
+      const msg=(s.mode==="naive")?e.msgN:(s.mode==="signed")?e.msgS:null;
+      if(msg!==null){const gy=0.1+msg*2;const gm=new T.Mesh(new T.SphereGeometry(0.12,12,12),new T.MeshBasicMaterial({color:0xf4d06a,transparent:true,opacity:0.5}));gm.position.set(P.x+0.45,gy,P.z);gh.add(gm);
+        if(N<=8)lG.add(setP(api.label("→"+msg.toFixed(2),"#f4d06a",0.32),P.x+0.7,gy,P.z));}
+    });
+    scene=M;
+    let insight,state,badge;
+    if(s.mode==="naive"){badge="Naive mean (homophily) · energy "+M.En.toFixed(2);
+      insight="Naive aggregation assumes neighbors agree: it sends each target the regulator's own value (yellow ghost). Activated targets (green) match — fine. But repressed targets (rose) get a HIGH message while their true value is LOW: the edge looks rough and the prediction is wrong. A GCN would average these and represent neither.";
+      state="Repressor edges glow red — high residual. Predicted (ghost) sits far above the repressed targets. Energy "+M.En.toFixed(2)+" is dominated by repression edges.";}
+    else if(s.mode==="signed"){badge="Signed channels (SGCN) · energy "+M.Es.toFixed(2);
+      insight="Signed aggregation gives activation and repression separate weight matrices W₊, W₋. A repressing edge expects the COMPLEMENT (1−TF), so a high repressor correctly predicts a low target. Every edge becomes compatible; the ghost predictions land on the targets.";
+      state="Same graph, energy drops "+M.En.toFixed(2)+" → "+M.Es.toFixed(2)+". Repression edges are now signal, not noise. h₊ and h₋ stay distinct, so 'unregulated' ≠ 'activated and repressed'.";}
+    else {badge="Homophily H = "+M.H.toFixed(2)+" (agg)";
+      insight="The aggregate homophily H = same-label edges / all edges hides structure. Activating edges are homophilic (TF high → target high); repressing edges are heterophilic (TF high → target low). One number averages them and lies about both subsets.";
+      state="H_act = "+M.Hact.toFixed(2)+" (smoothing helps) vs H_rep = "+M.Hrep.toFixed(2)+" (smoothing actively misleads). H<0.4 overall ⇒ a naive GCN can be worse than an MLP.";}
+    return {badge,
+      formula:"h'ᵢ = W_self hᵢ + Σ_{N₊} W₊ hⱼ + Σ_{N₋} W₋ hⱼ   ·   repression expects 1−x",
+      insight,state,
+      metrics:{H:M.H.toFixed(2),Hact:M.Hact.toFixed(2),Hrep:M.Hrep.toFixed(2),energy:(s.mode==="signed"?M.Es:M.En).toFixed(2)},
+      focus:{center:[-0.4,1.1,0],radius:12}};
+  }
+  function stem(api,x,z,y){const T=api.THREE;const m=new T.Mesh(new T.CylinderGeometry(0.012,0.012,Math.max(0.02,y),6),new T.MeshBasicMaterial({color:0x24384a}));m.position.set(x,y/2,z);return m;}
+  function setP(sp,x,y,z){sp.position.set(x,y,z);return sp;}
+  MathLab.create({
+    id:"a07", kind:"homophily-signed",
+    eyebrow:"Block A · Homophily, heterophily & signed regulation", title:"A07 · When neighbors are supposed to disagree",
+    subtitle:"A TF drives activated (green +) and repressed (rose −) targets. Naive mean treats every edge as 'should agree'; signed channels let an edge mean activation OR repression.",
+    selectedLabel:"Note", selectedHint:"Switch modes to compare aggregation rules.",
+    modes:[{value:"naive",label:"Naive mean (homophily)"},{value:"signed",label:"Signed channels (SGCN)"},{value:"homophily",label:"Diagnose H"}],
+    params:[
+      {key:"actCount",label:"activated targets",min:0,max:6,step:1,value:3},
+      {key:"repCount",label:"repressed targets",min:0,max:6,step:1,value:3},
+      {key:"tfVal",label:"TF expression",min:0.55,max:0.97,step:0.02,value:0.85,fmt:v=>v.toFixed(2)}
+    ],
+    metrics:[{key:"H",label:"H (aggregate)",accent:"cyan"},{key:"Hact",label:"H activating",accent:"green"},
+      {key:"Hrep",label:"H repressing",accent:"rose"},{key:"energy",label:"Mismatch E",accent:"amber"}],
+    layers:[{group:"edges",label:"Edges (sign)"},{group:"nodes",label:"Genes"},{group:"ghost",label:"Predicted msg"},{group:"bars",label:"Signs"},{group:"labels",label:"Labels"}],
+    primary:{label:"Naive ⇄ Signed",on:api=>{const st=document.getElementById('ml-mode');st.value=(api.state.mode==="signed")?"naive":"signed";st.dispatchEvent(new Event('change'));}},
+    secondary:{label:"Diagnose H",on:api=>{const st=document.getElementById('ml-mode');st.value="homophily";st.dispatchEvent(new Event('change'));}},
+    defaultCam:{theta:-0.55,phi:0.66,r:12},
+    hint:'<span class="g">green +</span> = activation · <span class="r">rose −</span> = repression · edge glow = mismatch under the chosen rule · <span style="color:#f4d06a">yellow ghost</span> = predicted message. Repression is compatible only under signed channels.',
+    onParam(api){api.frame([-0.4,1.1,0],12);},
+    onSelect(api,d){},
+    build,
+    snapshot(s){const M=scene;return {mode:s.mode,act:Math.round(s.actCount),rep:Math.round(s.repCount),tf:s.tfVal,H:+(M.H||0).toFixed(2),Hact:+(M.Hact||0).toFixed(2),Hrep:+(M.Hrep||0).toFixed(2),energyNaive:+(M.En||0).toFixed(3),energySigned:+(M.Es||0).toFixed(3)};}
+  });
+})();
+</script>
+</body>
+</html>

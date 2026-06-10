@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 900 230" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t">
+  <title id="t">A06 concept — low-pass smooths modules, high-pass exposes boundaries</title>
+  <defs><marker id="i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="900" height="230" rx="12" fill="#070b14"/>
+  <text x="28" y="32" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="1.5">A06 · FILTER THE GRAPH SPECTRUM  y = U·g(λ)·Uᵀx</text>
+
+  <!-- spectrum bars -->
+  <text x="120" y="58" fill="#8a99ad" font-size="12" text-anchor="middle">graph spectrum x̂</text>
+  <rect x="56" y="78" width="14" height="76" fill="#34d399"/><rect x="78" y="96" width="14" height="58" fill="#5bcf8e"/><rect x="100" y="118" width="14" height="36" fill="#9bd17a"/><rect x="122" y="130" width="14" height="24" fill="#e0b566"/><rect x="144" y="140" width="14" height="14" fill="#fb7185"/>
+  <text x="63" y="170" fill="#7fe7c0" font-size="9" text-anchor="middle">low</text><text x="151" y="170" fill="#fda4b0" font-size="9" text-anchor="middle">high λ</text>
+
+  <text x="210" y="120" fill="#5a6b80" font-size="18" text-anchor="middle">×g(λ)</text>
+
+  <!-- low pass branch -->
+  <text x="370" y="58" fill="#7fe7c0" font-size="12" text-anchor="middle">low-pass = smooth (GCN)</text>
+  <g><circle cx="320" cy="110" r="13" fill="#3fa9e8"/><circle cx="360" cy="104" r="13" fill="#3fa9e8"/><circle cx="340" cy="140" r="13" fill="#3fa9e8"/></g>
+  <line x1="333" y1="113" x2="347" y2="110" stroke="#33506e" stroke-width="2"/><line x1="328" y1="122" x2="338" y2="132" stroke="#33506e" stroke-width="2"/>
+  <text x="340" y="172" fill="#8a99ad" font-size="10" text-anchor="middle">module → one value</text>
+  <circle cx="420" cy="120" r="11" fill="#fb9aab"/><text x="420" y="146" fill="#fda4b0" font-size="9" text-anchor="middle">M2</text>
+
+  <text x="500" y="120" fill="#5a6b80" font-size="16" text-anchor="middle">vs</text>
+
+  <!-- high pass branch -->
+  <text x="640" y="58" fill="#fda4b0" font-size="12" text-anchor="middle">high-pass = boundaries</text>
+  <circle cx="585" cy="120" r="9" fill="#243445"/><circle cx="615" cy="120" r="9" fill="#243445"/>
+  <circle cx="650" cy="108" r="15" fill="#fbbf24"/><circle cx="685" cy="116" r="14" fill="#fbbf24"/>
+  <line x1="650" y1="108" x2="685" y2="116" stroke="#fbbf24" stroke-width="3"/>
+  <text x="667" y="150" fill="#fde68a" font-size="10" text-anchor="middle">boundary genes pop</text>
+
+  <line x1="730" y1="80" x2="730" y2="160" stroke="rgba(150,170,200,.2)" stroke-width="1"/>
+  <text x="815" y="100" fill="#cfe0f0" font-size="12.5" font-weight="700" text-anchor="middle">GCN stacks =</text>
+  <text x="815" y="118" fill="#cfe0f0" font-size="12.5" font-weight="700" text-anchor="middle">repeated low-pass</text>
+  <text x="815" y="136" fill="#cfe0f0" font-size="12.5" font-weight="700" text-anchor="middle">= oversmoothing</text>
+
+  <text x="450" y="210" fill="#6b7a8d" font-size="11" text-anchor="middle">repressors, escaped genes &amp; tissue boundaries are high-frequency — a low-pass GCN erases exactly what you care about</text>
+</svg>

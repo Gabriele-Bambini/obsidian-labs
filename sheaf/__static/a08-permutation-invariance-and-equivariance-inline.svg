@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 900 230" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t">
+  <title id="t">A08 concept — shuffle rows; equivariant model keeps the answer, broken model drifts</title>
+  <defs><marker id="i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="900" height="230" rx="12" fill="#070b14"/>
+  <text x="28" y="32" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="1.5">A08 · NODE ORDER IS ARBITRARY — F(PAPᵀ, PX) = P·F(A,X)</text>
+
+  <!-- original order -->
+  <text x="105" y="58" fill="#8a99ad" font-size="11" text-anchor="middle">order 1</text>
+  <g font-size="11" font-family="'Cascadia Mono',monospace">
+    <text x="40" y="84" fill="#9fe0ff">r0 TF1   .92</text><text x="40" y="104" fill="#cfe0f0">r1 GeneA .84</text><text x="40" y="124" fill="#cfe0f0">r2 GeneB .22</text>
+  </g>
+  <text x="105" y="160" fill="#7fe7c0" font-size="10" text-anchor="middle">shuffle ↓ rows</text>
+  <g font-size="11" font-family="'Cascadia Mono',monospace">
+    <text x="40" y="184" fill="#cfe0f0">r0 GeneB .22</text><text x="40" y="204" fill="#9fe0ff">r1 TF1   .92</text>
+  </g>
+
+  <text x="240" y="120" fill="#5a6b80" font-size="16" text-anchor="middle">→ model →</text>
+
+  <!-- equivariant -->
+  <text x="455" y="58" fill="#7fe7c0" font-size="12" text-anchor="middle">equivariant (shared + mean)</text>
+  <g><circle cx="400" cy="96" r="11" fill="#4dd7ff"/><circle cx="455" cy="96" r="11" fill="#a78bfa"/><circle cx="510" cy="96" r="11" fill="#7c5cff"/></g>
+  <text x="455" y="124" fill="#cfe0f0" font-size="10" text-anchor="middle">out moves WITH each node</text>
+  <rect x="395" y="136" width="120" height="24" rx="6" fill="#15302a"/><text x="455" y="152" fill="#34d399" font-size="11" text-anchor="middle" font-weight="700">eq-error ≈ 0  ✓</text>
+
+  <text x="585" y="120" fill="#5a6b80" font-size="14" text-anchor="middle">vs</text>
+
+  <!-- broken -->
+  <text x="720" y="58" fill="#fda4b0" font-size="12" text-anchor="middle">broken (row-index leak)</text>
+  <g><circle cx="665" cy="92" r="11" fill="#4dd7ff"/><circle cx="720" cy="104" r="11" fill="#a78bfa"/><circle cx="775" cy="86" r="11" fill="#7c5cff"/>
+     <circle cx="665" cy="110" r="6" fill="#f4d06a" opacity="0.6"/><circle cx="720" cy="86" r="6" fill="#f4d06a" opacity="0.6"/><circle cx="775" cy="104" r="6" fill="#f4d06a" opacity="0.6"/></g>
+  <text x="720" y="128" fill="#8a99ad" font-size="10" text-anchor="middle">drifts from <tspan fill="#f4d06a">correct</tspan></text>
+  <rect x="660" y="136" width="120" height="24" rx="6" fill="#2a0e14"/><text x="720" y="152" fill="#fb7185" font-size="11" text-anchor="middle" font-weight="700">eq-error &gt; 0  ✗</text>
+
+  <text x="450" y="206" fill="#6b7a8d" font-size="11" text-anchor="middle">adjacency reindexes on BOTH axes (P A Pᵀ) · run the permutation test · row index = artifact, gene coords = real feature</text>
+</svg>

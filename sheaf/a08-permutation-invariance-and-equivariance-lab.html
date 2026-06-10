@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A08 · Permutation invariance & equivariance</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  const NAMES=["TF1","GeneA","GeneB","GeneC","GeneD","GeneE","GeneF"];
+  const XV=[0.92,0.84,0.22,0.35,0.61,0.47,0.73];
+  function graph(n){
+    const edges=[[0,1],[0,2],[1,3]];
+    for(let i=4;i<n;i++)edges.push([i-2,i]);
+    const adj=Array.from({length:n},()=>new Set());
+    edges.forEach(([a,b])=>{if(a<n&&b<n){adj[a].add(b);adj[b].add(a);}});
+    return {n,edges:edges.filter(e=>e[0]<n&&e[1]<n),adj};
+  }
+  function biologyOut(g){ // one mean message-passing step over closed neighborhood — order-independent
+    const out=new Float64Array(g.n);
+    for(let i=0;i<g.n;i++){let s=XV[i],c=1;g.adj[i].forEach(j=>{s+=XV[j];c++;});out[i]=s/c;}
+    return out;
+  }
+  let scene={};
+  function build(api){
+    const T=api.THREE,s=api.state,n=Math.round(s.nodes),g=graph(n);
+    const k=Math.round(s.perm)%n;                 // rotation permutation: node i stored at row (i+k)%n
+    const rowOf=i=>(i+k)%n;
+    const bio=biologyOut(g);
+    const broke=s.mode==="broken";
+    const outNow=new Float64Array(n), outId=new Float64Array(n);
+    for(let i=0;i<n;i++){
+      const leak=broke? s.indexBias*((rowOf(i)/(n-1))-0.5)*0.7*(0.4+bio[i]) : 0;
+      const leakId=broke? s.indexBias*((i/(n-1))-0.5)*0.7*(0.4+bio[i]) : 0;
+      outNow[i]=Math.max(0,Math.min(1,bio[i]+leak));
+      outId[i]=Math.max(0,Math.min(1,bio[i]+leakId));
+    }
+    let eqErr=0; for(let i=0;i<n;i++)eqErr=Math.max(eqErr,Math.abs(outNow[i]-outId[i]));
+    const readout=outNow.reduce((a,b)=>a+b,0)/n, readoutId=outId.reduce((a,b)=>a+b,0)/n;
+    const nG=api.group("nodes"),eG=api.group("edges"),gh=api.group("ghost"),mG=api.group("matrix"),lG=api.group("labels");
+    if(s.mode!=="matrix"){
+      const R=1.4+n*0.18;
+      const pos=[]; for(let i=0;i<n;i++){const a=-Math.PI/2+i/n*Math.PI*2;pos.push([Math.cos(a)*R-0.6,0,Math.sin(a)*R]);}
+      g.edges.forEach(([a,b])=>{const pa=new T.Vector3(pos[a][0],0.12,pos[a][2]),pb=new T.Vector3(pos[b][0],0.12,pos[b][2]);
+        const d=pb.clone().sub(pa),L=d.length();const m=new T.Mesh(new T.CylinderGeometry(0.03,0.03,L,8),new T.MeshStandardMaterial({color:0x466486,emissive:0x16273a,emissiveIntensity:0.3,roughness:0.5}));
+        m.position.copy(pa).add(pb).multiplyScalar(0.5);m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.clone().normalize());eG.add(m);});
+      for(let i=0;i<n;i++){
+        const h=0.12+outNow[i]*2.2, col=api.ramp(i/n,"#4dd7ff","#a78bfa");
+        const m=new T.Mesh(new T.SphereGeometry(0.24,24,24),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),emissiveIntensity:0.42,roughness:0.35}));
+        m.position.set(pos[i][0],h,pos[i][2]);nG.add(m);
+        const stem=new T.Mesh(new T.CylinderGeometry(0.014,0.014,h,6),new T.MeshBasicMaterial({color:0x24384a}));stem.position.set(pos[i][0],h/2,pos[i][2]);nG.add(stem);
+        // ghost = identity-order output (what a correct model must reproduce)
+        if(broke){const gy=0.12+outId[i]*2.2;const gm=new T.Mesh(new T.SphereGeometry(0.12,12,12),new T.MeshBasicMaterial({color:0xf4d06a,transparent:true,opacity:0.5}));gm.position.set(pos[i][0]+0.32,gy,pos[i][2]);gh.add(gm);}
+        lG.add(setP(api.label(NAMES[i]+"  out="+outNow[i].toFixed(2),col.getStyle(),0.4),pos[i][0],h+0.34,pos[i][2]));
+        lG.add(setP(api.label("row "+rowOf(i),"#7f93a8",0.34),pos[i][0],h+0.66,pos[i][2]));
+      }
+      // pooled readout pillar
+      const ph=0.12+readout*2.2;
+      const pm=new T.Mesh(new T.CylinderGeometry(0.26,0.26,ph,20),new T.MeshStandardMaterial({color:0x34d399,emissive:0x0f3a2a,emissiveIntensity:0.5,roughness:0.4}));
+      pm.position.set(-0.6,ph/2,0);nG.add(pm);
+      lG.add(setP(api.label("graph readout "+readout.toFixed(3),"#7fe7c0",0.42),-0.6,ph+0.3,0));
+    } else {
+      // adjacency P A Pᵀ : grid reindexed by current order (rows AND cols permute)
+      const order=[]; for(let r=0;r<n;r++){for(let i=0;i<n;i++)if(rowOf(i)===r){order.push(i);break;}}
+      const step=Math.min(0.7,4.2/n), x0=-(n-1)*step/2-0.6, z0=-(n-1)*step/2;
+      for(let r=0;r<n;r++)for(let c=0;c<n;c++){const a=order[r],b=order[c];const edge=g.adj[a].has(b);
+        const col=edge?new T.Color("#4dd7ff"):new T.Color("#0c1622");
+        const tile=new T.Mesh(new T.BoxGeometry(step*0.84,edge?0.4:0.1,step*0.84),new T.MeshStandardMaterial({color:col,emissive:edge?col.clone().multiplyScalar(0.4):new T.Color("#000"),emissiveIntensity:edge?0.5:0,roughness:0.5}));
+        tile.position.set(x0+c*step,edge?0.2:0,z0+r*step);mG.add(tile);}
+      for(let r=0;r<n;r++){lG.add(setP(api.label(NAMES[order[r]],"#9fb4cc",0.36),x0-step*0.9,0.1,z0+r*step));
+        lG.add(setP(api.label(NAMES[order[r]],"#7f93a8",0.34),x0+r*step,0.1,z0-step*0.9));}
+      mG.add(setP(api.bigLabel("P A Pᵀ — both axes reindex together","#cfe0f0",4.4),x0+(n-1)*step/2,0.05,z0+n*step+0.3));
+    }
+    scene={n,k,eqErr,readout};
+    let insight,state,badge;
+    if(s.mode==="equivariant"){badge="Equivariant · eq-error "+eqErr.toFixed(4);
+      insight="A correct GNN uses shared weights + an order-independent aggregator (sum/mean/max). The output for each biological node depends only on its features and neighbourhood — never its row. Shuffle the order: the row badges change but every node keeps its value, and out moves WITH the node. F(PAPᵀ, PX) = P·F(A,X).";
+      state="Permutation k="+k+". Equivariance error = "+eqErr.toFixed(4)+" (≈0 for any shuffle). Graph readout = "+readout.toFixed(3)+" — invariant.";}
+    else if(s.mode==="broken"){badge="Broken (row-index leak) · eq-error "+eqErr.toFixed(3);
+      insight="This model adds a bias from the row index (e.g. positional encoding on storage order, or data pre-sorted by differential expression). Now shuffling the rows changes predictions: the solid spheres drift from the yellow ghost (the correct identity-order output). Same biology, different answer — a silent reproducibility bug.";
+      state="Permutation k="+k+", index bias="+s.indexBias.toFixed(2)+". Equivariance error = "+eqErr.toFixed(3)+" (>0 = violated). Readout drifts to "+readout.toFixed(3)+".";}
+    else {badge="Adjacency reindex P A Pᵀ";
+      insight="Permuting nodes must reindex the adjacency on BOTH axes: A[i,j] moves to [Pi, Pj]. Permuting only rows (PA) or only columns (APᵀ) breaks the matrix — rows and columns would index different orderings. Edge endpoints must both follow their nodes.";
+      state="Permutation k="+k+". The lit cells are the same edges; only their addresses move as the row/column labels reorder together.";}
+    return {badge,
+      formula:"node: F(PAPᵀ, PX) = P·F(A,X)   ·   graph: g(PAPᵀ, PX) = g(A,X)",
+      insight,state,
+      metrics:{eqErr:eqErr.toFixed(s.mode==="broken"?3:4),perm:"k="+k,readout:readout.toFixed(3),verdict:eqErr<1e-6?"✓ equivariant":"✗ violated"},
+      focus:{center:[-0.6,0.9,0],radius:Math.min(20,12+n)}};
+  }
+  function setP(sp,x,y,z){sp.position.set(x,y,z);return sp;}
+  MathLab.create({
+    id:"a08", kind:"permutation",
+    eyebrow:"Block A · Permutation invariance & equivariance", title:"A08 · Shuffle the rows, keep the biology",
+    subtitle:"Node order is a storage choice. Shuffle it and watch a correct (equivariant) model keep every prediction, while a row-index-leaking model silently changes its answer.",
+    selectedLabel:"Note", selectedHint:"Use Shuffle order; compare equivariant vs broken.",
+    modes:[{value:"equivariant",label:"Equivariant (shared + mean)"},{value:"broken",label:"Broken (row-index leak)"},{value:"matrix",label:"Adjacency P A Pᵀ"}],
+    params:[
+      {key:"nodes",label:"nodes",min:4,max:7,step:1,value:4},
+      {key:"perm",label:"permutation k (row shift)",min:0,max:6,step:1,value:0},
+      {key:"indexBias",label:"row-index leak",min:0,max:1,step:0.1,value:0.6,fmt:v=>v.toFixed(1),modes:["broken"]}
+    ],
+    metrics:[{key:"eqErr",label:"Equivariance error",accent:"rose"},{key:"verdict",label:"Verdict",accent:"green"},
+      {key:"perm",label:"Permutation",accent:"violet"},{key:"readout",label:"Graph readout",accent:"cyan"}],
+    layers:[{group:"edges",label:"Edges"},{group:"nodes",label:"Outputs"},{group:"ghost",label:"Correct (ghost)"},{group:"matrix",label:"Adjacency"},{group:"labels",label:"Labels"}],
+    primary:{label:"Shuffle order",on:api=>{const n=Math.round(api.state.nodes);api.setParam("perm",(Math.round(api.state.perm)+1)%n);}},
+    secondary:{label:"Equivariant ⇄ Broken",on:api=>{const st=document.getElementById('ml-mode');st.value=(api.state.mode==="broken")?"equivariant":"broken";st.dispatchEvent(new Event('change'));}},
+    defaultCam:{theta:-0.55,phi:0.66,r:13},
+    hint:'sphere height = node output · <span style="color:#f4d06a">yellow ghost</span> = correct identity-order output · row badge = storage position · <span class="g">green pillar</span> = pooled graph readout (must stay invariant).',
+    onParam(api){api.frame([-0.6,0.9,0],Math.min(20,12+Math.round(api.state.nodes)));},
+    onSelect(api,d){},
+    build,
+    snapshot(s){const M=scene;return {mode:s.mode,nodes:Math.round(s.nodes),perm:Math.round(s.perm),indexBias:s.indexBias,eqErr:+(M.eqErr||0).toFixed(5),readout:+(M.readout||0).toFixed(4)};}
+  });
+})();
+</script>
+</body>
+</html>

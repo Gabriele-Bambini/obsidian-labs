@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure A08 — permutation invariance and equivariance</title>
+  <desc id="d">Four panels: row order is arbitrary, the equivariance law, why adjacency transforms as P A P transpose, and the permutation test.</desc>
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/><circle cx="800" cy="450" r="250" fill="#34d399" opacity="0.05"/>
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE A08 &#183; PERMUTATION INVARIANCE &amp; EQUIVARIANCE</text>
+  <text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Shuffle the row order — the biology must not change</text>
+
+  <!-- (a) row order arbitrary -->
+  <g>
+    <rect x="40" y="82" width="430" height="248" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="110" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/><text x="64" y="115" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Row order is a storage choice</text>
+    <text x="150" y="148" fill="#8a99ad" font-size="11" text-anchor="middle">order 1</text>
+    <g font-size="11" font-family="'Cascadia Mono',monospace">
+      <text x="70" y="172" fill="#9fe0ff">r0 TF1   .92</text><text x="70" y="190" fill="#cfe0f0">r1 GeneA .84</text><text x="70" y="208" fill="#cfe0f0">r2 GeneB .22</text><text x="70" y="226" fill="#cfe0f0">r3 GeneC .35</text>
+    </g>
+    <text x="360" y="148" fill="#8a99ad" font-size="11" text-anchor="middle">order 2 (shuffled)</text>
+    <g font-size="11" font-family="'Cascadia Mono',monospace">
+      <text x="280" y="172" fill="#cfe0f0">r0 GeneB .22</text><text x="280" y="190" fill="#9fe0ff">r1 TF1   .92</text><text x="280" y="208" fill="#cfe0f0">r2 GeneA .84</text><text x="280" y="226" fill="#cfe0f0">r3 GeneC .35</text>
+    </g>
+    <text x="255" y="262" fill="#7fe7c0" font-size="12" text-anchor="middle">same graph, same biology — identical predictions required</text>
+    <text x="255" y="296" fill="#fda4b0" font-size="11" text-anchor="middle">a model that reads the row index is a silent reproducibility bug</text>
+    <text x="255" y="314" fill="#8a99ad" font-size="11" text-anchor="middle">(genes pre-sorted by DE score leak the label into position)</text>
+  </g>
+
+  <!-- (b) the law -->
+  <g>
+    <rect x="486" y="82" width="370" height="248" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="82" width="370" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="510" cy="110" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/><text x="510" y="115" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Two laws</text>
+    <rect x="510" y="132" width="322" height="58" rx="8" fill="#10182a"/>
+    <text x="524" y="156" fill="#7fe7c0" font-size="12" font-weight="700">node — equivariant</text><text x="524" y="178" fill="#cfe0f0" font-size="13" font-family="'Cascadia Mono',monospace">F(PAPᵀ, PX) = P·F(A,X)</text>
+    <rect x="510" y="200" width="322" height="58" rx="8" fill="#10182a"/>
+    <text x="524" y="224" fill="#9fd0ff" font-size="12" font-weight="700">graph — invariant</text><text x="524" y="246" fill="#cfe0f0" font-size="13" font-family="'Cascadia Mono',monospace">g(PAPᵀ, PX) = g(A,X)</text>
+    <text x="671" y="284" fill="#8a99ad" font-size="11" text-anchor="middle">node output moves WITH the node;</text>
+    <text x="671" y="302" fill="#8a99ad" font-size="11" text-anchor="middle">one pooled graph score stays fixed</text>
+  </g>
+
+  <!-- (c) PAPt -->
+  <g>
+    <rect x="40" y="342" width="430" height="150" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="342" width="430" height="4" rx="2" fill="#fbbf24"/>
+    <circle cx="64" cy="370" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/><text x="64" y="375" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="86" y="366" fill="#cfe0f0" font-size="14" font-weight="700">Adjacency reindexes on BOTH axes</text>
+    <g transform="translate(86,384)">
+      <text x="0" y="12" fill="#7fe7c0" font-size="11">P A Pᵀ ✓</text>
+      <g transform="translate(0,18)"><rect x="0" y="0" width="58" height="58" fill="none" stroke="#33506e"/><rect x="0" y="29" width="14" height="14" fill="#4dd7ff"/><rect x="29" y="0" width="14" height="14" fill="#4dd7ff"/></g>
+      <text x="120" y="12" fill="#fda4b0" font-size="11">P A only ✗</text>
+      <g transform="translate(120,18)"><rect x="0" y="0" width="58" height="58" fill="none" stroke="#5a2530"/><rect x="0" y="0" width="14" height="14" fill="#fb7185"/><rect x="29" y="44" width="14" height="14" fill="#fb7185"/></g>
+    </g>
+    <text x="330" y="410" fill="#9fb4cc" font-size="11">rows = targets,</text>
+    <text x="330" y="428" fill="#9fb4cc" font-size="11">cols = sources —</text>
+    <text x="330" y="446" fill="#9fb4cc" font-size="11">both are node indices,</text>
+    <text x="330" y="464" fill="#fda4b0" font-size="11">both must permute</text>
+  </g>
+
+  <!-- (d) permutation test -->
+  <g>
+    <rect x="486" y="342" width="370" height="150" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="342" width="370" height="4" rx="2" fill="#fb7185"/>
+    <circle cx="510" cy="370" r="13" fill="#3a0b14" stroke="#fb7185" stroke-width="1"/><text x="510" y="375" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="532" y="366" fill="#cfe0f0" font-size="14" font-weight="700">The permutation test</text>
+    <text x="510" y="392" fill="#9fb4cc" font-size="11" font-family="'Cascadia Mono',monospace">out_perm[inv_perm] == out_orig ?</text>
+    <g font-size="11.5">
+      <circle cx="520" cy="416" r="5" fill="#34d399"/><text x="534" y="420" fill="#7fe7c0">equivariant: max diff ≈ 1e-6  ✓</text>
+      <circle cx="520" cy="440" r="5" fill="#fb7185"/><text x="534" y="444" fill="#fda4b0">index leak: diff &gt; 0  ✗ violated</text>
+    </g>
+    <text x="510" y="470" fill="#8a99ad" font-size="10.5">row index = artifact · gene coords = real feature</text>
+  </g>
+
+  <line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="538" font-size="13" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure A08. </tspan><tspan>The order of rows in an expression matrix is arbitrary, so a GNN must not depend on it. </tspan><tspan fill="#9fe0ff" font-weight="700">(a)</tspan><tspan> Two orderings of the same GRN must give identical</tspan>
+    <tspan x="40" dy="21">predictions. </tspan><tspan fill="#c4b5fd" font-weight="700">(b)</tspan><tspan> Formally, node models are equivariant — outputs permute with the nodes — and graph-level models are invariant. </tspan><tspan fill="#fde68a" font-weight="700">(c)</tspan><tspan> The adjacency must transform</tspan>
+    <tspan x="40" dy="21">as P A Pᵀ: both endpoint indices follow their nodes; permuting one axis is a bug. </tspan><tspan fill="#fda4b0" font-weight="700">(d)</tspan><tspan> Shared weights + order-independent aggregation (sum/mean/max) guarantee it;</tspan>
+    <tspan x="40" dy="21">the permutation test catches a row-index leak that would otherwise pass silently at training time.</tspan>
+  </text>
+</svg>

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A10 · Readout & pooling → graph token</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  const MODULE=[ // worked example: one strong driver + weak module nodes
+    {id:"TF1",v:null,driver:true},{id:"TF2",v:0.10},{id:"G1",v:0.20},
+    {id:"G2",v:0.10},{id:"G3",v:0.10},{id:"G4",v:0.10}
+  ];
+  function nodes(s){
+    const arr=MODULE.map(m=>({id:m.id,v:m.driver?s.driver:m.v,driver:!!m.driver,bg:false}));
+    const bg=Math.round(s.background);
+    for(let i=0;i<bg;i++)arr.push({id:"bg"+i,v:0.05,driver:false,bg:true});
+    return arr;
+  }
+  function pool(mode,arr,sharp){
+    const n=arr.length, vals=arr.map(a=>a.v);
+    let contrib=new Array(n).fill(0), z=0, maxIdx=-1;
+    if(mode==="sum"){contrib=vals.slice();z=vals.reduce((a,b)=>a+b,0);}
+    else if(mode==="mean"){contrib=vals.map(v=>v/n);z=contrib.reduce((a,b)=>a+b,0);}
+    else if(mode==="max"){let mv=-1;vals.forEach((v,i)=>{if(v>mv){mv=v;maxIdx=i;}});z=mv;contrib=vals.map((v,i)=>i===maxIdx?v:0);}
+    else {const ex=vals.map(v=>Math.exp(sharp*v)),Z=ex.reduce((a,b)=>a+b,0);const al=ex.map(e=>e/Z);contrib=vals.map((v,i)=>al[i]*v);z=contrib.reduce((a,b)=>a+b,0);arr.forEach((a,i)=>a.alpha=al[i]);}
+    return {contrib,z,maxIdx,n};
+  }
+  let scene={};
+  function bar(api,x,z,h,col,lbl,lc){const T=api.THREE,g=new T.Group();
+    const m=new T.Mesh(new T.BoxGeometry(0.2,Math.max(0.01,h),0.2),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.4}));
+    m.position.set(x,h/2,z);g.add(m);if(lbl){const t=api.label(lbl,lc||"#cfe0f0",0.34);t.position.set(x,h+0.26,z);g.add(t);}return g;}
+  function build(api){
+    const T=api.THREE,s=api.state,mode=s.mode,arr=nodes(s),P=pool(mode,arr,s.sharp);
+    const nG=api.group("nodes"),bG=api.group("bars"),zG=api.group("token"),lG=api.group("labels");
+    const cmax=Math.max.apply(null,P.contrib.concat(0.05));
+    // layout: module inner ring (radius 1.8), background outer ring (radius 3.2)
+    const mod=arr.filter(a=>!a.bg), bg=arr.filter(a=>a.bg);
+    function place(a,i,count,rad,zoff){const ang=-Math.PI/2+i/Math.max(1,count)*Math.PI*2;a.x=Math.cos(ang)*rad-1.4;a.z=Math.sin(ang)*rad+zoff;}
+    mod.forEach((a,i)=>place(a,i,mod.length,1.8,0));
+    bg.forEach((a,i)=>place(a,i,bg.length,3.3,0));
+    arr.forEach((a,gi)=>{
+      const i=arr.indexOf(a), c=P.contrib[i];
+      const isMax=(mode==="max"&&i===P.maxIdx);
+      const col=a.driver?new T.Color("#fbbf24"):(a.bg?new T.Color("#3a4a5e"):api.ramp(a.v,"#26405e","#4dd7ff"));
+      const r=a.driver?0.3:(a.bg?0.13:0.22);
+      const m=new T.Mesh(new T.SphereGeometry(r,20,20),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(a.bg?0.2:0.4),emissiveIntensity:a.bg?0.25:0.45,roughness:0.4}));
+      m.position.set(a.x,0.12,a.z);api.pick(m,{node:{id:a.id,v:a.v,c:c,alpha:a.alpha}});nG.add(m);
+      if(!a.bg||c>0.001){bG.add(bar(api,a.x,a.z, c/cmax*1.8, isMax?new T.Color("#34d399"):(a.driver?new T.Color("#fbbf24"):new T.Color("#4dd7ff")), (a.driver||(!a.bg))?c.toFixed(2):"", a.driver?"#fde68a":"#9fd0ff"));}
+      if(!a.bg)lG.add(setP(api.label(a.id+" "+a.v.toFixed(2),a.driver?"#fde68a":"#cfe0f0",0.36),a.x,0.12+r+0.28,a.z));
+    });
+    // graph token pillar
+    const zh=P.z/Math.max(0.5, (mode==="sum"?3.0:1.0))*2.4+0.02;
+    const pm=new T.Mesh(new T.CylinderGeometry(0.34,0.34,zh,24),new T.MeshStandardMaterial({color:0x34d399,emissive:0x0f3a2a,emissiveIntensity:0.55,roughness:0.4}));
+    pm.position.set(3.4,zh/2,0);zG.add(pm);
+    zG.add(setP(api.bigLabel("graph token z_G","#7fe7c0",1.8),3.4,zh+0.5,0));
+    zG.add(setP(api.bigLabel(P.z.toFixed(3),"#d6ffe9",2.2),3.4,zh+0.16,0));
+    scene={z:P.z,n:P.n,driverShare: arr[0].driver? (P.contrib[0]/(P.z||1)):0, mode};
+    const drv=arr[0], drvShare = mode==="max"? (P.maxIdx===0?1:0) : (P.contrib[0]/(P.z||1e-9));
+    const aggName={sum:"Sum",mean:"Mean",max:"Max",attention:"Attention"}[mode];
+    let insight,state;
+    if(mode==="sum"){insight="Sum pooling adds every node's signal. The strong driver counts, but so does every weak background node — so the graph token grows with graph SIZE. Right when total mass is the claim (more active genes = more pathway activity); dangerous when graph size is a sampling artifact (capture depth, database coverage).";
+      state="z_G = Σhᵢ = "+P.z.toFixed(3)+" over "+P.n+" nodes. Add background nodes and watch z climb even though the biology didn't change.";}
+    else if(mode==="mean"){insight="Mean pooling averages. It removes the size confound — but it DILUTES rare signal. The single strong driver TF1 gets swamped by weak background; the graph looks 'average', i.e. inactive, even though one decisive regulator is present.";
+      state="z_G = (1/n)Σhᵢ = "+P.z.toFixed(3)+". Driver contributes only "+(drvShare*100).toFixed(0)+"% now; add background and it shrinks further.";}
+    else if(mode==="max"){insight="Max pooling keeps the strongest value per channel. The driver's existence survives no matter how much background you add — perfect when 'one strong driver / one toxic substructure' is the claim. But it throws away support (how MANY nodes agree) and one noisy node can hijack the whole graph.";
+      state="z_G = max hᵢ = "+P.z.toFixed(3)+" (node "+(P.maxIdx>=0?arr[P.maxIdx].id:"-")+"). Flat as background grows — size-immune, but support-blind.";}
+    else {insight="Attention pooling learns soft weights αᵢ and returns Σαᵢhᵢ. It can spotlight the driver without max's brittleness — but the weights are learned for prediction, not truth: sharpen them and it approaches max, flatten them and it approaches mean. Attention is a weighting, not an explanation.";
+      state="z_G = Σαᵢhᵢ = "+P.z.toFixed(3)+", sharpness "+s.sharp.toFixed(0)+". Driver share "+(drvShare*100).toFixed(0)+"%. Verify weights against perturbation evidence.";}
+    return {badge:aggName+" pooling · z_G="+P.z.toFixed(3),
+      formula:"z_G = READOUT({hᵢ}) · permutation-invariant · y = HEAD(z_G)",
+      insight,state,
+      metrics:{z:P.z.toFixed(3),nodes:P.n,driver:(drvShare*100).toFixed(0)+"%",size:mode==="sum"?"size-sensitive":(mode==="max"?"size-immune":"size-controlled")},
+      focus:{center:[0.6,0.8,0],radius:13}};
+  }
+  function setP(sp,x,y,z){sp.position.set(x,y,z);return sp;}
+  MathLab.create({
+    id:"a10", kind:"readout-pooling",
+    eyebrow:"Block A · Readout & graph-level prediction", title:"A10 · Many node memories → one graph token",
+    subtitle:"A candidate regulatory module: one strong driver, weak members, and background nodes. Pick a pooling rule and watch the same embeddings become a different graph-level claim.",
+    selectedLabel:"Node", selectedHint:"Add background; switch pooling; click a node.",
+    modes:[{value:"sum",label:"Sum (total mass)"},{value:"mean",label:"Mean (average)"},{value:"max",label:"Max (existence)"},{value:"attention",label:"Attention (learned)"}],
+    params:[
+      {key:"driver",label:"driver strength (rare signal)",min:0.3,max:1,step:0.05,value:0.90,fmt:v=>v.toFixed(2)},
+      {key:"background",label:"background nodes (graph size)",min:0,max:16,step:1,value:0},
+      {key:"sharp",label:"attention sharpness",min:1,max:12,step:1,value:5,modes:["attention"]}
+    ],
+    metrics:[{key:"z",label:"Graph token z_G",accent:"green"},{key:"nodes",label:"Nodes",accent:"violet"},
+      {key:"driver",label:"Driver share",accent:"amber"},{key:"size",label:"Size behaviour",accent:"cyan"}],
+    layers:[{group:"nodes",label:"Nodes"},{group:"bars",label:"Contributions"},{group:"token",label:"Graph token"},{group:"labels",label:"Labels"}],
+    primary:{label:"Add background +4",on:api=>{api.setParam("background",Math.min(16,Math.round(api.state.background)+4));}},
+    secondary:{label:"Cycle pooling",on:api=>{const o=["sum","mean","max","attention"],st=document.getElementById('ml-mode');st.value=o[(o.indexOf(api.state.mode)+1)%4];st.dispatchEvent(new Event('change'));}},
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span class="a">amber</span> = strong driver · blue = weak module · grey = background · bar = node\'s contribution to z_G · <span class="g">green pillar</span> = the graph token. Add background and watch sum grow, mean shrink, max stay.',
+    onParam(api){api.frame([0.6,0.8,0],13);},
+    onSelect(api,d){if(d.node)api.setSelected(d.node.id+" · h="+d.node.v.toFixed(2)+" · contributes "+(d.node.c||0).toFixed(3)+" to z_G"+(d.node.alpha!=null?"  (α="+d.node.alpha.toFixed(2)+")":""));},
+    build,
+    snapshot(s){const sc=scene;return {mode:s.mode,driver:s.driver,background:Math.round(s.background),sharp:Math.round(s.sharp),z:sc.z!=null?+sc.z.toFixed(3):0,nodes:sc.n,driverShare:sc.driverShare!=null?+sc.driverShare.toFixed(3):0};}
+  });
+})();
+</script>
+</body>
+</html>

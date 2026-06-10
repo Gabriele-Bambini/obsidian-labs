@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure A04 — degree normalization and hub bias</title>
+  <desc id="d">Four panels: normalization families, hub vs specific coefficients, degree-explosion insensitivity, and the degree audit.</desc>
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/><circle cx="800" cy="440" r="250" fill="#a78bfa" opacity="0.05"/>
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE A04 &#183; DEGREE, NORMALIZATION &amp; SCALE</text>
+  <text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Who counts how much — normalization decides before learning starts</text>
+
+  <!-- (a) families -->
+  <g>
+    <rect x="40" y="82" width="370" height="248" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="82" width="370" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="110" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/><text x="64" y="115" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Four normalization families</text><text x="86" y="124" fill="#8a99ad" font-size="12">α = how much neighbor j counts at target i</text>
+    <g font-size="12.5">
+      <text x="60" y="156" fill="#fda4b0" font-weight="700">raw sum</text><text x="200" y="156" fill="#cfe0f0" font-family="'Cascadia Mono',monospace">α = A[i,j]</text>
+      <text x="60" y="160" fill="#7f93a8" font-size="0"> </text>
+      <text x="60" y="186" fill="#fbd089" font-weight="700">mean</text><text x="200" y="186" fill="#cfe0f0" font-family="'Cascadia Mono',monospace">α = A[i,j] / dᵢ</text>
+      <text x="60" y="216" fill="#7fe7c0" font-weight="700">symmetric GCN</text><text x="200" y="216" fill="#cfe0f0" font-family="'Cascadia Mono',monospace">α = 1 / √(dᵢ·dⱼ)</text>
+      <text x="60" y="246" fill="#c4b5fd" font-weight="700">evidence</text><text x="200" y="246" fill="#cfe0f0" font-family="'Cascadia Mono',monospace">α = wᵢⱼ / √(dᵢ·dⱼ)</text>
+    </g>
+    <line x1="60" y1="262" x2="390" y2="262" stroke="rgba(150,170,200,.14)"/>
+    <text x="60" y="284" fill="#8a99ad" font-size="11.5">raw → degree-blind · mean → target-side only</text>
+    <text x="60" y="304" fill="#8a99ad" font-size="11.5">GCN → both sides · evidence → + confidence</text>
+    <text x="60" y="322" fill="#7f93a8" font-size="11">+ self-loop Ã = A + I before degree (Ã = D̃⁻¹ᐟ²ÃD̃⁻¹ᐟ²)</text>
+  </g>
+
+  <!-- (b) hub vs spec -->
+  <g>
+    <rect x="426" y="82" width="430" height="248" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="426" y="82" width="430" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="450" cy="110" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/><text x="450" y="115" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="472" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Hub vs specific → GeneX</text><text x="472" y="124" fill="#8a99ad" font-size="12">HubTF d=40 · SpecTF d=2 · target d=3</text>
+    <!-- nodes -->
+    <circle cx="470" cy="200" r="22" fill="#4dd7ff" stroke="#0a1322" stroke-width="2"/><text x="470" y="240" fill="#9fe0ff" font-size="11" text-anchor="middle">HubTF d40</text>
+    <circle cx="470" cy="280" r="12" fill="#a78bfa" stroke="#0a1322" stroke-width="2"/><text x="470" y="306" fill="#c4b5fd" font-size="11" text-anchor="middle">SpecTF d2</text>
+    <circle cx="600" cy="240" r="16" fill="#e7a13a" stroke="#0a1322" stroke-width="2"/><text x="600" y="270" fill="#fbd089" font-size="11" text-anchor="middle">GeneX</text>
+    <line x1="492" y1="206" x2="586" y2="234" stroke="#5b7fa8" stroke-width="2.5" marker-end="url(#ar)"/>
+    <line x1="482" y1="278" x2="588" y2="248" stroke="#5b7fa8" stroke-width="2.5" marker-end="url(#ar)"/>
+    <!-- coefficient bars per mode -->
+    <text x="700" y="150" fill="#8a99ad" font-size="11" text-anchor="middle">per-edge coefficient α</text>
+    <g font-size="10" text-anchor="middle">
+      <text x="668" y="172" fill="#fda4b0">raw</text><rect x="650" y="178" width="14" height="34" fill="#4dd7ff"/><rect x="668" y="178" width="14" height="34" fill="#a78bfa"/><text x="668" y="224" fill="#7f93a8">1.0 = 1.0</text>
+      <text x="752" y="172" fill="#7fe7c0">GCN</text><rect x="734" y="204" width="14" height="8" fill="#4dd7ff"/><rect x="752" y="182" width="14" height="30" fill="#a78bfa"/><text x="752" y="224" fill="#7fe7c0">.078 vs .289</text>
+    </g>
+    <text x="640" y="312" fill="#fde68a" font-size="12" text-anchor="middle">GCN: the specific regulator's edge is 3.7× the hub's.</text>
+  </g>
+
+  <!-- (c) degree explosion -->
+  <g>
+    <rect x="40" y="342" width="430" height="150" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="342" width="430" height="4" rx="2" fill="#fbbf24"/>
+    <circle cx="64" cy="370" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/><text x="64" y="375" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="86" y="366" fill="#cfe0f0" font-size="14" font-weight="700">Add 10 background edges to the hub (d 40→50)</text>
+    <g font-size="12.5" font-family="'Cascadia Mono',monospace">
+      <text x="60" y="396" fill="#fda4b0">raw  : 0.82 → 0.82   unchanged</text>
+      <text x="60" y="420" fill="#fbd089">mean : 0.273 → 0.273 unchanged</text>
+      <text x="60" y="444" fill="#7fe7c0">GCN  : 0.075 → 0.067 shrinks ✓</text>
+    </g>
+    <text x="60" y="474" fill="#8a99ad" font-size="11">Only symmetric/evidence respond to source-degree inflation.</text>
+  </g>
+
+  <!-- (d) audit -->
+  <g>
+    <rect x="486" y="342" width="370" height="150" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="342" width="370" height="4" rx="2" fill="#fb7185"/>
+    <circle cx="510" cy="370" r="13" fill="#3a0b14" stroke="#fb7185" stroke-width="1"/><text x="510" y="375" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="532" y="366" fill="#cfe0f0" font-size="14" font-weight="700">Always run the degree audit</text>
+    <g font-size="11.5">
+      <text x="510" y="394" fill="#9fb4cc">• degree-only baseline — must beat it</text>
+      <text x="510" y="416" fill="#9fb4cc">• per-degree-bucket recall (low-degree TFs)</text>
+      <text x="510" y="438" fill="#9fb4cc">• Spearman(degree, score) &gt; 0.5 = retrieval</text>
+      <text x="510" y="460" fill="#9fb4cc">• cross-assay test (TRRUST → ENCODE)</text>
+    </g>
+    <text x="510" y="482" fill="#fda4b0" font-size="11">Normalization controls scale, not content.</text>
+  </g>
+
+  <line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="538" font-size="13" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure A04. </tspan><tspan>Degree enters the operator, so it changes the biology a model reports. </tspan><tspan fill="#9fe0ff" font-weight="700">(a)</tspan><tspan> Four choices for the coefficient α set how much a neighbor</tspan>
+    <tspan x="40" dy="21">counts. </tspan><tspan fill="#c4b5fd" font-weight="700">(b)</tspan><tspan> Under raw sum a broad hub and a specific regulator enter equally; symmetric GCN divides by √(degree) so the specific TF's edge is 3.7× the hub's.</tspan>
+    <tspan x="40" dy="21"></tspan><tspan fill="#fde68a" font-weight="700">(c)</tspan><tspan> Padding the hub with 10 low-confidence edges leaves raw and mean untouched — only degree-aware normalization reacts. </tspan><tspan fill="#fda4b0" font-weight="700">(d)</tspan><tspan> A model that can't</tspan>
+    <tspan x="40" dy="21">beat a degree-only baseline learned database coverage, not regulation — so audit degree at every evaluation.</tspan>
+  </text>
+</svg>

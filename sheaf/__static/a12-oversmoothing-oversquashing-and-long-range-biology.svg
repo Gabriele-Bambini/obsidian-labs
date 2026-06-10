@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure A12 — oversmoothing, oversquashing, and long-range biology</title>
+  <desc id="d">Four panels: oversmoothing variance collapse, oversquashing bottleneck, underreaching chain, and the remedy table.</desc>
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/><circle cx="800" cy="450" r="250" fill="#fb7185" opacity="0.05"/>
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE A12 &#183; OVERSMOOTHING, OVERSQUASHING &amp; LONG-RANGE BIOLOGY</text>
+  <text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Depth is a biological design choice, not a free dial</text>
+
+  <!-- (a) oversmoothing -->
+  <g>
+    <rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="110" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/><text x="64" y="115" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Oversmoothing — variance collapses</text>
+    <polyline points="70,210 110,176 150,158 200,150 260,147 330,146 420,146" fill="none" stroke="#fb7185" stroke-width="2.5"/>
+    <circle cx="70" cy="210" r="3" fill="#4dd7ff"/><circle cx="420" cy="146" r="3" fill="#fb7185"/>
+    <text x="70" y="226" fill="#8a99ad" font-size="10">L=0 distinct</text><text x="380" y="138" fill="#fda4b0" font-size="10">deep: all alike</text>
+    <text x="86" y="150" fill="#8a99ad" font-size="11">Var(H)</text>
+    <text x="250" y="200" fill="#9fb4cc" font-size="11">repeated averaging → identities wash out</text>
+  </g>
+
+  <!-- (b) oversquashing -->
+  <g>
+    <rect x="486" y="82" width="370" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="82" width="370" height="4" rx="2" fill="#fbbf24"/>
+    <circle cx="510" cy="110" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/><text x="510" y="115" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Oversquashing — the bridge bottleneck</text>
+    <g fill="#4dd7ff"><circle cx="540" cy="150" r="7"/><circle cx="560" cy="178" r="7"/><circle cx="528" cy="200" r="7"/><circle cx="568" cy="206" r="7"/></g>
+    <g stroke="#3a4a5e" stroke-width="1.5"><line x1="540" y1="150" x2="560" y2="178"/><line x1="528" y1="200" x2="560" y2="178"/><line x1="568" y1="206" x2="560" y2="178"/></g>
+    <line x1="560" y1="178" x2="720" y2="178" stroke="#fbbf24" stroke-width="4" marker-end="url(#ar)"/><text x="640" y="168" fill="#fde68a" font-size="10" text-anchor="middle">1 bridge</text>
+    <g fill="#fb7185"><circle cx="740" cy="150" r="7"/><circle cx="760" cy="178" r="7"/><circle cx="748" cy="200" r="7"/><circle cx="784" cy="190" r="7"/></g>
+    <g stroke="#3a4a5e" stroke-width="1.5"><line x1="740" y1="150" x2="760" y2="178"/><line x1="748" y1="200" x2="760" y2="178"/><line x1="784" y1="190" x2="760" y2="178"/></g>
+    <text x="671" y="224" fill="#9fb4cc" font-size="11" text-anchor="middle">many sources squeezed into one fixed vector</text>
+  </g>
+
+  <!-- (c) underreaching -->
+  <g>
+    <rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="244" width="430" height="4" rx="2" fill="#34d399"/>
+    <circle cx="64" cy="272" r="13" fill="#0f3a2a" stroke="#34d399" stroke-width="1"/><text x="64" y="277" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Underreaching — signal advances 1 hop / layer</text>
+    <g>
+      <circle cx="80" cy="320" r="14" fill="#fbbf24"/><text x="80" y="350" fill="#fde68a" font-size="10" text-anchor="middle">S=1.0</text>
+      <circle cx="160" cy="320" r="11" fill="#3fa9e8"/><circle cx="240" cy="320" r="11" fill="#2c5f86"/><circle cx="320" cy="320" r="11" fill="#1c3349"/>
+      <circle cx="400" cy="320" r="14" fill="#fb7185"/><text x="400" y="350" fill="#fda4b0" font-size="10" text-anchor="middle">T</text>
+      <line x1="94" y1="320" x2="146" y2="320" stroke="#46627e" stroke-width="2"/><line x1="174" y1="320" x2="226" y2="320" stroke="#46627e" stroke-width="2"/><line x1="254" y1="320" x2="306" y2="320" stroke="#46627e" stroke-width="2"/><line x1="334" y1="320" x2="386" y2="320" stroke="#46627e" stroke-width="2"/>
+    </g>
+    <text x="86" y="384" fill="#9fb4cc" font-size="11.5">T is 4 hops from S → fewer than 4 layers deliver nothing.</text>
+    <text x="86" y="404" fill="#9fb4cc" font-size="11.5">But each hop also averages, so T receives a weakened 1.0.</text>
+    <text x="86" y="432" fill="#fda4b0" font-size="11.5">too few layers → underreach · too many → oversmooth</text>
+    <text x="86" y="462" fill="#8a99ad" font-size="11">a provenance-backed S→T edge fixes it in 1 layer (label-copy = leakage).</text>
+  </g>
+
+  <!-- (d) remedies -->
+  <g>
+    <rect x="486" y="244" width="370" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="244" width="370" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="510" cy="272" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/><text x="510" y="277" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Diagnose, then match the remedy</text>
+    <text x="506" y="298" fill="#4dd7ff" font-size="11.5" font-weight="700">oversmoothing →</text>
+    <text x="506" y="316" fill="#9fb4cc" font-size="11">residuals · PairNorm · DropEdge · fewer layers</text>
+    <text x="506" y="342" fill="#fbbf24" font-size="11.5" font-weight="700">oversquashing →</text>
+    <text x="506" y="360" fill="#9fb4cc" font-size="11">rewiring · virtual edges · attention / global tokens</text>
+    <text x="506" y="386" fill="#34d399" font-size="11.5" font-weight="700">underreaching →</text>
+    <text x="506" y="404" fill="#9fb4cc" font-size="11">more layers · long-range edges · graph transformer</text>
+    <line x1="506" y1="420" x2="836" y2="420" stroke="rgba(150,170,200,.14)"/>
+    <text x="506" y="442" fill="#fda4b0" font-size="11">every added edge needs provenance — not the label.</text>
+    <text x="506" y="462" fill="#c4b5fd" font-size="11">audit: variance + delivery + bottleneck across layers.</text>
+  </g>
+
+  <line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="538" font-size="13" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure A12. </tspan><tspan>Propagation can damage a signal even when it is representable. </tspan><tspan fill="#9fe0ff" font-weight="700">(a)</tspan><tspan> Too many averaging layers collapse node variance — regulators, targets and cell</tspan>
+    <tspan x="40" dy="21">types blur together (oversmoothing). </tspan><tspan fill="#fde68a" font-weight="700">(b)</tspan><tspan> When distant modules talk only through a narrow bridge, many signals compress into one fixed vector (oversquashing).</tspan>
+    <tspan x="40" dy="21"></tspan><tspan fill="#7fe7c0" font-weight="700">(c)</tspan><tspan> Too few layers never reach a distant target (underreaching), yet each hop also weakens the signal. </tspan><tspan fill="#c4b5fd" font-weight="700">(d)</tspan><tspan> Choose depth, residuals, and rewiring as biological</tspan>
+    <tspan x="40" dy="21">hypotheses — diagnosed by variance, long-range delivery and bottleneck pressure — not as blind hyperparameters.</tspan>
+  </text>
+</svg>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A12 · Oversmoothing & oversquashing</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  function ringPos(cx,cz,n,r){const p=[];for(let i=0;i<n;i++){const a=-Math.PI/2+i/n*Math.PI*2;p.push([cx+Math.cos(a)*r,cz+Math.sin(a)*r]);}return p;}
+  function graph(mode,bridge){
+    let pos=[],E=[],source,target,labels=[];
+    if(mode==="chain"){
+      const n=6; for(let i=0;i<n;i++){pos.push([-5+i*2,0]);labels.push(i===0?"S":(i===n-1?"T":String.fromCharCode(96+i)));}
+      for(let i=0;i<n-1;i++)E.push([i,i+1]); source=0;target=n-1;
+    } else if(mode==="barbell"){
+      const A=ringPos(-3.4,0,4,1.3), B=ringPos(3.4,0,4,1.3); pos=A.concat(B);
+      labels=["R1","R2","R3","R4","T1","T2","T3","T4"];
+      for(let i=0;i<4;i++)for(let j=i+1;j<4;j++){E.push([i,j]);E.push([4+i,4+j]);} // two cliques
+      E.push([3,4]); if(bridge>=2)E.push([2,5]); if(bridge>=3)E.push([1,6]); // bridge edges
+      source=0;target=7;
+    } else { // dense module
+      pos=ringPos(0,0,8,2.1); labels="ABCDEFGH".split("");
+      for(let i=0;i<8;i++)for(let j=i+1;j<8;j++)if((i+j)%2===0||Math.abs(i-j)<=2)E.push([i,j]);
+      source=0;target=4;
+    }
+    const n=pos.length, adj=Array.from({length:n},()=>[]);
+    E.forEach(([a,b])=>{adj[a].push(b);adj[b].push(a);});
+    return {n,pos,E,adj,source,target,labels};
+  }
+  function propagate(g,L,alpha,beta){
+    const h0=new Float64Array(g.n); h0[g.source]=1;
+    let h=h0.slice();
+    for(let l=0;l<L;l++){const nh=new Float64Array(g.n);
+      for(let i=0;i<g.n;i++){let m=0;g.adj[i].forEach(j=>m+=h[j]);m=g.adj[i].length?m/g.adj[i].length:0;
+        const mixed=(1-alpha)*h[i]+alpha*m; nh[i]=beta*h0[i]+(1-beta)*mixed;}
+      h=nh;}
+    return {h,h0};
+  }
+  function variance(h){const m=h.reduce((a,b)=>a+b,0)/h.length;return h.reduce((a,b)=>a+(b-m)*(b-m),0)/h.length;}
+  let scene={};
+  function build(api){
+    const T=api.THREE,s=api.state,mode=s.mode,L=Math.round(s.layers),alpha=s.alpha,beta=s.residual,bridge=Math.round(s.bridge);
+    const g=graph(mode,bridge), {h,h0}=propagate(g,L,alpha,beta);
+    const v=variance(h), v0=variance(h0), delivery=h[g.target], retention=h[g.source];
+    const nG=api.group("nodes"),eG=api.group("edges"),lG=api.group("labels");
+    const mn=Math.min.apply(null,[...h]), mx=Math.max.apply(null,[...h,0.001]);
+    g.E.forEach(([a,b])=>{const pa=new T.Vector3(g.pos[a][0],0.12,g.pos[a][1]),pb=new T.Vector3(g.pos[b][0],0.12,g.pos[b][1]);
+      const isBridge=mode==="barbell"&&((a<4)!==(b<4));
+      const col=isBridge?new T.Color("#fbbf24"):new T.Color("#3a4a5e");
+      const d=pb.clone().sub(pa),Ln=d.length();const m=new T.Mesh(new T.CylinderGeometry(isBridge?0.06:0.028,isBridge?0.06:0.028,Ln,8),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(isBridge?0.6:0.2),emissiveIntensity:isBridge?0.6:0.3,roughness:0.5}));
+      m.position.copy(pa).add(pb).multiplyScalar(0.5);m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.clone().normalize());eG.add(m);});
+    g.pos.forEach((p,i)=>{const t=(h[i]-mn)/(mx-mn||1), val=h[i];
+      const col=api.ramp(Math.min(1,val),"#16233a","#4dd7ff");
+      const isS=i===g.source,isT=i===g.target;
+      const yv=0.12+val*2.4;
+      const m=new T.Mesh(new T.SphereGeometry(isS||isT?0.28:0.22,22,22),new T.MeshStandardMaterial({color:isS?new T.Color("#fbbf24"):(isT?new T.Color("#fb7185"):col),emissive:(isS?new T.Color("#fbbf24"):(isT?new T.Color("#fb7185"):col)).clone().multiplyScalar(0.4),emissiveIntensity:0.5,roughness:0.35}));
+      m.position.set(p[0],yv,p[1]);api.pick(m,{node:{id:g.labels[i],v:val,role:isS?"source":(isT?"target":"")}});nG.add(m);
+      nG.add(stem(api,p[0],p[1],yv));
+      lG.add(setP(api.label(g.labels[i]+" "+val.toFixed(2),isS?"#fde68a":(isT?"#fda4b0":"#cfe0f0"),0.36),p[0],yv+0.32,p[1]));
+    });
+    scene={v,delivery,retention,L};
+    let insight,state;
+    if(mode==="chain"){const hops=g.n-1;
+      insight="Underreaching: in a chain, a source signal advances one node per layer. With "+L+" layer(s) it has reached "+Math.min(L,hops)+" hop(s). The target T is "+hops+" hops away, so fewer than "+hops+" layers cannot deliver the evidence at all — no training fixes a path that is too short.";
+      state="Delivery to T = "+delivery.toFixed(3)+(L<hops?" (still underreaching)":" (arrived, but averaged down from 1.0)")+". Source retention = "+retention.toFixed(3)+" — even S forgets its own signal as it mixes.";}
+    else if(mode==="barbell"){
+      insight="Oversquashing: two dense modules talk only through "+bridge+" bridge edge(s) (amber). Every upstream signal in module A must squeeze through that cut to reach module B, compressed into fixed-size vectors. Widen the bridge and more of the distant signal survives.";
+      state="Bridge width "+bridge+" → delivery to T4 = "+delivery.toFixed(3)+". Widen the bridge (or add a provenance-backed virtual edge) to relieve the bottleneck; just stacking layers also oversmooths.";}
+    else {
+      insight="Oversmoothing: in a dense module, repeated averaging pulls every node toward the same value. Node variance collapses, so distinct gene / cell / regulator identities wash out — the graph becomes a blender. A residual keeps each node from fully forgetting its input.";
+      state="Variance "+v.toFixed(4)+" (was "+v0.toFixed(4)+") after "+L+" layers"+(v<0.01&&L>3?" — collapsed → oversmoothed":"")+". Raise residual β to preserve identity.";}
+    return {badge:({chain:"Underreaching",barbell:"Oversquashing",dense:"Oversmoothing"})[mode]+" · layer "+L,
+      formula:"h_v^(l+1) = β·h⁰ + (1−β)[(1−α)h_v + α·mean_{u∈N(v)} h_u]",
+      insight,state,
+      metrics:{variance:v.toFixed(4),delivery:delivery.toFixed(3),retention:retention.toFixed(3),layer:"L="+L},
+      focus:{center:[0,0.7,0],radius:Math.min(20,12+g.n*0.3)}};
+  }
+  function stem(api,x,z,y){const T=api.THREE;const m=new T.Mesh(new T.CylinderGeometry(0.012,0.012,Math.max(0.02,y),6),new T.MeshBasicMaterial({color:0x24384a}));m.position.set(x,y/2,z);return m;}
+  function setP(sp,x,y,z){sp.position.set(x,y,z);return sp;}
+  MathLab.create({
+    id:"a12", kind:"smoothing-squashing",
+    eyebrow:"Block A · Oversmoothing, oversquashing & long-range biology", title:"A12 · Propagation microscope",
+    subtitle:"Put a perturbation on the source (amber), add message-passing layers, and watch long-range delivery to the target (rose) — and whether node variance survives the depth.",
+    selectedLabel:"Node", selectedHint:"Add layers; change α, bridge width, residual.",
+    modes:[{value:"chain",label:"Chain (underreaching)"},{value:"barbell",label:"Barbell (oversquashing)"},{value:"dense",label:"Dense module (oversmoothing)"}],
+    params:[
+      {key:"layers",label:"message-passing layers L",min:0,max:14,step:1,value:2},
+      {key:"alpha",label:"mixing strength α",min:0,max:1,step:0.05,value:0.5,fmt:v=>v.toFixed(2)},
+      {key:"bridge",label:"bridge width",min:1,max:3,step:1,value:1,modes:["barbell"]},
+      {key:"residual",label:"residual β (keep identity)",min:0,max:0.8,step:0.05,value:0,fmt:v=>v.toFixed(2)}
+    ],
+    metrics:[{key:"variance",label:"Node variance",accent:"cyan"},{key:"delivery",label:"Long-range delivery",accent:"green"},
+      {key:"retention",label:"Source retention",accent:"amber"},{key:"layer",label:"Depth",accent:"violet"}],
+    layers:[{group:"edges",label:"Edges / bridge"},{group:"nodes",label:"Signal"},{group:"labels",label:"Labels"}],
+    primary:{label:"+1 layer",on:api=>{api.setParam("layers",Math.min(14,Math.round(api.state.layers)+1));}},
+    secondary:{label:"Next scenario",on:api=>{const o=["chain","barbell","dense"],st=document.getElementById('ml-mode');st.value=o[(o.indexOf(api.state.mode)+1)%3];st.dispatchEvent(new Event('change'));}},
+    defaultCam:{theta:-0.5,phi:0.66,r:14},
+    hint:'<span class="a">amber</span> = source signal · <span class="r">rose</span> = target · node height/colour = current value · barbell bridge edges are amber. Watch delivery rise then fade as depth oversmooths.',
+    onParam(api){const g=({chain:6,barbell:8,dense:8})[api.state.mode]||8;api.frame([0,0.7,0],Math.min(20,12+g*0.3));},
+    onSelect(api,d){if(d.node)api.setSelected(d.node.id+(d.node.role?" ("+d.node.role+")":"")+" · signal = "+d.node.v.toFixed(3));},
+    build,
+    snapshot(s){const sc=scene;return {mode:s.mode,layers:Math.round(s.layers),alpha:s.alpha,bridge:Math.round(s.bridge),residual:s.residual,variance:sc.v!=null?+sc.v.toFixed(4):0,delivery:sc.delivery!=null?+sc.delivery.toFixed(4):0,retention:sc.retention!=null?+sc.retention.toFixed(4):0};}
+  });
+})();
+</script>
+</body>
+</html>

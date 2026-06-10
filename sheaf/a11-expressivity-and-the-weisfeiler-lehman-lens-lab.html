@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A11 · WL expressivity microscope</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  const PAL=["#4dd7ff","#fbbf24","#34d399","#fb7185","#a78bfa","#f59e0b","#22d3ee","#e879f9","#84cc7d","#fca5a5"];
+  // ---- graph pairs ----
+  function ring(cx,cz,n,r,rot){const p=[];for(let i=0;i<n;i++){const a=(rot||0)+i/n*Math.PI*2;p.push([cx+Math.cos(a)*r,cz+Math.sin(a)*r]);}return p;}
+  function pairData(mode){
+    if(mode==="pathstar"){
+      const A={dir:false,pos:[[-6.2,1.4],[-5,1.4],[-3.8,1.4],[-2.6,1.4],[-1.4,1.4],[-0.2,1.4]],E:[[0,1],[1,2],[2,3],[3,4],[4,5]],name:"path"};
+      const Bp=[[3.4,0]].concat(ring(3.4,0,5,1.4,0)); const B={dir:false,pos:Bp,E:[[0,1],[0,2],[0,3],[0,4],[0,5]],name:"star"};
+      return {A,B,note:"degree differs → 1-WL distinguishes fast (but mean/max can miss it)"};
+    }
+    if(mode==="cycletri"){
+      const A={dir:false,pos:ring(-3.4,0,6,1.7,0),E:[[0,1],[1,2],[2,3],[3,4],[4,5],[5,0]],name:"6-cycle"};
+      const Bp=ring(2.2,0.9,3,0.9,0).concat(ring(4.6,-0.9,3,0.9,0)); const B={dir:false,pos:Bp,E:[[0,1],[1,2],[2,0],[3,4],[4,5],[5,3]],name:"2 triangles"};
+      return {A,B,note:"every node degree 2 → identical histograms forever: 1-WL FAILS"};
+    }
+    // loop vs feed-forward (directed GRN)
+    const A={dir:true,pos:ring(-3.4,0,3,1.4,-Math.PI/2),E:[[0,1],[1,2],[2,0]],name:"feedback loop"};
+    const B={dir:true,pos:ring(3.4,0,3,1.4,-Math.PI/2),E:[[0,1],[0,2],[1,2]],name:"feed-forward"};
+    return {A,B,note:"undirected both look like a triangle — only DIRECTION separates them"};
+  }
+  function buildAdj(g){const n=g.pos.length;g.adjAll=Array.from({length:n},()=>[]);g.adjIn=Array.from({length:n},()=>[]);g.adjOut=Array.from({length:n},()=>[]);
+    g.E.forEach(([a,b])=>{g.adjAll[a].push(b);g.adjAll[b].push(a);g.adjOut[a].push(b);g.adjIn[b].push(a);});return g;}
+  function initColors(g,evidence,directed){const n=g.pos.length,c=new Array(n);
+    for(let i=0;i<n;i++){ if(!evidence)c[i]=0; else c[i]= (directed&&g.dir)? (g.adjIn[i].length*10+g.adjOut[i].length) : g.adjAll[i].length; }
+    return c;}
+  function key(c,g,i,cols,agg,useDir){
+    function red(arr){const s=arr.slice().sort((a,b)=>a-b);
+      if(agg==="sum")return s.join(",");
+      if(agg==="mean")return s.length?(s.reduce((a,b)=>a+b,0)/s.length).toFixed(2):"-";
+      return s.length?s[s.length-1]+"":"-"; /*max*/}
+    if(useDir&&g.dir){return c+"|i"+red(g.adjIn[i].map(j=>cols[j]))+"|o"+red(g.adjOut[i].map(j=>cols[j]));}
+    return c+"|"+red(g.adjAll[i].map(j=>cols[j]));
+  }
+  function refine(gA,gB,iters,agg,evidence){
+    const useDir=evidence; // direction revealed only with evidence on
+    let cA=initColors(gA,evidence,useDir), cB=initColors(gB,evidence,useDir);
+    for(let t=0;t<iters;t++){
+      const map={}; let nid=0;
+      const na=cA.map((c,i)=>{const k=key(c,gA,i,cA,agg,useDir);if(!(k in map))map[k]=nid++;return map[k];});
+      const nb=cB.map((c,i)=>{const k=key(c,gB,i,cB,agg,useDir);if(!(k in map))map[k]=nid++;return map[k];});
+      cA=na;cB=nb;
+    }
+    return {cA,cB};
+  }
+  function hist(c){const h={};c.forEach(x=>h[x]=(h[x]||0)+1);return h;}
+  function distinguishable(cA,cB){const ha=hist(cA),hb=hist(cB);const ids=new Set([...Object.keys(ha),...Object.keys(hb)]);
+    for(const id of ids)if((ha[id]||0)!==(hb[id]||0))return true;return false;}
+  let scene={};
+  function drawGraph(api,g,cols,yBase){
+    const T=api.THREE,grp=new T.Group();
+    g.E.forEach(([a,b])=>{const pa=new T.Vector3(g.pos[a][0],0.12,g.pos[a][1]),pb=new T.Vector3(g.pos[b][0],0.12,g.pos[b][1]);
+      const d=pb.clone().sub(pa),L=d.length();const m=new T.Mesh(new T.CylinderGeometry(0.03,0.03,L,8),new T.MeshStandardMaterial({color:0x46627e,emissive:0x14202c,emissiveIntensity:0.3,roughness:0.5}));
+      m.position.copy(pa).add(pb).multiplyScalar(0.5);m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),d.clone().normalize());grp.add(m);
+      if(g.dir){const dir=d.clone().normalize();const head=new T.Mesh(new T.ConeGeometry(0.1,0.22,10),new T.MeshBasicMaterial({color:0x8fb4d8}));head.position.copy(pb).addScaledVector(dir,-0.4);head.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);grp.add(head);}
+    });
+    g.pos.forEach((p,i)=>{const col=new T.Color(PAL[cols[i]%PAL.length]);
+      const m=new T.Mesh(new T.SphereGeometry(0.26,22,22),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),emissiveIntensity:0.5,roughness:0.35}));
+      m.position.set(p[0],0.26,p[1]);grp.add(m);});
+    return grp;
+  }
+  function build(api){
+    const T=api.THREE,s=api.state,iters=Math.round(s.iteration),agg=s.mode,evidence=s.evidence===1;
+    const PM=["pathstar","cycletri","loopff"][Math.round(s.pair)]||"pathstar";
+    const pd=pairData(PM); buildAdj(pd.A);buildAdj(pd.B);
+    const {cA,cB}=refine(pd.A,pd.B,iters,agg,evidence);
+    const dist=distinguishable(cA,cB);
+    const gG=api.group("graphs"),hG=api.group("hist"),lG=api.group("labels");
+    gG.add(drawGraph(api,pd.A,cA));gG.add(drawGraph(api,pd.B,cB));
+    lG.add(setP(api.bigLabel("A · "+pd.A.name,"#9fd0ff",2.0),pd.A.pos.reduce((a,p)=>a+p[0],0)/pd.A.pos.length,0.05,-2.4));
+    lG.add(setP(api.bigLabel("B · "+pd.B.name,"#c4b5fd",2.0),pd.B.pos.reduce((a,p)=>a+p[0],0)/pd.B.pos.length,0.05,-2.4));
+    // histograms (color → count) as small bar rows under each graph
+    function drawHist(cols,cx){const h=hist(cols);const ids=Object.keys(h).sort((a,b)=>a-b);const w=0.5;
+      ids.forEach((id,k)=>{const col=new T.Color(PAL[(+id)%PAL.length]);const bh=0.2+h[id]*0.32;
+        const m=new T.Mesh(new T.BoxGeometry(0.3,bh,0.3),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.4}));
+        m.position.set(cx+(k-(ids.length-1)/2)*w,bh/2,2.6);hG.add(m);
+        hG.add(setP(api.flatNum(""+h[id],"#0a1622",0.6),cx+(k-(ids.length-1)/2)*w,bh+0.02,2.6));});}
+    const cxA=pd.A.pos.reduce((a,p)=>a+p[0],0)/pd.A.pos.length, cxB=pd.B.pos.reduce((a,p)=>a+p[0],0)/pd.B.pos.length;
+    drawHist(cA,cxA);drawHist(cB,cxB);
+    lG.add(setP(api.label("histogram A","#7f9ab0",0.4),cxA,0.05,3.3));
+    lG.add(setP(api.label("histogram B","#7f9ab0",0.4),cxB,0.05,3.3));
+    const nA=new Set(cA).size, nB=new Set(cB).size;
+    scene={dist,nA,nB,iters};
+    const aggName={sum:"sum / injective (1-WL, GIN)",mean:"mean (forgets counts)",max:"max (strongest only)"}[agg];
+    let insight;
+    if(dist){insight="The two color histograms DIFFER at iteration "+iters+" → this model can tell the graphs apart. "+pd.note+".";}
+    else {insight="The color histograms are IDENTICAL at iteration "+iters+" → indistinguishable. "+pd.note+". No readout can recover a difference the node updates never created.";}
+    let state;
+    if(PM==="cycletri")state="Even sum/injective (full 1-WL) cannot separate a 6-cycle from two triangles — a genuine higher-order limit. Triangles need motif / subgraph / higher-order features, not just more layers.";
+    else if(PM==="loopff")state= evidence? "Direction revealed: a feedback loop (TF1→TF2→TF3→TF1) and a feed-forward (TF1→TF2,TF1→TF3,TF2→TF3) now separate." : "Anonymous & undirected, both are just a triangle — turn on evidence (direction) to make the regulatory logic visible.";
+    else state= (agg==="mean"||agg==="max")? "With "+agg+", neighbours of color 0 give "+(agg==="mean"?"mean 0":"max 0")+" regardless of how many — so the hub's high degree is invisible. Switch to sum to count them." : "Sum keeps the neighbour multiset, so degree (path end / inner / hub) refines into distinct colors.";
+    return {badge:(dist?"DISTINGUISHABLE":"1-WL CANNOT TELL APART")+" · iter "+iters,
+      formula:"c_v^(t+1) = HASH(c_v, MULTISET{c_u : u∈N(v)})  ·  "+aggName,
+      insight,state,
+      metrics:{verdict:dist?"✓ separable":"✗ collapsed",colorsA:nA,colorsB:nB,iter:"t="+iters},
+      focus:{center:[0,0.6,0.4],radius:13}};
+  }
+  function setP(sp,x,y,z){sp.position.set(x,y,z);return sp;}
+  // pair is held in state via a custom param using modes? Use a 'pair' param.
+  MathLab.create({
+    id:"a11", kind:"wl-expressivity",
+    eyebrow:"Block A · Expressivity & the Weisfeiler-Lehman lens", title:"A11 · What can the model even tell apart?",
+    subtitle:"Recolor every node from its own colour + the multiset of neighbour colours. If two graphs keep the same colour histogram, message passing can't separate them.",
+    selectedLabel:"Aggregator", selectedHint:"Choose a graph pair; step iterations; compare histograms.",
+    modes:[{value:"sum",label:"sum (injective / GIN = 1-WL)"},{value:"mean",label:"mean (forgets multiplicity)"},{value:"max",label:"max (strongest only)"}],
+    params:[
+      {key:"pair",label:"graph pair",min:0,max:2,step:1,value:0,fmt:v=>["path ↔ star","6-cycle ↔ 2 triangles","loop ↔ feed-forward"][v]},
+      {key:"iteration",label:"refinement iteration t",min:0,max:5,step:1,value:1},
+      {key:"evidence",label:"node/edge evidence",min:0,max:1,step:1,value:0,fmt:v=>v?"features+direction":"anonymous"}
+    ],
+    metrics:[{key:"verdict",label:"1-WL verdict",accent:"green"},{key:"colorsA",label:"# colours A",accent:"cyan"},
+      {key:"colorsB",label:"# colours B",accent:"violet"},{key:"iter",label:"Iteration",accent:"amber"}],
+    layers:[{group:"graphs",label:"Graphs"},{group:"hist",label:"Histograms"},{group:"labels",label:"Labels"}],
+    primary:{label:"Refine +1 iteration",on:api=>{api.setParam("iteration",Math.min(5,Math.round(api.state.iteration)+1));}},
+    secondary:{label:"Next graph pair",on:api=>{api.setParam("pair",(Math.round(api.state.pair)+1)%3);}},
+    defaultCam:{theta:-0.5,phi:0.7,r:13},
+    hint:'each colour = a distinct refined node state · matching histograms = the graphs are <span class="r">indistinguishable</span> to message passing · turn on evidence to break symmetry with features &amp; direction.',
+    onParam(api){api.frame([0,0.6,0.4],13);},
+    onSelect(api,d){},
+    build,
+    snapshot(s){const sc=scene;const pm={0:"pathstar",1:"cycletri",2:"loopff"}[Math.round(s.pair)]||s.pair;return {agg:s.mode,pair:pm,iteration:Math.round(s.iteration),evidence:Math.round(s.evidence),distinguishable:!!sc.dist,colorsA:sc.nA,colorsB:sc.nB};}
+  });
+})();
+</script>
+</body>
+</html>

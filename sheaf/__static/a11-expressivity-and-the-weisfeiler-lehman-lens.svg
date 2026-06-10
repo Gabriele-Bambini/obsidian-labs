@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure A11 — expressivity and the Weisfeiler-Lehman lens</title>
+  <desc id="d">Four panels: the WL refinement rule, path vs star, the 6-cycle vs two-triangles limit, and the table of expressivity fixes.</desc>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/><circle cx="800" cy="450" r="250" fill="#fb7185" opacity="0.05"/>
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE A11 &#183; EXPRESSIVITY &amp; THE WEISFEILER-LEHMAN LENS</text>
+  <text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">What distinctions can the architecture even see?</text>
+
+  <!-- (a) refinement rule -->
+  <g>
+    <rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="110" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/><text x="64" y="115" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Colour refinement (1-WL)</text>
+    <circle cx="110" cy="172" r="14" fill="#4dd7ff"/>
+    <circle cx="80" cy="150" r="8" fill="#fbbf24"/><circle cx="80" cy="194" r="8" fill="#fbbf24"/><circle cx="140" cy="150" r="8" fill="#34d399"/>
+    <line x1="92" y1="155" x2="100" y2="166" stroke="#46627e" stroke-width="2"/><line x1="92" y1="189" x2="100" y2="178" stroke="#46627e" stroke-width="2"/><line x1="128" y1="156" x2="120" y2="165" stroke="#46627e" stroke-width="2"/>
+    <line x1="160" y1="172" x2="196" y2="172" stroke="#5a6b80" stroke-width="2" marker-end="url(#arr)"/>
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.6"/></marker></defs>
+    <circle cx="214" cy="172" r="14" fill="#a78bfa"/>
+    <text x="86" y="208" fill="#9fb4cc" font-size="11" font-family="'Cascadia Mono',monospace">c' = HASH(c, multiset{neighbour colours})</text>
+    <text x="86" y="226" fill="#8a99ad" font-size="11">multiset = counts matter · repeat = info spreads 1 hop/round</text>
+  </g>
+
+  <!-- (b) path vs star -->
+  <g>
+    <rect x="486" y="82" width="370" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="82" width="370" height="4" rx="2" fill="#34d399"/>
+    <circle cx="510" cy="110" r="13" fill="#0f3a2a" stroke="#34d399" stroke-width="1"/><text x="510" y="115" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Path vs star — separable</text>
+    <g><circle cx="516" cy="150" r="6" fill="#fbbf24"/><circle cx="540" cy="150" r="6" fill="#4dd7ff"/><circle cx="564" cy="150" r="6" fill="#4dd7ff"/><circle cx="588" cy="150" r="6" fill="#fbbf24"/>
+       <line x1="516" y1="150" x2="588" y2="150" stroke="#46627e" stroke-width="1.5"/></g>
+    <text x="552" y="172" fill="#7fe7c0" font-size="10" text-anchor="middle">degrees differ → distinct colours</text>
+    <g><circle cx="700" cy="158" r="8" fill="#34d399"/><circle cx="670" cy="140" r="5" fill="#fbbf24"/><circle cx="730" cy="140" r="5" fill="#fbbf24"/><circle cx="670" cy="176" r="5" fill="#fbbf24"/><circle cx="730" cy="176" r="5" fill="#fbbf24"/>
+       <line x1="670" y1="140" x2="700" y2="158" stroke="#46627e" stroke-width="1.5"/><line x1="730" y1="140" x2="700" y2="158" stroke="#46627e" stroke-width="1.5"/><line x1="670" y1="176" x2="700" y2="158" stroke="#46627e" stroke-width="1.5"/><line x1="730" y1="176" x2="700" y2="158" stroke="#46627e" stroke-width="1.5"/></g>
+    <text x="532" y="208" fill="#fda4b0" font-size="11">but mean/max see only colour 0 → can't count the hub.</text>
+    <text x="532" y="224" fill="#8a99ad" font-size="11">sum (GIN) keeps the multiset and separates them.</text>
+  </g>
+
+  <!-- (c) cycle vs triangles -->
+  <g>
+    <rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="244" width="430" height="4" rx="2" fill="#fb7185"/>
+    <circle cx="64" cy="272" r="13" fill="#3a0b14" stroke="#fb7185" stroke-width="1"/><text x="64" y="277" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">The classic 1-WL failure</text>
+    <g stroke="#46627e" stroke-width="2" fill="none">
+      <polygon points="150,310 185,322 185,360 150,372 115,360 115,322" />
+    </g>
+    <g fill="#4dd7ff"><circle cx="150" cy="310" r="7"/><circle cx="185" cy="322" r="7"/><circle cx="185" cy="360" r="7"/><circle cx="150" cy="372" r="7"/><circle cx="115" cy="360" r="7"/><circle cx="115" cy="322" r="7"/></g>
+    <text x="150" y="395" fill="#9fb4cc" font-size="11" text-anchor="middle">6-cycle (connected)</text>
+    <g stroke="#46627e" stroke-width="2" fill="none"><polygon points="300,312 340,312 320,346"/><polygon points="300,372 340,372 320,338"/></g>
+    <g fill="#4dd7ff"><circle cx="300" cy="312" r="7"/><circle cx="340" cy="312" r="7"/><circle cx="320" cy="346" r="7"/><circle cx="300" cy="372" r="7"/><circle cx="340" cy="372" r="7"/><circle cx="320" cy="338" r="7"/></g>
+    <text x="320" y="395" fill="#9fb4cc" font-size="11" text-anchor="middle">2 triangles (disconnected)</text>
+    <text x="86" y="428" fill="#fda4b0" font-size="12">every node degree 2 → identical colour histogram forever.</text>
+    <text x="86" y="448" fill="#8a99ad" font-size="11.5">Even sum/injective 1-WL can't separate them. Depth doesn't</text>
+    <text x="86" y="466" fill="#8a99ad" font-size="11.5">help — triangles need motif / subgraph / higher-order features.</text>
+  </g>
+
+  <!-- (d) fixes -->
+  <g>
+    <rect x="486" y="244" width="370" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="244" width="370" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="510" cy="272" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/><text x="510" y="277" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Match the fix to the missing variable</text>
+    <g font-size="11">
+      <text x="506" y="298" fill="#9fb4cc">regulator vs target →</text><text x="690" y="298" fill="#7fe7c0">node types</text>
+      <text x="506" y="320" fill="#9fb4cc">activation vs repression →</text><text x="690" y="320" fill="#7fe7c0">signed directed edges</text>
+      <text x="506" y="342" fill="#9fb4cc">feed-forward / triangle →</text><text x="690" y="342" fill="#7fe7c0">motif / subgraph GNN</text>
+      <text x="506" y="364" fill="#9fb4cc">tissue geometry →</text><text x="690" y="364" fill="#7fe7c0">positional encodings</text>
+      <text x="506" y="386" fill="#9fb4cc">long-range relation →</text><text x="690" y="386" fill="#7fe7c0">virtual edges / transformer</text>
+      <text x="506" y="408" fill="#9fb4cc">context transport →</text><text x="690" y="408" fill="#7fe7c0">sheaf restriction maps</text>
+    </g>
+    <text x="506" y="440" fill="#fda4b0" font-size="11.5">Name the invisible distinction first —</text>
+    <text x="506" y="458" fill="#fda4b0" font-size="11.5">complexity should follow the missing variable, not fashion.</text>
+  </g>
+
+  <line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="538" font-size="13" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure A11. </tspan><tspan>Expressivity is which differences a model can represent — not its accuracy. </tspan><tspan fill="#9fe0ff" font-weight="700">(a)</tspan><tspan> WL recolours each node from its colour + the multiset of</tspan>
+    <tspan x="40" dy="21">neighbour colours; if histograms ever differ, the graphs are separable. </tspan><tspan fill="#7fe7c0" font-weight="700">(b)</tspan><tspan> Sum (GIN) separates a path from a star, but mean/max forget multiplicity and miss the hub.</tspan>
+    <tspan x="40" dy="21"></tspan><tspan fill="#fda4b0" font-weight="700">(c)</tspan><tspan> A 6-cycle and two triangles share every colour histogram — the classic 1-WL limit no readout can fix. </tspan><tspan fill="#c4b5fd" font-weight="700">(d)</tspan><tspan> If a biological distinction is invisible,</tspan>
+    <tspan x="40" dy="21">name it and add the smallest feature (direction, sign, type, motif, position, sheaf transport) that makes it representable — before blaming training.</tspan>
+  </text>
+</svg>

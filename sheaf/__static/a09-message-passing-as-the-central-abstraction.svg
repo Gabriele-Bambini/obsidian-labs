@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure A09 — message passing as the central abstraction</title>
+  <desc id="d">Four panels: the φ-AGG-ψ template, MPNN special cases, the receptive field cascade, and aggregator choice plus the not-causal caveat.</desc>
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/><circle cx="800" cy="450" r="250" fill="#34d399" opacity="0.05"/>
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE A09 &#183; MESSAGE PASSING</text>
+  <text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Every GNN is one loop: build · combine · update</text>
+
+  <!-- (a) template -->
+  <g>
+    <rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="110" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/><text x="64" y="115" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The MPNN template</text>
+    <g>
+      <circle cx="90" cy="170" r="16" fill="#e7a13a"/><text x="90" y="200" fill="#fbd089" font-size="10" text-anchor="middle">neighbor j</text>
+      <line x1="108" y1="170" x2="158" y2="170" stroke="#4dd7ff" stroke-width="3" marker-end="url(#ar)"/><text x="133" y="160" fill="#9fd0ff" font-size="11" text-anchor="middle">φ</text>
+      <rect x="166" y="156" width="70" height="28" rx="6" fill="#15263a"/><text x="201" y="174" fill="#cfe0f0" font-size="11" text-anchor="middle">AGG</text>
+      <line x1="240" y1="170" x2="290" y2="170" stroke="#34d399" stroke-width="3" marker-end="url(#ar)"/><text x="265" y="160" fill="#7fe7c0" font-size="11" text-anchor="middle">ψ</text>
+      <circle cx="312" cy="170" r="18" fill="#4dd7ff"/><text x="312" y="202" fill="#9fe0ff" font-size="10" text-anchor="middle">node i'</text>
+    </g>
+    <text x="360" y="158" fill="#9fb4cc" font-size="10.5" font-family="'Cascadia Mono',monospace">mⱼᵢ=φ(hᵢ,hⱼ,e)</text>
+    <text x="360" y="176" fill="#9fb4cc" font-size="10.5" font-family="'Cascadia Mono',monospace">aᵢ=AGG{mⱼᵢ}</text>
+    <text x="360" y="194" fill="#9fb4cc" font-size="10.5" font-family="'Cascadia Mono',monospace">hᵢ'=ψ(hᵢ,aᵢ)</text>
+    <text x="86" y="222" fill="#8a99ad" font-size="11">φ builds messages · AGG combines (order-independent) · ψ updates.</text>
+  </g>
+
+  <!-- (b) special cases -->
+  <g>
+    <rect x="486" y="82" width="370" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="82" width="370" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="510" cy="110" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/><text x="510" y="115" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">One template, every model</text>
+    <g font-size="11.5" font-family="'Cascadia Mono',monospace">
+      <text x="506" y="138" fill="#7fe7c0">GCN </text><text x="560" y="138" fill="#9fb4cc">mean,  degree-weighted</text>
+      <text x="506" y="160" fill="#7fe7c0">SAGE</text><text x="560" y="160" fill="#9fb4cc">max / mean, self‖agg</text>
+      <text x="506" y="182" fill="#7fe7c0">GAT </text><text x="560" y="182" fill="#9fb4cc">attention-weighted sum</text>
+      <text x="506" y="204" fill="#7fe7c0">GIN </text><text x="560" y="204" fill="#9fb4cc">sum, MLP (injective)</text>
+    </g>
+    <text x="506" y="224" fill="#8a99ad" font-size="11">they differ only in φ, AGG, ψ.</text>
+  </g>
+
+  <!-- (c) receptive field cascade -->
+  <g>
+    <rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="244" width="430" height="4" rx="2" fill="#34d399"/>
+    <circle cx="64" cy="272" r="13" fill="#0f3a2a" stroke="#34d399" stroke-width="1"/><text x="64" y="277" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Receptive field grows one hop per layer</text>
+    <circle cx="100" cy="330" r="18" fill="#e7a13a"/><text x="100" y="362" fill="#fbd089" font-size="10" text-anchor="middle">TF1</text>
+    <line x1="118" y1="330" x2="208" y2="330" stroke="#4dd7ff" stroke-width="2.5" marker-end="url(#ar)"/>
+    <circle cx="228" cy="330" r="15" fill="#4dd7ff" stroke="#34d399" stroke-width="2"/><text x="228" y="360" fill="#9fe0ff" font-size="10" text-anchor="middle">GeneA</text>
+    <line x1="246" y1="330" x2="336" y2="330" stroke="#4dd7ff" stroke-width="2.5" marker-end="url(#ar)"/>
+    <circle cx="356" cy="330" r="15" fill="#3fa9e8" stroke="#34d399" stroke-width="2"/><text x="356" y="360" fill="#9fb4cc" font-size="10" text-anchor="middle">GeneC</text>
+    <text x="164" y="318" fill="#7fe7c0" font-size="10" text-anchor="middle">L=1</text><text x="292" y="318" fill="#7fe7c0" font-size="10" text-anchor="middle">L=2</text>
+    <text x="86" y="400" fill="#9fb4cc" font-size="11.5">L=1 direct regulators · L=2 regulators-of-regulators</text>
+    <text x="86" y="420" fill="#9fb4cc" font-size="11.5">The cascade TF1→GeneA→GeneC lands at GeneC by round 2 —</text>
+    <text x="86" y="438" fill="#9fb4cc" font-size="11.5">even though TF1 and GeneC are not directly connected.</text>
+    <text x="86" y="466" fill="#fda4b0" font-size="11.5">2–3 layers match GRN hierarchy depth; deeper = oversmoothing.</text>
+  </g>
+
+  <!-- (d) aggregator + caveat -->
+  <g>
+    <rect x="486" y="244" width="370" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="244" width="370" height="4" rx="2" fill="#fbbf24"/>
+    <circle cx="510" cy="272" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/><text x="510" y="277" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">The aggregator decides what combines</text>
+    <text x="560" y="300" fill="#8a99ad" font-size="10.5" text-anchor="middle">hub gene, many regulators → GeneC state</text>
+    <g text-anchor="middle" font-size="10">
+      <rect x="516" y="322" width="34" height="20" fill="#3fa9e8"/><text x="533" y="356" fill="#9fb4cc">mean</text><text x="533" y="318" fill="#9fd0ff">.23</text>
+      <rect x="566" y="312" width="34" height="60" fill="#34d399"/><text x="583" y="356" fill="#7fe7c0">sum</text><text x="583" y="306" fill="#7fe7c0">.69</text>
+      <rect x="616" y="335" width="34" height="34" fill="#a78bfa"/><text x="633" y="356" fill="#c4b5fd">max</text><text x="633" y="330" fill="#c4b5fd">.38</text>
+      <rect x="666" y="346" width="34" height="26" fill="#4dd7ff"/><text x="683" y="356" fill="#9fe0ff">attn</text><text x="683" y="341" fill="#9fe0ff">.26</text>
+    </g>
+    <text x="671" y="384" fill="#8a99ad" font-size="10.5" text-anchor="middle">sum scales with degree; mean hides it</text>
+    <line x1="506" y1="404" x2="836" y2="404" stroke="rgba(150,170,200,.14)"/>
+    <text x="506" y="426" fill="#fda4b0" font-size="12" font-weight="700">Message passing is predictive, NOT causal.</text>
+    <text x="506" y="446" fill="#9fb4cc" font-size="11">High attention TF1→GeneA may be hub bias or co-</text>
+    <text x="506" y="464" fill="#9fb4cc" font-size="11">expression. Confirm with Perturb-seq / CRISPR knockdown.</text>
+  </g>
+
+  <line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="538" font-size="13" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure A09. </tspan><tspan>Message passing is the local engine of GNNs. </tspan><tspan fill="#9fe0ff" font-weight="700">(a)</tspan><tspan> Each round builds an edge-aware message φ, combines neighbours with an order-independent</tspan>
+    <tspan x="40" dy="21">aggregator AGG, and updates the node with ψ. </tspan><tspan fill="#c4b5fd" font-weight="700">(b)</tspan><tspan> GCN, GraphSAGE, GAT and GIN are the same template with different φ/AGG/ψ. </tspan><tspan fill="#7fe7c0" font-weight="700">(c)</tspan><tspan> After L rounds a node has</tspan>
+    <tspan x="40" dy="21">seen its L-hop neighbourhood, so the cascade TF1→GeneA→GeneC is captured by layer 2; 2–3 layers fit GRN hierarchy, deeper oversmooths. </tspan><tspan fill="#fde68a" font-weight="700">(d)</tspan><tspan> Sum scales with degree</tspan>
+    <tspan x="40" dy="21">where mean hides it — and a high message/attention weight is a predictive statistic, not proof of causal regulation (validate with perturbation data).</tspan>
+  </text>
+</svg>

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 900 230" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t">
+  <title id="t">A09 concept — message, aggregate, update; receptive field grows per layer</title>
+  <defs><marker id="i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="900" height="230" rx="12" fill="#070b14"/>
+  <text x="28" y="32" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="1.5">A09 · φ BUILD · AGG COMBINE · ψ UPDATE</text>
+
+  <!-- the loop -->
+  <circle cx="70" cy="120" r="15" fill="#e7a13a"/><text x="70" y="148" fill="#fbd089" font-size="9" text-anchor="middle">neighbor</text>
+  <line x1="86" y1="120" x2="128" y2="120" stroke="#4dd7ff" stroke-width="3" marker-end="url(#i)"/><text x="107" y="110" fill="#9fd0ff" font-size="11" text-anchor="middle">φ</text>
+  <rect x="134" y="106" width="56" height="28" rx="6" fill="#15263a"/><text x="162" y="124" fill="#cfe0f0" font-size="11" text-anchor="middle">AGG</text>
+  <line x1="192" y1="120" x2="234" y2="120" stroke="#34d399" stroke-width="3" marker-end="url(#i)"/><text x="213" y="110" fill="#7fe7c0" font-size="11" text-anchor="middle">ψ</text>
+  <circle cx="254" cy="120" r="17" fill="#4dd7ff"/><text x="254" y="150" fill="#9fe0ff" font-size="9" text-anchor="middle">node'</text>
+  <text x="160" y="172" fill="#8a99ad" font-size="10" text-anchor="middle">repeat = one layer</text>
+
+  <text x="320" y="124" fill="#5a6b80" font-size="16" text-anchor="middle">→</text>
+
+  <!-- receptive field hops -->
+  <text x="500" y="58" fill="#7fe7c0" font-size="12" text-anchor="middle">receptive field grows 1 hop / layer</text>
+  <circle cx="385" cy="120" r="15" fill="#e7a13a"/><text x="385" y="148" fill="#fbd089" font-size="9" text-anchor="middle">TF1</text>
+  <line x1="401" y1="120" x2="455" y2="120" stroke="#4dd7ff" stroke-width="2.5" marker-end="url(#i)"/>
+  <circle cx="475" cy="120" r="13" fill="#4dd7ff" stroke="#34d399" stroke-width="2"/><text x="475" y="146" fill="#9fe0ff" font-size="9" text-anchor="middle">GeneA</text>
+  <line x1="491" y1="120" x2="545" y2="120" stroke="#4dd7ff" stroke-width="2.5" marker-end="url(#i)"/>
+  <circle cx="565" cy="120" r="13" fill="#3fa9e8" stroke="#34d399" stroke-width="2"/><text x="565" y="146" fill="#9fb4cc" font-size="9" text-anchor="middle">GeneC</text>
+  <text x="438" y="104" fill="#7fe7c0" font-size="9" text-anchor="middle">L1</text><text x="528" y="104" fill="#7fe7c0" font-size="9" text-anchor="middle">L2</text>
+  <text x="475" y="172" fill="#8a99ad" font-size="9.5" text-anchor="middle">cascade reaches GeneC by round 2</text>
+
+  <line x1="612" y1="78" x2="612" y2="162" stroke="rgba(150,170,200,.2)" stroke-width="1"/>
+  <text x="700" y="62" fill="#fde68a" font-size="11.5" text-anchor="middle">AGG matters (hub)</text>
+  <g text-anchor="middle" font-size="9">
+    <rect x="640" y="118" width="18" height="22" fill="#3fa9e8"/><text x="649" y="152" fill="#9fb4cc">mean</text>
+    <rect x="666" y="92" width="18" height="48" fill="#34d399"/><text x="675" y="152" fill="#7fe7c0">sum</text>
+    <rect x="692" y="110" width="18" height="30" fill="#a78bfa"/><text x="701" y="152" fill="#c4b5fd">max</text>
+    <rect x="718" y="122" width="18" height="18" fill="#4dd7ff"/><text x="727" y="152" fill="#9fe0ff">attn</text>
+  </g>
+  <text x="800" y="100" fill="#cfe0f0" font-size="11.5" font-weight="700" text-anchor="middle">sum scales</text>
+  <text x="800" y="116" fill="#cfe0f0" font-size="11.5" font-weight="700" text-anchor="middle">with degree;</text>
+  <text x="800" y="132" fill="#fda4b0" font-size="11" text-anchor="middle">deep L =</text>
+  <text x="800" y="147" fill="#fda4b0" font-size="11" text-anchor="middle">oversmoothing</text>
+
+  <text x="450" y="208" fill="#6b7a8d" font-size="11" text-anchor="middle">GCN / SAGE / GAT / GIN = same loop, different φ·AGG·ψ · high attention ≠ causation — validate with perturbation data</text>
+</svg>

@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure A13 — data splits, leakage, and honest evaluation</title>
+  <desc id="d">Four panels: the locked rooms, target-edge leakage, split families, and apparent versus honest score.</desc>
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1 L8 5 L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="160" cy="70" r="230" fill="#fb7185" opacity="0.05"/><circle cx="800" cy="450" r="250" fill="#34d399" opacity="0.05"/>
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE A13 &#183; DATA SPLITS, LEAKAGE &amp; HONEST EVALUATION</text>
+  <text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Split the claim, not just the rows</text>
+
+  <!-- (a) locked rooms -->
+  <g>
+    <rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="110" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/><text x="64" y="115" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Three rooms — and the pipes between them</text>
+    <rect x="70" y="130" width="110" height="64" rx="8" fill="#15302a"/><text x="125" y="156" fill="#7fe7c0" font-size="12" text-anchor="middle">TRAIN</text><text x="125" y="174" fill="#8a99ad" font-size="9" text-anchor="middle">fit</text>
+    <rect x="195" y="130" width="110" height="64" rx="8" fill="#15263a"/><text x="250" y="156" fill="#9fd0ff" font-size="12" text-anchor="middle">VAL</text><text x="250" y="174" fill="#8a99ad" font-size="9" text-anchor="middle">choose</text>
+    <rect x="320" y="130" width="120" height="64" rx="8" fill="#3a1420"/><text x="380" y="156" fill="#fda4b0" font-size="12" text-anchor="middle">TEST 🔒</text><text x="380" y="174" fill="#8a99ad" font-size="9" text-anchor="middle">report once</text>
+    <path d="M320 162 Q260 120 195 162" fill="none" stroke="#fb4d6d" stroke-width="2.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+    <text x="255" y="216" fill="#fda4b0" font-size="11" text-anchor="middle">leak pipe: edge · prior · batch · future · transform</text>
+  </g>
+
+  <!-- (b) target-edge leakage -->
+  <g>
+    <rect x="486" y="82" width="370" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="82" width="370" height="4" rx="2" fill="#fb7185"/>
+    <circle cx="510" cy="110" r="13" fill="#3a0b14" stroke="#fb7185" stroke-width="1"/><text x="510" y="115" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Target-edge leakage</text>
+    <circle cx="540" cy="160" r="13" fill="#4dd7ff"/><text x="540" y="186" fill="#9fe0ff" font-size="9" text-anchor="middle">TF_A</text>
+    <circle cx="640" cy="160" r="14" fill="#e7a13a"/><text x="640" y="186" fill="#fbd089" font-size="9" text-anchor="middle">Gene_C</text>
+    <circle cx="740" cy="160" r="13" fill="#4dd7ff"/><text x="740" y="186" fill="#9fe0ff" font-size="9" text-anchor="middle">TF_D</text>
+    <line x1="553" y1="160" x2="624" y2="160" stroke="#4dd7ff" stroke-width="2.5" marker-end="url(#ar)"/>
+    <line x1="727" y1="160" x2="656" y2="160" stroke="#fb4d6d" stroke-width="3" stroke-dasharray="5 3" marker-end="url(#ar)"/><text x="694" y="150" fill="#fda4b0" font-size="9" text-anchor="middle">TARGET</text>
+    <text x="671" y="210" fill="#ff8095" font-size="11" text-anchor="middle">leaky: mean(TF_A,TF_D,Gene_C)=0.733</text>
+    <text x="671" y="226" fill="#7fe7c0" font-size="11" text-anchor="middle">honest (edge removed): 0.55</text>
+  </g>
+
+  <!-- (c) split families -->
+  <g>
+    <rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="244" width="430" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="64" cy="272" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/><text x="64" y="277" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Split the right object</text>
+    <g font-size="11.5">
+      <text x="70" y="300" fill="#4dd7ff" font-weight="700">node</text><text x="180" y="300" fill="#9fb4cc">held-out genes / cells</text>
+      <text x="70" y="326" fill="#34d399" font-weight="700">edge</text><text x="180" y="326" fill="#9fb4cc">TF-target pairs — target-edge leak</text>
+      <text x="70" y="352" fill="#fbbf24" font-weight="700">group</text><text x="180" y="352" fill="#9fb4cc">patient / cell line / gene family</text>
+      <text x="70" y="378" fill="#fb7185" font-weight="700">temporal</text><text x="180" y="378" fill="#9fb4cc">train early, test later experiments</text>
+      <text x="70" y="404" fill="#a78bfa" font-weight="700">prior</text><text x="180" y="404" fill="#9fb4cc">motif / ChIP DB = answer key</text>
+    </g>
+    <text x="86" y="438" fill="#fda4b0" font-size="11.5">a 70/10/20 random split can still be dishonest</text>
+    <text x="86" y="456" fill="#8a99ad" font-size="11">— the more ambitious the claim, the stricter the split must be.</text>
+  </g>
+
+  <!-- (d) apparent vs honest -->
+  <g>
+    <rect x="486" y="244" width="370" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="486" y="244" width="370" height="4" rx="2" fill="#34d399"/>
+    <circle cx="510" cy="272" r="13" fill="#0f3a2a" stroke="#34d399" stroke-width="1"/><text x="510" y="277" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Strict splits close the gap</text>
+    <line x1="520" y1="440" x2="820" y2="440" stroke="#3a4a5e" stroke-width="1.5"/>
+    <!-- random -->
+    <rect x="540" y="318" width="34" height="122" fill="#fb7185"/><rect x="580" y="392" width="34" height="48" fill="#34d399"/>
+    <text x="577" y="458" fill="#9fb4cc" font-size="10" text-anchor="middle">random</text><text x="557" y="310" fill="#fda4b0" font-size="9" text-anchor="middle">.99</text>
+    <!-- disjoint -->
+    <rect x="650" y="362" width="34" height="78" fill="#fbbf24"/><rect x="690" y="392" width="34" height="48" fill="#34d399"/>
+    <text x="687" y="458" fill="#9fb4cc" font-size="10" text-anchor="middle">disjoint</text>
+    <!-- group -->
+    <rect x="760" y="392" width="34" height="48" fill="#34d399"/><rect x="788" y="392" width="20" height="48" fill="#34d399" opacity="0.5"/>
+    <text x="780" y="458" fill="#9fb4cc" font-size="10" text-anchor="middle">group</text><text x="778" y="384" fill="#7fe7c0" font-size="9" text-anchor="middle">.60</text>
+    <text x="585" y="300" fill="#fda4b0" font-size="10">apparent</text><text x="700" y="384" fill="#7fe7c0" font-size="10">honest</text>
+    <text x="671" y="480" fill="#8a99ad" font-size="10.5" text-anchor="middle">the gap (apparent − honest) IS the leakage</text>
+  </g>
+
+  <line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="538" font-size="13" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure A13. </tspan><tspan>A split is the honesty contract of the experiment. </tspan><tspan fill="#9fe0ff" font-weight="700">(a)</tspan><tspan> Train/val/test are rooms; edges, priors, batches, time and transforms are pipes that can leak</tspan>
+    <tspan x="40" dy="21">exam evidence back into training. </tspan><tspan fill="#fda4b0" font-weight="700">(b)</tspan><tspan> Leaving the target edge in the message graph lets the model use the answer it predicts (0.733 vs an honest 0.55).</tspan>
+    <tspan x="40" dy="21"></tspan><tspan fill="#c4b5fd" font-weight="700">(c)</tspan><tspan> Split the unit of independence the claim requires — node, edge, group, time, or prior. </tspan><tspan fill="#7fe7c0" font-weight="700">(d)</tspan><tspan> As the split tightens (random→disjoint→group) the apparent score</tspan>
+    <tspan x="40" dy="21">falls to the true skill; the gap it closes was the leak. Fit transforms on train only; treat biological priors as possible answer keys; touch the test set once.</tspan>
+  </text>
+</svg>

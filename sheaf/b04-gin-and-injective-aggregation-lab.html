@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B04 · GIN and injective aggregation</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // Deterministic pseudo-random — no Math.random, no Date
+  const prand = i => { const x = Math.sin(i * 127.1 + 31.7) * 43758.5453; return x - Math.floor(x); };
+
+  // ─── Fixed deterministic MLP: tanh of a weighted sum ─────────────────────────
+  function mlp(x) {
+    // fixed weights — deterministic, no randomness
+    return Math.tanh(0.6 * x + 0.1);
+  }
+
+  // ─── Scene state ─────────────────────────────────────────────────────────────
+  let scene = {};
+
+  // ─── Build ────────────────────────────────────────────────────────────────────
+  function build(api) {
+    const T = api.THREE;
+    const s = api.state;
+    const mode = s.mode;
+    const bagA = Math.max(1, Math.round(s.bagA));
+    const bagB = Math.max(1, Math.round(s.bagB));
+    const aggIdx = Math.round(s.aggregator); // 0=mean,1=max,2=sum
+    const eps = s.epsilon;
+
+    const nodesG  = api.group("nodes");
+    const edgesG  = api.group("edges");
+    const labelsG = api.group("labels");
+
+    // helpers
+    function sphere(r, col) {
+      return new T.Mesh(
+        new T.SphereGeometry(r, 16, 12),
+        new T.MeshStandardMaterial({ color: col, emissive: col.clone().multiplyScalar(0.35), roughness: 0.4 })
+      );
+    }
+    function cylinder(from, to, col, r2) {
+      const dir = new T.Vector3().subVectors(to, from);
+      const len = dir.length();
+      const m = new T.Mesh(
+        new T.CylinderGeometry(r2 || 0.055, r2 || 0.055, len, 8),
+        new T.MeshStandardMaterial({ color: col, emissive: col.clone().multiplyScalar(0.2), roughness: 0.6 })
+      );
+      m.position.copy(from).addScaledVector(dir.clone().normalize(), len * 0.5);
+      m.quaternion.setFromUnitVectors(new T.Vector3(0, 1, 0), dir.clone().normalize());
+      return m;
+    }
+    function setP(obj, x, y, z) { obj.position.set(x, y, z); return obj; }
+
+    // ─── mode: multiset ────────────────────────────────────────────────────────
+    if (mode === "multiset") {
+      // All neighbours carry feature value 1 — the canonical hard test
+      const featA = bagA;  // count of 1s in bag A
+      const featB = bagB;  // count of 1s in bag B
+
+      const sumA  = featA;      // Σ{1,1,...} = bagA
+      const sumB  = featB;
+      const meanA = 1.0;        // mean of all-1s bag is always 1
+      const meanB = 1.0;
+      const maxA  = 1.0;        // max of all-1s bag is always 1
+      const maxB  = 1.0;
+
+      const distMean = Math.abs(meanA - meanB) > 0.001; // false — collapse
+      const distMax  = Math.abs(maxA  - maxB)  > 0.001; // false — collapse
+      const distSum  = Math.abs(sumA  - sumB)  > 0.001; // true when bagA≠bagB
+
+      const cxA = -3.5, cxB = 3.5, cy = 0;
+      const rA = 1.6, rB = 1.6;
+
+      const colA    = new T.Color("#4dd7ff");
+      const colB    = new T.Color("#34d399");
+      const colNeig = aggIdx === 2 ? new T.Color("#fbbf24") : new T.Color("#9fb4cc");
+      const colEdge = new T.Color("#3a4a5e");
+
+      // Node A
+      const nodeA = sphere(0.38, colA);
+      setP(nodeA, cxA, cy, 0);
+      api.pick(nodeA, { which: "A", bag: bagA, sumA, meanA, maxA });
+      nodesG.add(nodeA);
+      labelsG.add(setP(api.bigLabel("A", "#4dd7ff", 1.2), cxA, cy + 0.7, 0));
+
+      // Node B
+      const nodeB = sphere(0.38, colB);
+      setP(nodeB, cxB, cy, 0);
+      api.pick(nodeB, { which: "B", bag: bagB, sumB, meanB, maxB });
+      nodesG.add(nodeB);
+      labelsG.add(setP(api.bigLabel("B", "#34d399", 1.2), cxB, cy + 0.7, 0));
+
+      // Neighbours of A (all feature=1)
+      for (let i = 0; i < bagA; i++) {
+        const angle = (2 * Math.PI * i) / bagA - Math.PI / 2;
+        const nx = cxA + rA * Math.cos(angle);
+        const ny = cy  + rA * Math.sin(angle);
+        const n = sphere(0.22, colNeig);
+        setP(n, nx, ny, 0);
+        nodesG.add(n);
+        edgesG.add(cylinder(new T.Vector3(cxA, cy, 0), new T.Vector3(nx, ny, 0), colEdge));
+        labelsG.add(setP(api.label("1", "#cfe0f0", 0.28), nx + 0.06, ny + 0.3, 0));
+      }
+
+      // Neighbours of B (all feature=1)
+      for (let i = 0; i < bagB; i++) {
+        const angle = (2 * Math.PI * i) / bagB - Math.PI / 2;
+        const nx = cxB + rB * Math.cos(angle);
+        const ny = cy  + rB * Math.sin(angle);
+        const n = sphere(0.22, colNeig);
+        setP(n, nx, ny, 0);
+        nodesG.add(n);
+        edgesG.add(cylinder(new T.Vector3(cxB, cy, 0), new T.Vector3(nx, ny, 0), colEdge));
+        labelsG.add(setP(api.label("1", "#cfe0f0", 0.28), nx + 0.06, ny + 0.3, 0));
+      }
+
+      // Separator
+      const sep = new T.Mesh(
+        new T.BoxGeometry(0.03, 5.5, 0.03),
+        new T.MeshBasicMaterial({ color: 0x2a3a4e })
+      );
+      sep.position.set(0, 0, 0);
+      edgesG.add(sep);
+
+      // Bag notation labels
+      const bagStrA = "{" + Array(bagA).fill("1").join(",") + "}";
+      const bagStrB = "{" + Array(bagB).fill("1").join(",") + "}";
+      labelsG.add(setP(api.bigLabel(bagStrA, "#7faac8", 0.7), cxA, -2.4, 0));
+      labelsG.add(setP(api.bigLabel(bagStrB, "#7faac8", 0.7), cxB, -2.4, 0));
+
+      const aggName  = ["MEAN", "MAX", "SUM"][aggIdx];
+      const aggA_val = aggIdx === 0 ? meanA : aggIdx === 1 ? maxA : sumA;
+      const aggB_val = aggIdx === 0 ? meanB : aggIdx === 1 ? maxB : sumB;
+      const curDist  = aggIdx === 0 ? distMean : aggIdx === 1 ? distMax : distSum;
+
+      scene = {
+        mode, bagA, bagB, aggIdx,
+        meanA: +meanA.toFixed(3), meanB: +meanB.toFixed(3),
+        maxA: +maxA.toFixed(3),   maxB: +maxB.toFixed(3),
+        sumA: +sumA.toFixed(3),   sumB: +sumB.toFixed(3),
+        distMean, distMax, distSum,
+        distinguishable: curDist
+      };
+
+      return {
+        badge: "GIN multiset · A=" + bagA + " neigh · B=" + bagB + " neigh · agg=" + aggName,
+        formula: "mean: " + meanA.toFixed(2) + " vs " + meanB.toFixed(2) + " · max: " + maxA.toFixed(2) + " vs " + maxB.toFixed(2) + " · sum: " + sumA.toFixed(2) + " vs " + sumB.toFixed(2),
+        insight: "Mean gives " + meanA.toFixed(1) + " for BOTH bags — it forgets the count. Max gives " + maxA.toFixed(1) + " for BOTH — only sees the peak. Sum gives " + sumA.toFixed(1) + " vs " + sumB.toFixed(1) + " — KEEPS the count. Only sum is injective over this multiset of all-1 values.",
+        state: aggName + ": A=" + aggA_val.toFixed(2) + ", B=" + aggB_val.toFixed(2) + " → " + (curDist ? "✓ distinguishable" : "✗ COLLAPSE"),
+        metrics: {
+          mean:   meanA.toFixed(2) + " vs " + meanB.toFixed(2),
+          max:    maxA.toFixed(2)  + " vs " + maxB.toFixed(2),
+          sum:    sumA.toFixed(2)  + " vs " + sumB.toFixed(2),
+          distng: curDist ? "✓ YES" : "✗ NO (collapse)"
+        },
+        focus: { center: [0, 0, 0], radius: 9 }
+      };
+    }
+
+    // ─── mode: gin-update ─────────────────────────────────────────────────────
+    if (mode === "gin-update") {
+      const nNeigA = 3, nNeigB = 2;
+      const selfVal = 2.0;
+      const featVal = 1.0;
+
+      const sumNeigA = nNeigA * featVal;
+      const sumNeigB = nNeigB * featVal;
+
+      // GIN pre-MLP: (1+eps)*h_v + Σ neighbours
+      const ginPreA = (1 + eps) * selfVal + sumNeigA;
+      const ginPreB = (1 + eps) * selfVal + sumNeigB;
+      const ginOutA = mlp(ginPreA);
+      const ginOutB = mlp(ginPreB);
+
+      // GCN-style mean: average of (self ∪ neighbours)
+      const gcnPreA = (selfVal + sumNeigA) / (nNeigA + 1);
+      const gcnPreB = (selfVal + sumNeigB) / (nNeigB + 1);
+      const gcnOutA = mlp(gcnPreA);
+      const gcnOutB = mlp(gcnPreB);
+
+      const ginDistinct = Math.abs(ginPreA - ginPreB) > 0.001;
+      const gcnDistinct = Math.abs(gcnPreA - gcnPreB) > 0.001;
+
+      const colA    = new T.Color("#4dd7ff");
+      const colB    = new T.Color("#34d399");
+      const colNeig = new T.Color("#a78bfa");
+      const colEdge = new T.Color("#3a4a5e");
+      const colEps  = new T.Color("#fbbf24");
+
+      const cxA = -3.2, cxB = 3.2, baseY = 0.3, rN = 1.5;
+
+      // Node A with 3 neighbours
+      const nA = sphere(0.4, colA);
+      setP(nA, cxA, baseY, 0);
+      nodesG.add(nA);
+      labelsG.add(setP(api.bigLabel("v (h=2)", "#4dd7ff", 0.7), cxA, baseY + 0.7, 0));
+      for (let i = 0; i < nNeigA; i++) {
+        const angle = (2 * Math.PI * i) / nNeigA - Math.PI / 2;
+        const nx = cxA + rN * Math.cos(angle);
+        const ny = baseY + rN * Math.sin(angle);
+        const nn = sphere(0.22, colNeig);
+        setP(nn, nx, ny, 0);
+        nodesG.add(nn);
+        edgesG.add(cylinder(new T.Vector3(cxA, baseY, 0), new T.Vector3(nx, ny, 0), colEdge));
+        labelsG.add(setP(api.label("1", "#c4b5fd", 0.26), nx + 0.06, ny + 0.28, 0));
+      }
+      labelsG.add(setP(api.bigLabel("|N|=3", "#8a99ad", 0.7), cxA, -1.8, 0));
+
+      // Node B with 2 neighbours
+      const nB = sphere(0.4, colB);
+      setP(nB, cxB, baseY, 0);
+      nodesG.add(nB);
+      labelsG.add(setP(api.bigLabel("v (h=2)", "#34d399", 0.7), cxB, baseY + 0.7, 0));
+      for (let i = 0; i < nNeigB; i++) {
+        const angle = (2 * Math.PI * i) / nNeigB - Math.PI / 2;
+        const nx = cxB + rN * Math.cos(angle);
+        const ny = baseY + rN * Math.sin(angle);
+        const nn = sphere(0.22, colNeig);
+        setP(nn, nx, ny, 0);
+        nodesG.add(nn);
+        edgesG.add(cylinder(new T.Vector3(cxB, baseY, 0), new T.Vector3(nx, ny, 0), colEdge));
+        labelsG.add(setP(api.label("1", "#c4b5fd", 0.26), nx + 0.06, ny + 0.28, 0));
+      }
+      labelsG.add(setP(api.bigLabel("|N|=2", "#8a99ad", 0.7), cxB, -1.8, 0));
+
+      // Separator
+      const sep = new T.Mesh(
+        new T.BoxGeometry(0.03, 5, 0.03),
+        new T.MeshBasicMaterial({ color: 0x2a3a4e })
+      );
+      sep.position.set(0, 0, 0);
+      edgesG.add(sep);
+
+      // Bar charts showing pre-MLP values (at z=-2.5)
+      function bar(cx, preVal, outVal, colBar, labelStr) {
+        const scH = 0.35;
+        const h = Math.max(0.08, Math.abs(preVal) * scH);
+        const bm = new T.Mesh(
+          new T.BoxGeometry(0.45, h, 0.3),
+          new T.MeshStandardMaterial({ color: colBar, emissive: colBar.clone().multiplyScalar(0.4), roughness: 0.4 })
+        );
+        bm.position.set(cx, -2.9 + h / 2, -2.5);
+        edgesG.add(bm);
+        labelsG.add(setP(api.label(labelStr, colBar.getStyle(), 0.28), cx, -2.9 + h + 0.4, -2.5));
+      }
+
+      bar(cxA - 0.4, ginPreA, ginOutA, new T.Color("#4dd7ff"),   "GIN " + ginPreA.toFixed(2));
+      bar(cxA + 0.4, gcnPreA, gcnOutA, new T.Color("#fb7185"),   "GCN " + gcnPreA.toFixed(2));
+      bar(cxB - 0.4, ginPreB, ginOutB, new T.Color("#34d399"),   "GIN " + ginPreB.toFixed(2));
+      bar(cxB + 0.4, gcnPreB, gcnOutB, new T.Color("#fb7185"),   "GCN " + gcnPreB.toFixed(2));
+
+      // Epsilon label
+      labelsG.add(setP(api.bigLabel("ε=" + eps.toFixed(2), "#fbbf24", 0.85), 0, 2.4, 0));
+
+      scene = {
+        mode, eps,
+        ginPreA: +ginPreA.toFixed(4), ginPreB: +ginPreB.toFixed(4),
+        gcnPreA: +gcnPreA.toFixed(4), gcnPreB: +gcnPreB.toFixed(4),
+        ginOutA: +ginOutA.toFixed(4), ginOutB: +ginOutB.toFixed(4),
+        gcnOutA: +gcnOutA.toFixed(4), gcnOutB: +gcnOutB.toFixed(4),
+        ginDistinct, gcnDistinct
+      };
+
+      return {
+        badge: "GIN update · ε=" + eps.toFixed(2) + " · A:3 neigh · B:2 neigh",
+        formula: "GIN: (1+ε)·h_v + Σ N → MLP. A=" + ginPreA.toFixed(3) + ", B=" + ginPreB.toFixed(3) + ". GCN mean: A=" + gcnPreA.toFixed(3) + ", B=" + gcnPreB.toFixed(3),
+        insight: "GIN pre-MLP: A=" + ginPreA.toFixed(2) + " vs B=" + ginPreB.toFixed(2) + " — different because sum counts neighbours. GCN mean: A=" + gcnPreA.toFixed(2) + " vs B=" + gcnPreB.toFixed(2) + ". GIN " + (ginDistinct ? "KEEPS distinction" : "loses it") + "; GCN " + (gcnDistinct ? "also keeps" : "collapses more") + ".",
+        state: "GIN distinct=" + ginDistinct + " (pre: " + ginPreA.toFixed(2) + " vs " + ginPreB.toFixed(2) + "). GCN distinct=" + gcnDistinct + " (pre: " + gcnPreA.toFixed(2) + " vs " + gcnPreB.toFixed(2) + ")",
+        metrics: {
+          mean:   "GCN: " + gcnPreA.toFixed(2) + " vs " + gcnPreB.toFixed(2),
+          max:    "GIN-pre: " + ginPreA.toFixed(2) + " vs " + ginPreB.toFixed(2),
+          sum:    "GIN-out: " + ginOutA.toFixed(3) + " vs " + ginOutB.toFixed(3),
+          distng: "GIN " + (ginDistinct ? "✓ distinct" : "✗ collapse")
+        },
+        focus: { center: [0, 0, 0], radius: 11 }
+      };
+    }
+
+    // ─── mode: biology ─────────────────────────────────────────────────────────
+    if (mode === "biology") {
+      const colReal   = new T.Color("#34d399");
+      const colArtif  = new T.Color("#fb7185");
+      const colTarget = new T.Color("#4dd7ff");
+      const colEdge   = new T.Color("#3a4a5e");
+
+      // LEFT: dosage signal — 4 real TFs vs 2 real TFs
+      const nRegA = 4, nRegB = 2;
+      const sumDosA = nRegA, sumDosB = nRegB;
+      const meanDos = 1.0; // all features=1 → mean=1 for any count
+      const ginDistDos = sumDosA !== sumDosB;
+
+      const cxDA = -5.5, cxDB = -3.0, dosY = 0.4, rDos = 1.15;
+
+      // Gene A (4 real TFs)
+      const gA = sphere(0.32, colTarget);
+      setP(gA, cxDA, dosY, 0);
+      nodesG.add(gA);
+      labelsG.add(setP(api.bigLabel("gene A", "#4dd7ff", 0.62), cxDA, dosY + 0.6, 0));
+      for (let i = 0; i < nRegA; i++) {
+        const angle = (2 * Math.PI * i) / nRegA - Math.PI / 2;
+        const nx = cxDA + rDos * Math.cos(angle);
+        const ny = dosY  + rDos * Math.sin(angle);
+        const rn = sphere(0.18, colReal);
+        setP(rn, nx, ny, 0);
+        nodesG.add(rn);
+        edgesG.add(cylinder(new T.Vector3(cxDA, dosY, 0), new T.Vector3(nx, ny, 0), colReal, 0.04));
+        labelsG.add(setP(api.label("TF", "#7fe7c0", 0.22), nx, ny + 0.3, 0));
+      }
+      labelsG.add(setP(api.bigLabel("4 real TFs", "#34d399", 0.6), cxDA, -1.1, 0));
+
+      // Gene B (2 real TFs)
+      const gB = sphere(0.32, colTarget);
+      setP(gB, cxDB, dosY, 0);
+      nodesG.add(gB);
+      labelsG.add(setP(api.bigLabel("gene B", "#4dd7ff", 0.62), cxDB, dosY + 0.6, 0));
+      for (let i = 0; i < nRegB; i++) {
+        const angle = (2 * Math.PI * i) / nRegB - Math.PI / 2;
+        const nx = cxDB + rDos * Math.cos(angle);
+        const ny = dosY  + rDos * Math.sin(angle);
+        const rn = sphere(0.18, colReal);
+        setP(rn, nx, ny, 0);
+        nodesG.add(rn);
+        edgesG.add(cylinder(new T.Vector3(cxDB, dosY, 0), new T.Vector3(nx, ny, 0), colReal, 0.04));
+        labelsG.add(setP(api.label("TF", "#7fe7c0", 0.22), nx, ny + 0.3, 0));
+      }
+      labelsG.add(setP(api.bigLabel("2 real TFs", "#34d399", 0.6), cxDB, -1.1, 0));
+
+      // Divider between scenarios
+      const sep1 = new T.Mesh(new T.BoxGeometry(0.03, 5, 0.03), new T.MeshBasicMaterial({ color: 0x2a3a4e }));
+      sep1.position.set(-1.4, 0, 0);
+      edgesG.add(sep1);
+
+      // RIGHT: database artifact — 4 dup edges vs 2 dup edges
+      const nDupA = 4, nDupB = 2;
+
+      const cxAA = 1.2, cxAB = 3.8, artY = 0.4, rArt = 1.15;
+
+      // Hub A (4 duplicate edges — artifact)
+      const hA = sphere(0.32, colTarget);
+      setP(hA, cxAA, artY, 0);
+      nodesG.add(hA);
+      labelsG.add(setP(api.bigLabel("hub A", "#4dd7ff", 0.62), cxAA, artY + 0.6, 0));
+      for (let i = 0; i < nDupA; i++) {
+        const angle = (2 * Math.PI * i) / nDupA - Math.PI / 2;
+        const nx = cxAA + rArt * Math.cos(angle);
+        const ny = artY  + rArt * Math.sin(angle);
+        const rn = sphere(0.18, colArtif);
+        setP(rn, nx, ny, 0);
+        nodesG.add(rn);
+        edgesG.add(cylinder(new T.Vector3(cxAA, artY, 0), new T.Vector3(nx, ny, 0), colArtif, 0.04));
+        labelsG.add(setP(api.label("dup", "#fda4b0", 0.22), nx, ny + 0.3, 0));
+      }
+      labelsG.add(setP(api.bigLabel("4 dup edges", "#fb7185", 0.6), cxAA, -1.1, 0));
+
+      // Hub B (2 duplicate edges — artifact)
+      const hB = sphere(0.32, colTarget);
+      setP(hB, cxAB, artY, 0);
+      nodesG.add(hB);
+      labelsG.add(setP(api.bigLabel("hub B", "#4dd7ff", 0.62), cxAB, artY + 0.6, 0));
+      for (let i = 0; i < nDupB; i++) {
+        const angle = (2 * Math.PI * i) / nDupB - Math.PI / 2;
+        const nx = cxAB + rArt * Math.cos(angle);
+        const ny = artY  + rArt * Math.sin(angle);
+        const rn = sphere(0.18, colArtif);
+        setP(rn, nx, ny, 0);
+        nodesG.add(rn);
+        edgesG.add(cylinder(new T.Vector3(cxAB, artY, 0), new T.Vector3(nx, ny, 0), colArtif, 0.04));
+        labelsG.add(setP(api.label("dup", "#fda4b0", 0.22), nx, ny + 0.3, 0));
+      }
+      labelsG.add(setP(api.bigLabel("2 dup edges", "#fb7185", 0.6), cxAB, -1.1, 0));
+
+      // Scenario header labels
+      labelsG.add(setP(api.bigLabel("DOSAGE SIGNAL", "#34d399", 0.82), -4.25, 2.3, 0));
+      labelsG.add(setP(api.bigLabel("DB ARTIFACT", "#fb7185", 0.82), 2.5, 2.3, 0));
+
+      scene = {
+        mode,
+        dosageSumA: sumDosA, dosageSumB: sumDosB,
+        dosageMeanCollapses: true,
+        ginDistinguishesDosage: ginDistDos,
+        artifactSumA: nDupA, artifactSumB: nDupB,
+        ginAmplifiesArtifact: nDupA !== nDupB
+      };
+
+      return {
+        badge: "Biology · dosage signal (left) vs database artifact (right)",
+        formula: "dosage sum: " + sumDosA + " vs " + sumDosB + " (GIN helps). artifact sum: " + nDupA + " vs " + nDupB + " (GIN amplifies bias).",
+        insight: "GREEN (left): 4 real TF regulators vs 2 — legitimate dosage difference. Sum/GIN correctly separates (4≠2). RED (right): 4 duplicate DB edges vs 2 — artifact. Sum/GIN amplifies the count difference equally. Mean=1=1 collapses both scenarios — sometimes a problem, sometimes a protection.",
+        state: "dosage: sum " + sumDosA + " vs " + sumDosB + " → GIN helps. artifact: sum " + nDupA + " vs " + nDupB + " → GIN amplifies bias.",
+        metrics: {
+          mean:   "mean=1 vs 1 → collapses",
+          max:    "max=1 vs 1 → also collapses",
+          sum:    "sum " + sumDosA + " vs " + sumDosB + " → separates",
+          distng: "GIN: verify counts first!"
+        },
+        focus: { center: [0, 0.4, 0], radius: 12 }
+      };
+    }
+
+    // fallback
+    scene = {};
+    return { badge: "unknown mode", formula: "", insight: "", state: "", metrics: {}, focus: { center: [0,0,0], radius: 9 } };
+  }
+
+  // ─── MathLab config ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id: "b04",
+    kind: "gin-injective",
+    eyebrow: "Block B · GNN Architectures",
+    title: "B04 · GIN and injective aggregation",
+    subtitle: "Sum aggregation keeps different neighbour bags different — mean and max may not. Explore multiset collapse, the GIN update rule, and what this means for biological counts.",
+    selectedLabel: "Node",
+    selectedHint: "Click a node to inspect its aggregation values.",
+
+    modes: [
+      { value: "multiset",   label: "Multiset collapse"        },
+      { value: "gin-update", label: "GIN vs GCN update"        },
+      { value: "biology",    label: "Biology — signal vs bias" }
+    ],
+
+    params: [
+      { key: "bagA",       label: "bag size A (# neighbours)",  min: 1, max: 6, step: 1,    value: 4,   fmt: v => Math.round(v).toString(), modes: ["multiset"] },
+      { key: "bagB",       label: "bag size B (# neighbours)",  min: 1, max: 6, step: 1,    value: 2,   fmt: v => Math.round(v).toString(), modes: ["multiset"] },
+      { key: "aggregator", label: "aggregator (0=mean 1=max 2=sum)", min: 0, max: 2, step: 1, value: 2, fmt: v => ["MEAN","MAX","SUM"][Math.round(v)], modes: ["multiset"] },
+      { key: "epsilon",    label: "ε  (self-weight in GIN)",     min: 0, max: 1, step: 0.05, value: 0.2, fmt: v => v.toFixed(2), modes: ["gin-update"] }
+    ],
+
+    metrics: [
+      { key: "mean",   label: "Mean result",     accent: "rose"   },
+      { key: "max",    label: "Max result",       accent: "amber"  },
+      { key: "sum",    label: "Sum result",       accent: "cyan"   },
+      { key: "distng", label: "Distinguishable?", accent: "green"  }
+    ],
+
+    layers: [
+      { group: "nodes",  label: "Nodes"  },
+      { group: "edges",  label: "Edges"  },
+      { group: "labels", label: "Labels" }
+    ],
+
+    primary: {
+      label: "Cycle aggregator",
+      on: api => {
+        if (api.state.mode === "multiset") {
+          const cur = Math.round(api.state.aggregator);
+          api.setParam("aggregator", (cur + 1) % 3);
+        } else {
+          // switch to multiset mode
+          const st = document.getElementById("ml-mode");
+          if (st) { st.value = "multiset"; st.dispatchEvent(new Event("change")); }
+        }
+      }
+    },
+
+    secondary: {
+      label: "Add neighbour to A",
+      on: api => {
+        if (api.state.mode === "multiset") {
+          const cur = Math.round(api.state.bagA);
+          api.setParam("bagA", Math.min(6, cur + 1));
+        }
+      }
+    },
+
+    defaultCam: { theta: -0.3, phi: 0.6, r: 11 },
+
+    hint: '<span class="c">cyan</span>=node A · <span class="g">green</span>=node B · <span class="v">violet</span>=neighbours · <span class="r">red</span>=artifact · amber=highlighted (SUM mode). Aggregator 0=mean 1=max 2=sum.',
+
+    onParam(api) { api.frame([0, 0, 0], 11); },
+
+    onSelect(api, d) {
+      if (d.which === "A") api.setSelected("Node A · bag=" + d.bag + " · sum=" + d.sumA + " · mean=" + (d.meanA != null ? d.meanA.toFixed(2) : "–") + " · max=" + d.maxA);
+      if (d.which === "B") api.setSelected("Node B · bag=" + d.bag + " · sum=" + d.sumB + " · mean=" + (d.meanB != null ? d.meanB.toFixed(2) : "–") + " · max=" + d.maxB);
+    },
+
+    build,
+
+    snapshot(s) {
+      const sc = scene;
+      if (!sc || !sc.mode) return { mode: s.mode };
+      if (sc.mode === "multiset") {
+        return {
+          mode: s.mode,
+          bagA: sc.bagA, bagB: sc.bagB, aggregator: sc.aggIdx,
+          meanA: sc.meanA, meanB: sc.meanB,
+          maxA:  sc.maxA,  maxB:  sc.maxB,
+          sumA:  sc.sumA,  sumB:  sc.sumB,
+          meanCollapses:    !sc.distMean,
+          maxCollapses:     !sc.distMax,
+          sumDistinguishes: sc.distSum,
+          distinguishable:  sc.distinguishable
+        };
+      }
+      if (sc.mode === "gin-update") {
+        return {
+          mode: s.mode, epsilon: sc.eps,
+          ginPreA: sc.ginPreA, ginPreB: sc.ginPreB,
+          gcnPreA: sc.gcnPreA, gcnPreB: sc.gcnPreB,
+          ginOutputA: sc.ginOutA, ginOutputB: sc.ginOutB,
+          gcnOutputA: sc.gcnOutA, gcnOutputB: sc.gcnOutB,
+          ginDistinct: sc.ginDistinct, gcnDistinct: sc.gcnDistinct
+        };
+      }
+      if (sc.mode === "biology") {
+        return {
+          mode: s.mode,
+          dosageSumA: sc.dosageSumA, dosageSumB: sc.dosageSumB,
+          dosageMeanCollapses: sc.dosageMeanCollapses,
+          ginDistinguishesDosage: sc.ginDistinguishesDosage,
+          artifactSumA: sc.artifactSumA, artifactSumB: sc.artifactSumB,
+          ginAmplifiesArtifact: sc.ginAmplifiesArtifact
+        };
+      }
+      return { mode: s.mode };
+    }
+  });
+})();
+</script>
+</body>
+</html>

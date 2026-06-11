@@ -85,11 +85,17 @@
 
   /* ─────────────────────────────────────────────────────────────────────
    * APPLY L LAYERS
+   * initAllOnes: when true, start from h=[1,1,…,1] (used in raw-vs-norm
+   *              mode so hub-domination contrast is visible at layer 1).
    * ─────────────────────────────────────────────────────────────────────*/
-  function propagate(g, L, selfLoops, normalize, source){
+  function propagate(g, L, selfLoops, normalize, source, initAllOnes){
     const deg = computeDegrees(g.adj, g.n, selfLoops);
     let h = new Float64Array(g.n);
-    h[source] = 1.0;
+    if(initAllOnes){
+      for(let i = 0; i < g.n; i++) h[i] = 1.0;
+    } else {
+      h[source] = 1.0;
+    }
     for(let l = 0; l < L; l++){
       h = gcnStep(h, g.adj, deg, g.n, selfLoops, normalize);
     }
@@ -142,7 +148,8 @@
     const source    = Math.min(Math.round(s.signalSource), nNodes - 1);
 
     const g          = buildGraph(nNodes);
-    const {h, deg}   = propagate(g, L, selfLoops, normalize, source);
+    const initAllOnes = (mode === "raw-vs-norm");
+    const {h, deg}   = propagate(g, L, selfLoops, normalize, source, initAllOnes);
     const v          = nodeVariance(h);
     const hubVal     = nNodes >= 4 ? h[3] : 0;
     const targetVal  = h[source];

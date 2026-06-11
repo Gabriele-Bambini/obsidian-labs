@@ -207,7 +207,7 @@
     <tspan x="40" dy="21">all degrees equal 3 after self-loops, so P=&#8531;Ã; one propagation step moves T&#8217;s signal to its neighbors. </tspan><tspan fill="#7fe7c0" font-weight="700">(c)</tspan><tspan> The two conceptual stages: diffusion (PH, low-pass graph filter) then</tspan>
     <tspan x="40" dy="21">feature mixing ((PH)W); SGC collapses K layers into a single P&#7503;H followed by a linear classifier. </tspan><tspan fill="#fda4b0" font-weight="700">(d)</tspan><tspan> Without normalization, a high-degree hub accumulates a large raw sum; symmetric</tspan>
   </text>
-  <text x="40" y="648" font-size="13" fill="#c7d2dd">
+  <text x="40" y="626" font-size="13" fill="#c7d2dd">
     <tspan>normalization divides each message by 1/&#8730;(d̃&#x1d62;d̃&#x2c7c;), taming hub domination — degree bias is reduced but not eliminated.</tspan>
   </text>
 </svg>

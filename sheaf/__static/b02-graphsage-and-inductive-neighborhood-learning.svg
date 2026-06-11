@@ -1,0 +1,266 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+  <title id="t">Figure B02 — GraphSAGE and inductive neighbourhood learning</title>
+  <desc id="d">Four panels: transductive vs inductive learning; fixed-size neighbourhood sampling; the SAGE aggregation update; inductive payoff for unseen biological nodes.</desc>
+  <rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+  <circle cx="180" cy="90" r="220" fill="#4dd7ff" opacity="0.04"/>
+  <circle cx="820" cy="480" r="240" fill="#a78bfa" opacity="0.04"/>
+
+  <!-- header -->
+  <text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE B02 · GRAPHSAGE — SAMPLE · AGGREGATE · TRANSFER</text>
+  <text x="40" y="60" fill="#e8eef6" font-size="22" font-weight="700">GraphSAGE learns a reusable recipe, not a fixed embedding table</text>
+
+  <!-- ═══ PANEL (a) — Transductive vs Inductive ══════════════════════ -->
+  <g>
+    <rect x="40" y="78" width="420" height="188" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="78" width="420" height="4" rx="2" fill="#4dd7ff"/>
+    <circle cx="64" cy="106" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1.5"/>
+    <text x="64" y="111" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+    <text x="86" y="102" fill="#cfe0f0" font-size="14" font-weight="700">Transductive vs inductive</text>
+
+    <!-- Transductive side (left half) -->
+    <g transform="translate(60,118)">
+      <!-- embedding table boxes -->
+      <rect x="0"  y="0" width="52" height="22" rx="4" fill="#1a2840" stroke="#4dd7ff" stroke-width="1"/>
+      <text x="26" y="15" fill="#9fd0ff" font-size="10" text-anchor="middle">Gene A</text>
+      <rect x="0"  y="26" width="52" height="22" rx="4" fill="#1a2840" stroke="#4dd7ff" stroke-width="1"/>
+      <text x="26" y="41" fill="#9fd0ff" font-size="10" text-anchor="middle">Gene B</text>
+      <rect x="0"  y="52" width="52" height="22" rx="4" fill="#1a2840" stroke="#4dd7ff" stroke-width="1"/>
+      <text x="26" y="67" fill="#9fd0ff" font-size="10" text-anchor="middle">Gene C</text>
+      <rect x="0"  y="78" width="52" height="22" rx="4" fill="#33150a" stroke="#fb7185" stroke-width="1" stroke-dasharray="4 2"/>
+      <text x="26" y="93" fill="#fb7185" font-size="10" text-anchor="middle">G_new ?</text>
+      <text x="26" y="118" fill="#fb7185" font-size="9.5" text-anchor="middle">✗  no row</text>
+      <text x="26" y="132" fill="#8a99ad" font-size="9" text-anchor="middle">Embedding table</text>
+    </g>
+
+    <!-- arrow separator -->
+    <line x1="234" y1="118" x2="234" y2="260" stroke="rgba(150,170,200,.2)" stroke-width="1" stroke-dasharray="4 4"/>
+
+    <!-- Inductive side (right half) -->
+    <g transform="translate(244,118)">
+      <!-- central node -->
+      <circle cx="76" cy="50" r="16" fill="#3a1020" stroke="#fb7185" stroke-width="1.5"/>
+      <text x="76" y="55" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">G_new</text>
+      <!-- sampled neighbours -->
+      <circle cx="20"  cy="20"  r="11" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+      <text x="20"  y="24"  fill="#9fd0ff" font-size="9" text-anchor="middle">TF1</text>
+      <circle cx="132" cy="20"  r="11" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+      <text x="132" y="24"  fill="#9fd0ff" font-size="9" text-anchor="middle">K1</text>
+      <circle cx="20"  cy="90"  r="11" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+      <text x="20"  y="94"  fill="#9fd0ff" font-size="9" text-anchor="middle">mB</text>
+      <circle cx="132" cy="90"  r="11" fill="#0e2740" stroke="#34d399" stroke-width="1"/>
+      <text x="132" y="94"  fill="#7fe7c0" font-size="9" text-anchor="middle">AGG</text>
+      <!-- edges -->
+      <line x1="31"  y1="25"  x2="62"  y2="40"  stroke="#4dd7ff"  stroke-width="1" opacity="0.5"/>
+      <line x1="121" y1="25"  x2="90"  y2="40"  stroke="#4dd7ff"  stroke-width="1" opacity="0.5"/>
+      <line x1="31"  y1="83"  x2="62"  y2="60"  stroke="#4dd7ff"  stroke-width="1" opacity="0.5"/>
+      <line x1="121" y1="83"  x2="90"  y2="60"  stroke="#34d399" stroke-width="1" opacity="0.7"/>
+      <text x="76" y="125" fill="#34d399" font-size="9.5" text-anchor="middle">✓  shared aggregator</text>
+      <text x="76" y="139" fill="#8a99ad" font-size="9" text-anchor="middle">embeds any new node</text>
+    </g>
+  </g>
+
+  <!-- ═══ PANEL (b) — Fixed-size sampling ════════════════════════════ -->
+  <g>
+    <rect x="480" y="78" width="420" height="188" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+    <rect x="480" y="78" width="420" height="4" rx="2" fill="#fbbf24"/>
+    <circle cx="504" cy="106" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="504" y="111" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">b</text>
+    <text x="526" y="102" fill="#cfe0f0" font-size="14" font-weight="700">Fixed-size neighbour sampling</text>
+
+    <!-- Hub node (many neighbours) -->
+    <circle cx="570" cy="180" r="18" fill="#3a1020" stroke="#fb7185" stroke-width="1.5"/>
+    <text x="570" y="176" fill="#fb7185" font-size="9.5" font-weight="700" text-anchor="middle">HubP</text>
+    <text x="570" y="188" fill="#fda4b0" font-size="8.5" text-anchor="middle">deg=12</text>
+
+    <!-- All neighbours (faded, full ring) -->
+    <g opacity="0.25">
+      <circle cx="540" cy="132" r="7" fill="#54667c"/><circle cx="568" cy="128" r="7" fill="#54667c"/>
+      <circle cx="596" cy="132" r="7" fill="#54667c"/><circle cx="612" cy="154" r="7" fill="#54667c"/>
+      <circle cx="614" cy="180" r="7" fill="#54667c"/><circle cx="606" cy="206" r="7" fill="#54667c"/>
+      <circle cx="584" cy="220" r="7" fill="#54667c"/><circle cx="558" cy="220" r="7" fill="#54667c"/>
+      <circle cx="536" cy="208" r="7" fill="#54667c"/><circle cx="526" cy="185" r="7" fill="#54667c"/>
+      <circle cx="528" cy="158" r="7" fill="#54667c"/>
+      <!-- edges to hub -->
+      <line x1="540" y1="132" x2="558" y2="166" stroke="#54667c" stroke-width="1"/>
+      <line x1="568" y1="128" x2="568" y2="163" stroke="#54667c" stroke-width="1"/>
+      <line x1="596" y1="132" x2="578" y2="166" stroke="#54667c" stroke-width="1"/>
+      <line x1="612" y1="154" x2="586" y2="170" stroke="#54667c" stroke-width="1"/>
+      <line x1="614" y1="180" x2="588" y2="180" stroke="#54667c" stroke-width="1"/>
+      <line x1="606" y1="206" x2="585" y2="193" stroke="#54667c" stroke-width="1"/>
+      <line x1="558" y1="220" x2="560" y2="197" stroke="#54667c" stroke-width="1"/>
+      <line x1="528" y1="158" x2="552" y2="168" stroke="#54667c" stroke-width="1"/>
+    </g>
+    <!-- Sampled neighbours (bright, S=3) -->
+    <circle cx="540" cy="132" r="9" fill="#1a6080" stroke="#4dd7ff" stroke-width="1.5"/>
+    <text x="540" y="136" fill="#4dd7ff" font-size="8" text-anchor="middle">TF1</text>
+    <circle cx="596" cy="132" r="9" fill="#1a6080" stroke="#4dd7ff" stroke-width="1.5"/>
+    <text x="596" y="136" fill="#4dd7ff" font-size="8" text-anchor="middle">K2</text>
+    <circle cx="614" cy="180" r="9" fill="#1a6080" stroke="#4dd7ff" stroke-width="1.5"/>
+    <text x="614" y="184" fill="#4dd7ff" font-size="8" text-anchor="middle">mD</text>
+    <line x1="549" y1="138" x2="557" y2="166" stroke="#4dd7ff" stroke-width="1.5" opacity="0.8"/>
+    <line x1="596" y1="141" x2="582" y2="165" stroke="#4dd7ff" stroke-width="1.5" opacity="0.8"/>
+    <line x1="606" y1="180" x2="588" y2="180" stroke="#4dd7ff" stroke-width="1.5" opacity="0.8"/>
+
+    <!-- S=3 label badge -->
+    <rect x="628" y="130" width="56" height="26" rx="6" fill="#0e2030" stroke="#4dd7ff" stroke-width="1"/>
+    <text x="656" y="142" fill="#4dd7ff" font-size="10" font-weight="700" text-anchor="middle">S = 3</text>
+    <text x="656" y="153" fill="#8a99ad" font-size="8.5" text-anchor="middle">sampled</text>
+
+    <!-- compute bound text -->
+    <text x="650" y="175" fill="#fde68a" font-size="10" text-anchor="middle">bound: ≤ 1+S+S²</text>
+    <text x="650" y="190" fill="#fde68a" font-size="11" font-weight="700" text-anchor="middle">= 13 nodes</text>
+    <text x="650" y="207" fill="#8a99ad" font-size="9.5" text-anchor="middle">regardless of deg=12</text>
+
+    <!-- full vs sampled annotation -->
+    <text x="530" y="254" fill="#9fb4cc" font-size="10.5">full neighbourhood: 12 nodes  |  sampled: S=3  |  savings: 75%+</text>
+  </g>
+
+  <!-- ═══ PANEL (c) — SAGE update equation ═══════════════════════════ -->
+  <g>
+    <rect x="40" y="282" width="420" height="232" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="40" y="282" width="420" height="4" rx="2" fill="#34d399"/>
+    <circle cx="64" cy="310" r="13" fill="#0e4030" stroke="#34d399" stroke-width="1.5"/>
+    <text x="64" y="315" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">c</text>
+    <text x="86" y="306" fill="#cfe0f0" font-size="14" font-weight="700">The SAGE update: h_v = σ(W · CONCAT(h_v, AGG(N)))</text>
+
+    <!-- pipeline diagram: self → concat, neighbours → AGG → concat → W·σ → h_v -->
+    <!-- self node -->
+    <rect x="58" y="326" width="56" height="28" rx="6" fill="#3a1020" stroke="#fb7185" stroke-width="1"/>
+    <text x="86" y="344" fill="#fb7185" font-size="11" font-weight="700" text-anchor="middle">h_v⁰</text>
+    <!-- arrow down to CONCAT -->
+    <line x1="86" y1="354" x2="86" y2="395" stroke="#fb7185" stroke-width="1.5" opacity="0.7"/>
+
+    <!-- sampled neighbours column -->
+    <rect x="58" y="366" width="56" height="24" rx="5" fill="#0e2740" stroke="#4dd7ff" stroke-width="1" opacity="0.5"/>
+    <text x="86" y="382" fill="#9fd0ff" font-size="9.5" text-anchor="middle">h_u, h_u'…</text>
+
+    <!-- AGG box -->
+    <rect x="130" y="360" width="72" height="36" rx="8" fill="#0e4030" stroke="#34d399" stroke-width="1.5"/>
+    <text x="166" y="376" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">AGG</text>
+    <text x="166" y="390" fill="#7fe7c0" font-size="9" text-anchor="middle">mean/pool/lstm</text>
+    <line x1="114" y1="378" x2="130" y2="378" stroke="#4dd7ff" stroke-width="1.5" opacity="0.7"/>
+
+    <!-- CONCAT box -->
+    <rect x="222" y="350" width="68" height="50" rx="8" fill="#2a1a50" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="256" y="374" fill="#a78bfa" font-size="11" font-weight="700" text-anchor="middle">CONCAT</text>
+    <text x="256" y="390" fill="#c4b5fd" font-size="8.5" text-anchor="middle">[h_v | h_N]</text>
+    <!-- arrows into concat -->
+    <line x1="86"  y1="395" x2="222" y2="378" stroke="#fb7185" stroke-width="1.5" opacity="0.6"/>
+    <line x1="202" y1="378" x2="222" y2="378" stroke="#34d399" stroke-width="1.5" opacity="0.7"/>
+
+    <!-- W·σ box -->
+    <rect x="308" y="354" width="72" height="40" rx="8" fill="#4a3000" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="344" y="371" fill="#fbbf24" font-size="11" font-weight="700" text-anchor="middle">W · σ</text>
+    <text x="344" y="386" fill="#fde68a" font-size="9" text-anchor="middle">learnable</text>
+    <line x1="290" y1="375" x2="308" y2="374" stroke="#a78bfa" stroke-width="1.5" opacity="0.7"/>
+
+    <!-- h_v output -->
+    <circle cx="420" cy="374" r="20" fill="#3a2000" stroke="#fbbf24" stroke-width="2"/>
+    <text x="420" y="370" fill="#fbbf24" font-size="11" font-weight="700" text-anchor="middle">h_v</text>
+    <text x="420" y="382" fill="#fde68a" font-size="8.5" text-anchor="middle">new</text>
+    <line x1="380" y1="374" x2="400" y2="374" stroke="#fbbf24" stroke-width="1.5" opacity="0.8"/>
+
+    <!-- Three aggregator rows -->
+    <text x="58" y="425" fill="#9fb4cc" font-size="11" font-weight="700">Aggregator choices:</text>
+
+    <!-- mean row -->
+    <rect x="58" y="434" width="64" height="22" rx="5" fill="#0e4030" stroke="#34d399" stroke-width="1"/>
+    <text x="90" y="449" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">mean</text>
+    <text x="136" y="449" fill="#9fb4cc" font-size="10">= (0.90+0.20+0.30)/3 = 0.467</text>
+    <text x="350" y="449" fill="#7fe7c0" font-size="9.5">stable, simple</text>
+
+    <!-- max-pool row -->
+    <rect x="58" y="462" width="64" height="22" rx="5" fill="#15263a" stroke="#4dd7ff" stroke-width="1"/>
+    <text x="90" y="477" fill="#4dd7ff" font-size="10" font-weight="700" text-anchor="middle">max-pool</text>
+    <text x="136" y="477" fill="#9fb4cc" font-size="10">= max(W·h_u) preserves strong signals</text>
+    <text x="380" y="477" fill="#9fd0ff" font-size="9.5">expressive</text>
+
+    <!-- lstm row -->
+    <rect x="58" y="490" width="64" height="22" rx="5" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+    <text x="90" y="505" fill="#a78bfa" font-size="10" font-weight="700" text-anchor="middle">lstm-ish</text>
+    <text x="136" y="505" fill="#9fb4cc" font-size="10">order-sensitive — graph has no natural order</text>
+    <text x="390" y="505" fill="#fda4b0" font-size="9.5">⚠ caveat</text>
+  </g>
+
+  <!-- ═══ PANEL (d) — Inductive payoff ══════════════════════════════ -->
+  <g>
+    <rect x="480" y="282" width="420" height="232" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+    <rect x="480" y="282" width="420" height="4" rx="2" fill="#a78bfa"/>
+    <circle cx="504" cy="310" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="504" y="315" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+    <text x="526" y="306" fill="#cfe0f0" font-size="14" font-weight="700">Inductive payoff: unseen nodes get embeddings</text>
+
+    <!-- training graph (small cluster left) -->
+    <circle cx="518" cy="375" r="9" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+    <circle cx="538" cy="345" r="9" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+    <circle cx="558" cy="375" r="9" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+    <circle cx="538" cy="405" r="9" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+    <line x1="518" y1="375" x2="538" y2="345" stroke="#4dd7ff" stroke-width="1" opacity="0.3"/>
+    <line x1="538" y1="345" x2="558" y2="375" stroke="#4dd7ff" stroke-width="1" opacity="0.3"/>
+    <line x1="558" y1="375" x2="538" y2="405" stroke="#4dd7ff" stroke-width="1" opacity="0.3"/>
+    <line x1="518" y1="375" x2="538" y2="405" stroke="#4dd7ff" stroke-width="1" opacity="0.3"/>
+    <text x="538" y="430" fill="#8a99ad" font-size="9.5" text-anchor="middle">training graph</text>
+
+    <!-- shared aggregator (central) -->
+    <rect x="588" y="352" width="96" height="44" rx="10" fill="#0e4030" stroke="#34d399" stroke-width="2"/>
+    <text x="636" y="372" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">Shared AGG</text>
+    <text x="636" y="386" fill="#7fe7c0" font-size="9" text-anchor="middle">learned weights W</text>
+
+    <!-- arrow from training nodes -->
+    <line x1="567" y1="375" x2="588" y2="374" stroke="#4dd7ff" stroke-width="1.5" opacity="0.6"/>
+
+    <!-- new node (right) with glow -->
+    <circle cx="760" cy="374" r="22" fill="#3a1020" stroke="#fb7185" stroke-width="2"/>
+    <text x="760" y="370" fill="#fb7185" font-size="10" font-weight="700" text-anchor="middle">G_new</text>
+    <text x="760" y="382" fill="#fda4b0" font-size="8.5" text-anchor="middle">unseen</text>
+
+    <!-- arrow shared AGG → new node embedding -->
+    <line x1="684" y1="374" x2="738" y2="374" stroke="#34d399" stroke-width="2" opacity="0.8"/>
+    <!-- small arrow head -->
+    <polygon points="738,370 748,374 738,378" fill="#34d399" opacity="0.8"/>
+
+    <!-- result box -->
+    <rect x="756" y="408" width="76" height="28" rx="6" fill="#0e4030" stroke="#34d399" stroke-width="1"/>
+    <text x="794" y="426" fill="#34d399" font-size="10" font-weight="700" text-anchor="middle">h_new ✓</text>
+
+    <!-- transductive cross -->
+    <rect x="756" y="318" width="76" height="28" rx="6" fill="#33150a" stroke="#fb7185" stroke-width="1" stroke-dasharray="4 2"/>
+    <text x="794" y="336" fill="#fb7185" font-size="10" font-weight="700" text-anchor="middle">✗  table N/A</text>
+
+    <!-- labels -->
+    <text x="794" y="308" fill="#8a99ad" font-size="9.5" text-anchor="middle">transductive</text>
+    <text x="794" y="400" fill="#8a99ad" font-size="9.5" text-anchor="middle">GraphSAGE</text>
+
+    <!-- use cases column -->
+    <text x="500" y="470" fill="#cfe0f0" font-size="10.5" font-weight="700">Biology use cases for inductive GNNs:</text>
+    <text x="500" y="488" fill="#4dd7ff">▸</text><text x="514" y="488" fill="#9fb4cc" font-size="10">new gene / protein in updated database</text>
+    <text x="500" y="504" fill="#34d399">▸</text><text x="514" y="504" fill="#9fb4cc" font-size="10">new patient cohort / new tissue type</text>
+    <text x="500" y="520" fill="#fbbf24">▸</text><text x="514" y="520" fill="#9fb4cc" font-size="10">new perturbation screen / new species</text>
+  </g>
+
+  <!-- figure caption -->
+  <line x1="40" y1="528" x2="900" y2="528" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+  <text x="40" y="548" font-size="12.5" fill="#c7d2dd">
+    <tspan fill="#e8eef6" font-weight="700">Figure B02. </tspan>
+    <tspan>GraphSAGE learns a reusable aggregator, not a fixed embedding table. </tspan>
+    <tspan fill="#9fe0ff" font-weight="700">(a)</tspan>
+    <tspan> Transductive tables fail on unseen nodes;</tspan>
+  </text>
+  <text x="40" y="566" font-size="12.5" fill="#c7d2dd">
+    <tspan>inductive models learn a neighbourhood function applicable to any new node from its features. </tspan>
+    <tspan fill="#fde68a" font-weight="700">(b)</tspan>
+    <tspan> Fixed-size sampling</tspan>
+  </text>
+  <text x="40" y="584" font-size="12.5" fill="#c7d2dd">
+    <tspan>(S per hop) bounds the computation tree to ≤1+S+S² nodes regardless of hub degree, enabling minibatch training. </tspan>
+    <tspan fill="#7fe7c0" font-weight="700">(c)</tspan>
+  </text>
+  <text x="40" y="602" font-size="12.5" fill="#c7d2dd">
+    <tspan>The SAGE update concatenates the node's own representation with a sampled-neighbour aggregate (mean, max-pool, or lstm-ish),</tspan>
+  </text>
+  <text x="40" y="620" font-size="12.5" fill="#c7d2dd">
+    <tspan>then applies a learned transform W·σ. </tspan>
+    <tspan fill="#c4b5fd" font-weight="700">(d)</tspan>
+    <tspan> The shared aggregator embeds new genes, patients, or tissues without retraining — the key biological payoff.</tspan>
+  </text>
+</svg>

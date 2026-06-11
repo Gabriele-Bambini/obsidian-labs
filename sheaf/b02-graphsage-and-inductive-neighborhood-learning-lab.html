@@ -1,0 +1,449 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B02 · GraphSAGE lab</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* deterministic pseudo-random (no Math.random / Date) */
+  const frac = x => { const v = Math.sin(x * 127.1 + 31.7) * 43758.5453; return v - Math.floor(v); };
+
+  /* gene names and activity scores from worked example */
+  const GENES    = ["G*","TF1","TF2","K1","mA","mB","HubP","TF3","K2","mC","mD","mE","TF4","K3","mF","mG","mH","TF5","K4","mI","mJ"];
+  const ACTIVITY = [0.40,0.90,0.70,0.20,0.10,0.30,0.80,0.60,0.45,0.25,0.55,0.35,0.75,0.15,0.65,0.50,0.40,0.85,0.30,0.20,0.45];
+
+  /* palette */
+  const C = {
+    cyan:0x4dd7ff, cyanD:0x1a6080,
+    green:0x34d399, greenD:0x0e4030,
+    amber:0xfbbf24, amberD:0x4a3000,
+    violet:0xa78bfa, violetD:0x2a1a50,
+    rose:0xfb7185, roseD:0x3a1020,
+    slate:0x54667c, slateD:0x111a28
+  };
+
+  let _scene = {};
+  let _step  = 0; /* resample counter */
+
+  /* ─── edge helper ───────────────────────────────────────── */
+  function mkEdge(T, a, b, color, opacity){
+    const g = new T.BufferGeometry().setFromPoints([a.clone(), b.clone()]);
+    const m = new T.LineBasicMaterial({color, opacity, transparent:true});
+    return new T.Line(g, m);
+  }
+
+  /* ─── deterministic sampler (seeded by _step) ──────────── */
+  function sample(total, k, seed){
+    const pool = Array.from({length:total},(_,i)=>i);
+    for(let i=pool.length-1;i>0;i--){
+      const j = Math.floor(frac(i*53.7+seed*7.3+1.1)*(i+1));
+      [pool[i],pool[j]]=[pool[j],pool[i]];
+    }
+    return new Set(pool.slice(0,Math.min(k,total)));
+  }
+
+  /* ═════════════════════════════════════════════════════════
+     MODE 1 — SAMPLING
+  ═════════════════════════════════════════════════════════ */
+  function buildSampling(api,T,S,depth,hub){
+    const gG=api.group("graph"), lG=api.group("labels");
+    const origin = new T.Vector3(0,0,0);
+    const HOP1 = Math.min(hub+4, 18);
+
+    /* hop-1 positions */
+    const h1pos = Array.from({length:HOP1},(_,i)=>{
+      const a=(i/HOP1)*Math.PI*2-Math.PI/2;
+      return new T.Vector3(3.0*Math.cos(a), 3.0*Math.sin(a), frac(i*17.3)*0.6-0.3);
+    });
+
+    /* sampled hop-1 */
+    const s1 = sample(HOP1, S, _step);
+
+    /* hop-2 */
+    const h2map = new Map(), s2map = new Map();
+    s1.forEach(h1i=>{
+      const n2 = 3+Math.round(frac(h1i*31.1)*4);
+      const pos2 = Array.from({length:n2},(_,j)=>{
+        const b=h1pos[h1i], a2=(j/n2)*Math.PI*2+frac(h1i*9.7)*Math.PI;
+        const rr=1.8+frac(h1i*13.1+j*7.7)*0.6;
+        return new T.Vector3(b.x+rr*Math.cos(a2), b.y+rr*Math.sin(a2), b.z+(frac(j*23.1+h1i)-0.5)*0.5);
+      });
+      h2map.set(h1i,pos2);
+      s2map.set(h1i, depth>=2 ? sample(n2,S,_step*3+h1i) : new Set());
+    });
+
+    /* count full vs sampled */
+    let fullCount = 1+HOP1;
+    let sampCount = 1+s1.size;
+    s1.forEach(h1i=>{
+      const p2=h2map.get(h1i)||[];
+      fullCount += p2.length;
+      if(depth>=2) sampCount += (s2map.get(h1i)||new Set()).size;
+    });
+    const bound = depth>=2 ? 1+S+S*S : 1+S;
+
+    /* draw hop-2 */
+    if(depth>=2){
+      s1.forEach(h1i=>{
+        const pos2=h2map.get(h1i)||[], samp2=s2map.get(h1i)||new Set();
+        pos2.forEach((p2,j2)=>{
+          const ok=samp2.has(j2);
+          const col=new T.Color(ok?C.green:C.slateD);
+          const em=new T.Color(ok?C.green:0x1a2030);
+          const m=new T.Mesh(new T.SphereGeometry(ok?0.28:0.20,10,10),
+            new T.MeshStandardMaterial({color:col,emissive:em,emissiveIntensity:ok?0.6:0.1,roughness:0.5}));
+          m.position.copy(p2); gG.add(m);
+          gG.add(mkEdge(T,h1pos[h1i],p2, ok?C.green:C.slate, ok?0.55:0.1));
+        });
+      });
+    }
+
+    /* draw hop-1 */
+    h1pos.forEach((p1,i)=>{
+      const ok=s1.has(i), isHub=(i<hub);
+      const col=new T.Color(ok?(isHub?C.amber:C.cyan):C.slate);
+      const em =new T.Color(ok?(isHub?C.amberD:C.cyanD):0x1a2a3a);
+      const m=new T.Mesh(new T.SphereGeometry(ok?0.35:0.25,12,12),
+        new T.MeshStandardMaterial({color:col,emissive:em,emissiveIntensity:ok?0.7:0.12,roughness:0.4}));
+      m.position.copy(p1);
+      api.pick(m,{idx:i,sampled:ok,hop:1});
+      gG.add(m);
+      gG.add(mkEdge(T,origin,p1, ok?(isHub?C.amber:C.cyan):C.slate, ok?0.6:0.12));
+      if(ok && i<GENES.length-1){
+        const lb=api.label(GENES[i+1], ok?(isHub?"#fbbf24":"#4dd7ff"):"#54667c", 0.26);
+        lb.position.set(p1.x,p1.y+0.5,p1.z); lG.add(lb);
+      }
+    });
+
+    /* draw target */
+    {
+      const col=new T.Color(C.rose);
+      const m=new T.Mesh(new T.SphereGeometry(0.55,16,16),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.8,roughness:0.3}));
+      m.position.copy(origin); api.pick(m,{idx:"G*"}); gG.add(m);
+      const lb=api.label("G*","#fb7185",0.38); lb.position.set(0,0.82,0); lG.add(lb);
+    }
+
+    _scene={sampledNodes:sampCount,fullNeighborhood:fullCount,sampledBound:bound,hubDegree:hub,sampleSize:S};
+    return {
+      badge:"Sampling · S="+S+" · depth="+depth+" · hub="+hub,
+      formula:"sampled ≤ 1+S+S² = "+bound+" vs full = "+fullCount,
+      insight:"Hub has "+hub+" edges — GraphSAGE samples only S="+S+" per hop. Sampled computation graph = "+sampCount+" nodes (bound "+bound+"). Full graph would need "+fullCount+" nodes. Increasing hub degree does NOT increase sampled count.",
+      state:"sampled="+sampCount+" | bound="+bound+" | full="+fullCount+" | savings="+((1-sampCount/Math.max(fullCount,1))*100).toFixed(0)+"%",
+      metrics:{sampled:""+sampCount, fullNeigh:""+fullCount, bound:"≤"+bound, savings:((1-sampCount/Math.max(fullCount,1))*100).toFixed(0)+"%"},
+      focus:{center:[0,0,0],radius:10}
+    };
+  }
+
+  /* ═════════════════════════════════════════════════════════
+     MODE 2 — AGGREGATORS
+  ═════════════════════════════════════════════════════════ */
+  function buildAggregators(api,T,S,agg){
+    const gG=api.group("graph"), lG=api.group("labels");
+    const sampN=Math.min(S,6);
+    const tPos=new T.Vector3(-2.5,0,0);
+
+    /* neighbour features (worked example) */
+    const nFeats=Array.from({length:sampN},(_,i)=>ACTIVITY[(i+1)%ACTIVITY.length]);
+    const selfFeat=ACTIVITY[0]; /* G* = 0.40 */
+
+    /* aggregate */
+    const AGGNAMES=["mean","max-pool","lstm-ish"];
+    let aggVal;
+    if(agg===0){
+      aggVal=nFeats.reduce((a,b)=>a+b,0)/sampN;
+    } else if(agg===1){
+      aggVal=Math.max(...nFeats.map((f,i)=>f*(0.8+frac(i*41.3)*0.4)));
+    } else {
+      const w=nFeats.map((_,i)=>frac(i*23.7+5.1));
+      const ws=w.reduce((a,b)=>a+b,0.001);
+      aggVal=nFeats.reduce((sum,f,i)=>sum+f*w[i],0)/ws;
+    }
+
+    const W=[1.2,0.8];
+    const pre=W[0]*selfFeat+W[1]*aggVal;
+    const hV=1/(1+Math.exp(-pre));
+
+    /* neighbour arc */
+    const nPos=Array.from({length:sampN},(_,i)=>{
+      const a=((i/(sampN-1))*0.7-0.35)*Math.PI-Math.PI/2;
+      return new T.Vector3(tPos.x+2.8*Math.cos(a), 2.8*Math.sin(a), 0);
+    });
+
+    nPos.forEach((p,i)=>{
+      const feat=nFeats[i], col=new T.Color(C.cyan);
+      const m=new T.Mesh(new T.SphereGeometry(0.28,12,12),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(feat),emissiveIntensity:0.7,roughness:0.4}));
+      m.position.copy(p); gG.add(m);
+      gG.add(mkEdge(T,tPos,p,C.cyan,0.4));
+      const bh=feat*1.2;
+      const bar=new T.Mesh(new T.BoxGeometry(0.18,bh,0.18),
+        new T.MeshStandardMaterial({color:new T.Color(C.cyan),emissive:new T.Color(C.cyanD),emissiveIntensity:0.5,roughness:0.4}));
+      bar.position.set(p.x,p.y+0.35+bh/2,p.z); gG.add(bar);
+      const l1=api.label(feat.toFixed(2),"#4dd7ff",0.22); l1.position.set(p.x,p.y+0.4+bh+0.2,p.z); lG.add(l1);
+      const l2=api.label(GENES[i+1]||"n"+i,"#8a99ad",0.20); l2.position.set(p.x,p.y-0.55,p.z); lG.add(l2);
+    });
+
+    /* target */
+    {const col=new T.Color(C.rose);
+     const m=new T.Mesh(new T.SphereGeometry(0.5,16,16),
+       new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.8,roughness:0.3}));
+     m.position.copy(tPos); gG.add(m);
+     const l=api.label("G*  h="+selfFeat.toFixed(2),"#fb7185",0.30);
+     l.position.set(tPos.x,tPos.y-0.85,tPos.z); lG.add(l);}
+
+    /* AGG box */
+    const aggPos=new T.Vector3(0.8,0,0);
+    {const col=new T.Color(C.green);
+     const m=new T.Mesh(new T.BoxGeometry(1.1,0.8,0.8),
+       new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),emissiveIntensity:0.5,roughness:0.4}));
+     m.position.copy(aggPos); gG.add(m);
+     nPos.forEach(p=>gG.add(mkEdge(T,p,aggPos,C.green,0.35)));
+     const l1=api.label("AGG:"+AGGNAMES[agg],"#34d399",0.28); l1.position.set(aggPos.x,aggPos.y+0.7,aggPos.z); lG.add(l1);
+     const l2=api.label(aggVal.toFixed(3),"#34d399",0.32); l2.position.set(aggPos.x,aggPos.y-0.7,aggPos.z); lG.add(l2);}
+
+    /* CONCAT box */
+    const concPos=new T.Vector3(3.0,0,0);
+    {const col=new T.Color(C.violet);
+     const m=new T.Mesh(new T.BoxGeometry(1.0,1.4,0.7),
+       new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.3),emissiveIntensity:0.4,roughness:0.4}));
+     m.position.copy(concPos); gG.add(m);
+     gG.add(mkEdge(T,aggPos,concPos,C.violet,0.5));
+     gG.add(mkEdge(T,tPos,concPos,C.violet,0.35));
+     const l1=api.label("CONCAT","#a78bfa",0.28); l1.position.set(concPos.x,concPos.y+0.95,concPos.z); lG.add(l1);
+     const l2=api.label("["+selfFeat.toFixed(2)+" | "+aggVal.toFixed(3)+"]","#c4b5fd",0.24);
+     l2.position.set(concPos.x,concPos.y-1.0,concPos.z); lG.add(l2);}
+
+    /* output h_v */
+    const outPos=new T.Vector3(5.0,0,0);
+    {const col=new T.Color(C.amber);
+     const m=new T.Mesh(new T.SphereGeometry(0.45,14,14),
+       new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(hV),emissiveIntensity:0.9,roughness:0.3}));
+     m.position.copy(outPos); gG.add(m);
+     gG.add(mkEdge(T,concPos,outPos,C.amber,0.6));
+     const l1=api.label("h_v="+hV.toFixed(3),"#fbbf24",0.32); l1.position.set(outPos.x,outPos.y+0.75,outPos.z); lG.add(l1);
+     const l2=api.label("σ(W·concat)","#fde68a",0.22); l2.position.set(outPos.x,outPos.y-0.75,outPos.z); lG.add(l2);}
+
+    _scene={aggResult:aggVal,hV,selfFeat,aggregatorType:agg,sampledN:sampN};
+    return {
+      badge:"Aggregator: "+AGGNAMES[agg]+" · S="+S,
+      formula:"h_v = σ(W · CONCAT(h_v⁰, AGG({h_u : u∈S(v)})))",
+      insight:"AGG="+AGGNAMES[agg]+": neighbor_agg="+aggVal.toFixed(3)+". CONCAT=["+selfFeat.toFixed(2)+"|"+aggVal.toFixed(3)+"]. W=[1.2,0.8] → pre="+pre.toFixed(3)+" → h_v="+hV.toFixed(3)+". Switching aggregator changes the neighbour summary and thus h_v.",
+      state:"agg="+AGGNAMES[agg]+" | neighbor_agg="+aggVal.toFixed(3)+" | h_v="+hV.toFixed(3),
+      metrics:{neighAgg:aggVal.toFixed(3),selfFeat:selfFeat.toFixed(2),hv:hV.toFixed(3),aggType:AGGNAMES[agg]},
+      focus:{center:[1.2,0,0],radius:11}
+    };
+  }
+
+  /* ═════════════════════════════════════════════════════════
+     MODE 3 — INDUCTIVE
+  ═════════════════════════════════════════════════════════ */
+  function buildInductive(api,T,S,agg){
+    const gG=api.group("graph"), lG=api.group("labels");
+    const AGGNAMES=["mean","max-pool","lstm-ish"];
+    const TRAIN_N=8;
+    const tc=new T.Vector3(-3.5,0,0);
+
+    /* training nodes */
+    const tPos=Array.from({length:TRAIN_N},(_,i)=>{
+      const a=(i/TRAIN_N)*Math.PI*2;
+      return new T.Vector3(tc.x+2.0*Math.cos(a),tc.y+2.0*Math.sin(a),frac(i*19.3)*0.4-0.2);
+    });
+
+    /* training edges */
+    for(let i=0;i<TRAIN_N;i++) for(let j=i+1;j<TRAIN_N;j++)
+      if(frac(i*13.1+j*7.3)>0.55) gG.add(mkEdge(T,tPos[i],tPos[j],C.slate,0.08));
+
+    /* training nodes draw */
+    tPos.forEach((p,i)=>{
+      const col=new T.Color(C.cyan);
+      const m=new T.Mesh(new T.SphereGeometry(0.28,10,10),
+        new T.MeshStandardMaterial({color:col,emissive:new T.Color(C.cyanD),emissiveIntensity:0.5,roughness:0.4}));
+      m.position.copy(p); gG.add(m);
+      if(i<GENES.length-1){
+        const l=api.label(GENES[i+1],"#9fb4cc",0.20); l.position.set(p.x,p.y+0.42,p.z); lG.add(l);
+      }
+    });
+
+    /* training cluster label */
+    const tcl=api.bigLabel("TRAINING GRAPH","#8a99ad",1.2);
+    tcl.position.set(tc.x,tc.y-2.9,0); lG.add(tcl);
+
+    /* new unseen node */
+    const newP=new T.Vector3(1.8,0,0);
+    const newSelf=0.55;
+    const sampN=Math.min(S,TRAIN_N);
+
+    /* sampled neighbours of new node */
+    const sampIdx=Array.from({length:sampN},(_,i)=>Math.floor(frac(i*37.1+99.3)*TRAIN_N));
+    const sampFeats=sampIdx.map(idx=>ACTIVITY[(idx%(ACTIVITY.length-1))+1]);
+
+    let aggVal;
+    if(agg===0){
+      aggVal=sampFeats.reduce((a,b)=>a+b,0)/sampFeats.length;
+    } else if(agg===1){
+      aggVal=Math.max(...sampFeats.map((f,i)=>f*(0.8+frac(i*41.3)*0.4)));
+    } else {
+      const w=sampFeats.map((_,i)=>frac(i*23.7+5.1));
+      const ws=w.reduce((a,b)=>a+b,0.001);
+      aggVal=sampFeats.reduce((sum,f,i)=>sum+f*w[i],0)/ws;
+    }
+    const hNew=1/(1+Math.exp(-(1.2*newSelf+0.8*aggVal)));
+
+    /* sampled edges to training nodes */
+    sampIdx.forEach(idx=>gG.add(mkEdge(T,newP,tPos[idx],C.green,0.5)));
+
+    /* new node */
+    {const col=new T.Color(C.rose);
+     const m=new T.Mesh(new T.SphereGeometry(0.55,16,16),
+       new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.7),emissiveIntensity:1.0,roughness:0.2}));
+     m.position.copy(newP); api.pick(m,{node:"new"}); gG.add(m);
+     const l=api.bigLabel("G_new (unseen)","#fb7185",1.35);
+     l.position.set(newP.x,newP.y+0.9,0); lG.add(l);}
+
+    /* transductive box */
+    const tbx=new T.Vector3(4.0,1.8,0);
+    {const col=new T.Color(C.roseD);
+     const m=new T.Mesh(new T.BoxGeometry(3.0,1.0,0.5),
+       new T.MeshStandardMaterial({color:col,emissive:new T.Color(C.rose),emissiveIntensity:0.1,roughness:0.6,transparent:true,opacity:0.7}));
+     m.position.copy(tbx); gG.add(m);
+     const l1=api.bigLabel("Transductive: ✗  no embedding","#fb7185",1.2);
+     l1.position.set(tbx.x,tbx.y,0); lG.add(l1);
+     const l2=api.label("embedding table: no row for G_new","#8a99ad",0.22);
+     l2.position.set(tbx.x,tbx.y-0.65,0); lG.add(l2);}
+
+    /* graphsage box */
+    const sbx=new T.Vector3(4.0,-1.8,0);
+    {const col=new T.Color(C.green);
+     const m=new T.Mesh(new T.BoxGeometry(3.0,1.0,0.5),
+       new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4,transparent:true,opacity:0.8}));
+     m.position.copy(sbx); gG.add(m);
+     const l1=api.bigLabel("GraphSAGE: ✓  inductive","#34d399",1.3);
+     l1.position.set(sbx.x,sbx.y,0); lG.add(l1);
+     const l2=api.label("h_new="+hNew.toFixed(3)+" (shared agg, no retrain)","#7fe7c0",0.24);
+     l2.position.set(sbx.x,sbx.y-0.65,0); lG.add(l2);}
+
+    /* connector edges */
+    gG.add(mkEdge(T,newP,new T.Vector3(tbx.x-1.5,tbx.y,0),C.rose,0.3));
+    gG.add(mkEdge(T,newP,new T.Vector3(sbx.x-1.5,sbx.y,0),C.green,0.4));
+
+    _scene={hNew,aggResult:aggVal,newSelf,sampledNeighCount:sampN,inductive:true};
+    return {
+      badge:"Inductive · S="+S+" · agg="+AGGNAMES[agg],
+      formula:"h_new = σ(W · CONCAT(h_new, AGG(sampled N(G_new))))",
+      insight:"G_new was NOT in training. GraphSAGE uses the SHARED "+AGGNAMES[agg]+" aggregator on "+sampN+" sampled neighbours → h_new="+hNew.toFixed(3)+". Transductive embedding tables have no row for new nodes.",
+      state:"GraphSAGE: h_new="+hNew.toFixed(3)+" ✓ | Transductive: ✗ N/A | neighbours_sampled="+sampN,
+      metrics:{hNew:hNew.toFixed(3),graphsage:"✓ inductive",transductive:"✗ N/A",sampledNeigh:""+sampN},
+      focus:{center:[1.0,0,0],radius:12}
+    };
+  }
+
+  /* ═════════════════════════════════════════════════════════
+     MAIN BUILD (dispatcher)
+  ═════════════════════════════════════════════════════════ */
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const S    = Math.round(s.sampleSize);
+    const dep  = Math.round(s.depth);
+    const agg  = Math.round(s.aggregator);
+    const hub  = Math.round(s.hubDegree);
+    if(s.mode==="sampling")    return buildSampling(api,T,S,dep,hub);
+    if(s.mode==="aggregators") return buildAggregators(api,T,S,agg);
+    if(s.mode==="inductive")   return buildInductive(api,T,S,agg);
+    return {};
+  }
+
+  /* ═════════════════════════════════════════════════════════
+     MathLab config
+  ═════════════════════════════════════════════════════════ */
+  MathLab.create({
+    id:"b02", kind:"graphsage-explorer",
+    eyebrow:"Block B · GNN Architectures",
+    title:"B02 · GraphSAGE and inductive neighbourhood learning",
+    subtitle:"Sample a fixed-size neighbourhood, aggregate, concatenate self, project. Change mode to explore sampling bounds, aggregator choices, and inductive inference on unseen nodes.",
+    selectedLabel:"Node", selectedHint:"Click any node to inspect it.",
+
+    modes:[
+      {value:"sampling",    label:"Neighbourhood sampling"},
+      {value:"aggregators", label:"Aggregators (mean / pool / lstm)"},
+      {value:"inductive",   label:"Inductive new node"}
+    ],
+
+    params:[
+      {key:"sampleSize", label:"sample size S (per hop)", min:1, max:6, step:1, value:3, fmt:v=>""+Math.round(v)},
+      {key:"depth",      label:"depth / hops",            min:1, max:3, step:1, value:2, fmt:v=>""+Math.round(v)},
+      {key:"aggregator", label:"aggregator (0=mean 1=max 2=lstm)", min:0, max:2, step:1, value:0,
+        fmt:v=>["mean","max-pool","lstm-ish"][Math.round(v)], modes:["aggregators","inductive"]},
+      {key:"hubDegree",  label:"hub degree",              min:4, max:20, step:1, value:10,
+        fmt:v=>""+Math.round(v), modes:["sampling"]}
+    ],
+
+    metrics:[
+      {key:"sampled",   label:"Sampled nodes",       accent:"cyan"},
+      {key:"fullNeigh", label:"Full neighbourhood",  accent:"amber"},
+      {key:"bound",     label:"Compute bound",       accent:"green"},
+      {key:"savings",   label:"Node savings",        accent:"violet"}
+    ],
+
+    layers:[
+      {group:"graph",  label:"Graph"},
+      {group:"labels", label:"Labels"},
+      {group:"math",   label:"Math"}
+    ],
+
+    primary:{
+      label:"Resample neighbours",
+      on:api=>{ _step=(_step+1)%1000; api.rebuild(); }
+    },
+    secondary:{
+      label:"Cycle aggregator",
+      on:api=>{
+        const cur=Math.round(api.state.aggregator);
+        api.setParam("aggregator",(cur+1)%3);
+      }
+    },
+
+    defaultCam:{theta:0.15,phi:0.6,r:11},
+
+    hint:'<span class="r">rose</span>=target · <span class="c">cyan</span>=sampled hop-1 · <span class="g">green</span>=sampled hop-2 · <span class="a">amber</span>=hub nodes · slate=un-sampled. Mode 1: sampling bounds compute regardless of hub degree. Mode 2: aggregator changes h_v. Mode 3: new unseen gene gets inductive embedding via shared aggregator.',
+
+    onParam(api){ api.frame([0,0,0],11); },
+
+    onSelect(api,d){
+      if(d.idx==="G*")    api.setSelected("G* — target gene · activity=0.40");
+      else if(d.node==="new") api.setSelected("G_new — UNSEEN gene · receives inductive embedding");
+      else if(d.idx!=null) api.setSelected("Node "+d.idx+" (hop "+d.hop+") · sampled="+d.sampled);
+    },
+
+    build,
+
+    snapshot(s){
+      const sc=_scene;
+      return {
+        mode:s.mode,
+        sampleSize:Math.round(s.sampleSize),
+        depth:Math.round(s.depth),
+        aggregator:Math.round(s.aggregator),
+        hubDegree:Math.round(s.hubDegree),
+        resampleStep:_step,
+        sampledNodes:sc.sampledNodes??0,
+        fullNeighborhood:sc.fullNeighborhood??0,
+        computeBound:sc.sampledBound??0,
+        aggResult:sc.aggResult!=null?+sc.aggResult.toFixed(4):0,
+        hV:sc.hV!=null?+sc.hV.toFixed(4):(sc.hNew!=null?+sc.hNew.toFixed(4):0),
+        inductive:sc.inductive??false
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

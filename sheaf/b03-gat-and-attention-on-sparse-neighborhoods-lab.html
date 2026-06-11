@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B03 · GAT and attention on sparse neighborhoods</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  /* ── deterministic pseudo-random ─────────────────────────────── */
+  const prand = i => { const x = Math.sin(i * 127.1 + 31.7) * 43758.5453; return x - Math.floor(x); };
+
+  /* ── palette ─────────────────────────────────────────────────── */
+  const C = {
+    cyan:   0x4dd7ff, cyans:  "#4dd7ff",
+    green:  0x34d399, greens: "#34d399",
+    amber:  0xfbbf24, ambers: "#fbbf24",
+    violet: 0xa78bfa, violets:"#a78bfa",
+    rose:   0xfb7185, roses:  "#fb7185",
+    slate:  0x54667c, slates: "#9fb4cc",
+  };
+
+  /* ── scene-state cache (for snapshot) ────────────────────────── */
+  let _snap = {};
+
+  /* ── math helpers ─────────────────────────────────────────────── */
+  function softmax(arr) {
+    const m = Math.max(...arr);
+    const ex = arr.map(v => Math.exp(v - m));
+    const s  = ex.reduce((a,b)=>a+b, 0);
+    return ex.map(v => v / s);
+  }
+  function entropy(alphas) {
+    return -alphas.reduce((s, a) => s + (a > 1e-9 ? a * Math.log(a) : 0), 0);
+  }
+
+  /* ── neighbour layout (circle) ───────────────────────────────── */
+  function neighbourPos(n, radius) {
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      const theta = (2 * Math.PI * i / n) - Math.PI / 2;
+      pts.push([radius * Math.cos(theta), radius * Math.sin(theta), 0]);
+    }
+    return pts;
+  }
+
+  /* base logit per neighbour — deterministic, varies by index */
+  function baseLogit(i) {
+    return 0.2 + prand(i * 17.3 + 5.1) * 1.6;
+  }
+  /* GCN degree-normalised weight 1/sqrt((N+1)*(N+1)) */
+  function gcnWeight(n) {
+    return 1 / Math.sqrt((n + 1) * (n + 1));
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     BUILD — called every time state changes
+  ══════════════════════════════════════════════════════════════════*/
+  function build(api) {
+    const T    = api.THREE;
+    const s    = api.state;
+    const N    = Math.round(s.neighbors);
+    const mode = s.mode;
+
+    /* gate params to mode */
+    const focusEvidence = (mode === "attention") ? (s.focusEvidence || 0) : 0;
+    const K             = (mode === "multihead")  ? Math.round(s.heads || 1) : 1;
+    const gcnCmp        = (mode === "attention")  ? ((s.gcnCompare || 0) >= 0.5 ? 1 : 0) : 0;
+
+    /* groups */
+    const gEdge = api.group("edges");
+    const gNode = api.group("nodes");
+    const gLbl  = api.group("labels");
+
+    /* layout */
+    const R = 3.2;
+    const positions = neighbourPos(N, R);
+
+    /* ── logits ───────────────────────────────────────────────── */
+    const rawLogits = positions.map((_, i) => baseLogit(i));
+
+    /* focusEvidence raises neighbour-0 logit (softmax competition) */
+    rawLogits[0] = rawLogits[0] + focusEvidence * 2.5;
+
+    /* not-causal: hub neighbour gets artificially large logit */
+    const hubIdx = Math.min(Math.floor(N / 2), N - 1);
+    let logits = rawLogits.slice();
+    if (mode === "not-causal") {
+      logits[hubIdx] = 2.8;   /* strong fixed hub bias */
+    }
+
+    /* ── softmax → α ─────────────────────────────────────────── */
+    const alphas = softmax(logits);
+    const maxAlpha = Math.max(...alphas);
+    const H = entropy(alphas);
+    const sumAlpha = alphas.reduce((a,b)=>a+b,0);
+
+    /* toy h values for each neighbour (deterministic) */
+    const hVals = positions.map((_, i) => 0.2 + prand(i * 41.7 + 9.3) * 0.8);
+    const hPrime = alphas.reduce((s,a,i) => s + a * hVals[i], 0);
+
+    /* ── multi-head: K independent heads ─────────────────────── */
+    const headAlphas = [];
+    for (let k = 0; k < K; k++) {
+      const hl = positions.map((_, i) =>
+        rawLogits[i] + (prand(k * 53.7 + i * 11.3 + 7.1) - 0.5) * 1.8
+      );
+      headAlphas.push(softmax(hl));
+    }
+    /* average α across all K heads */
+    const avgAlpha = positions.map((_, i) =>
+      headAlphas.reduce((s, ha) => s + ha[i], 0) / K
+    );
+
+    /* which α to display on main edges */
+    const dispAlpha = (mode === "multihead") ? avgAlpha : alphas;
+
+    /* ── colour palette per neighbour ────────────────────────── */
+    const nCols  = [C.cyan, C.green, C.amber, C.violet, C.rose, C.cyan, C.green];
+    const nColSt = [C.cyans, C.greens, C.ambers, C.violets, C.roses, C.cyans, C.greens];
+    const gcnW   = gcnWeight(N);
+
+    /* ────────────────────────────────────────────────────────────
+       DRAW EDGES
+    ──────────────────────────────────────────────────────────────*/
+    positions.forEach((pos, i) => {
+      const a = dispAlpha[i];
+      const isHub = (mode === "not-causal" && i === hubIdx);
+
+      /* main GAT edge */
+      const thick = 0.045 + a * 0.52;
+      const baseCol = new T.Color(isHub ? C.rose : nCols[i % nCols.length]);
+      const edgeCol = baseCol.clone().multiplyScalar(0.3 + a * 0.7);
+      const dir = new T.Vector3(...pos);
+      const len = dir.length();
+      const mid = dir.clone().multiplyScalar(0.5);
+      const gatEdge = new T.Mesh(
+        new T.CylinderGeometry(thick, thick, len, 8),
+        new T.MeshStandardMaterial({
+          color: edgeCol,
+          emissive: edgeCol.clone().multiplyScalar(0.65),
+          emissiveIntensity: 0.5 + a * 0.45,
+          roughness: 0.4
+        })
+      );
+      gatEdge.position.copy(mid);
+      gatEdge.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), dir.clone().normalize());
+      gEdge.add(gatEdge);
+
+      /* GCN comparison edge (slate, offset, dashed-look via opacity) */
+      if (gcnCmp) {
+        const gcThick = 0.035 + gcnW * 0.38;
+        const gcCol = new T.Color(0x54667c);
+        const off = new T.Vector3(pos[1], -pos[0], 0).normalize().multiplyScalar(0.22);
+        const gcMid = mid.clone().add(off);
+        const gcEdge = new T.Mesh(
+          new T.CylinderGeometry(gcThick, gcThick, len * 0.88, 6),
+          new T.MeshStandardMaterial({
+            color: gcCol, emissive: gcCol.clone().multiplyScalar(0.3),
+            emissiveIntensity: 0.3, roughness: 0.55, transparent: true, opacity: 0.65
+          })
+        );
+        gcEdge.position.copy(gcMid);
+        gcEdge.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), dir.clone().normalize());
+        gEdge.add(gcEdge);
+      }
+
+      /* multi-head individual arcs */
+      if (mode === "multihead" && K > 1) {
+        const headCols = [C.cyan, C.green, C.amber, C.violet];
+        for (let k = 0; k < K; k++) {
+          const ha = headAlphas[k][i];
+          const angle = ((k + 0.5) / K - 0.5) * 0.45;
+          const rotM = new T.Matrix4().makeRotationZ(angle);
+          const hDir = dir.clone().applyMatrix4(rotM).normalize();
+          const hLen = len * 0.78;
+          const hMid = hDir.clone().multiplyScalar(hLen / 2);
+          const hThick = 0.018 + ha * 0.10;
+          const hc = new T.Color(headCols[k]);
+          hc.multiplyScalar(0.25 + ha * 0.65);
+          const hEdge = new T.Mesh(
+            new T.CylinderGeometry(hThick, hThick, hLen, 6),
+            new T.MeshStandardMaterial({
+              color: hc, emissive: hc.clone().multiplyScalar(0.45),
+              emissiveIntensity: 0.4, roughness: 0.5, transparent: true, opacity: 0.72
+            })
+          );
+          hEdge.position.copy(hMid);
+          hEdge.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), hDir);
+          gEdge.add(hEdge);
+        }
+      }
+    });
+
+    /* ────────────────────────────────────────────────────────────
+       DRAW NODES & LABELS
+    ──────────────────────────────────────────────────────────────*/
+    const nameMap = ["TF1","TF2","HubP","TF3","TF4","TF5","TF6"];
+
+    positions.forEach((pos, i) => {
+      const a = dispAlpha[i];
+      const isHub = (mode === "not-causal" && i === hubIdx);
+      const col = new T.Color(isHub ? C.rose : nCols[i % nCols.length]);
+      const r = 0.27 + a * 0.35 + (isHub ? 0.20 : 0);
+
+      const sphere = new T.Mesh(
+        new T.SphereGeometry(r, 22, 22),
+        new T.MeshStandardMaterial({
+          color: col,
+          emissive: col.clone().multiplyScalar(isHub ? 0.95 : 0.5),
+          emissiveIntensity: isHub ? 0.95 : 0.4 + a * 0.5,
+          roughness: 0.3
+        })
+      );
+      sphere.position.set(pos[0], pos[1], pos[2]);
+      api.pick(sphere, { neighbour: i, alpha: a, logit: logits[i], isHub });
+      gNode.add(sphere);
+
+      /* α label */
+      const colStr = isHub ? C.roses : nColSt[i % nColSt.length];
+      const aLbl = api.label(`α=${a.toFixed(3)}`, colStr, 0.31);
+      aLbl.position.set(pos[0], pos[1] + r + 0.42, pos[2]);
+      gLbl.add(aLbl);
+
+      /* GCN weight label */
+      if (gcnCmp) {
+        const gcLbl = api.label(`gcn=${gcnW.toFixed(3)}`, "#8a99ad", 0.25);
+        gcLbl.position.set(pos[0] + 0.55, pos[1] + r + 0.12, pos[2]);
+        gLbl.add(gcLbl);
+      }
+
+      /* node name */
+      const nodeName = isHub ? "HUB(DB)" : nameMap[i % nameMap.length];
+      const nLbl = api.label(nodeName, colStr, 0.27);
+      nLbl.position.set(pos[0], pos[1] - r - 0.46, pos[2]);
+      gLbl.add(nLbl);
+    });
+
+    /* target node */
+    const tCol = new T.Color(C.cyan);
+    gNode.add(Object.assign(
+      new T.Mesh(
+        new T.SphereGeometry(0.53, 26, 26),
+        new T.MeshStandardMaterial({
+          color: tCol, emissive: tCol.clone().multiplyScalar(0.75),
+          emissiveIntensity: 0.75, roughness: 0.2
+        })
+      )
+    ));
+    const tLbl = api.bigLabel("G* (target)", C.cyans, 1.45);
+    tLbl.position.set(0, 0.82, 0);
+    gLbl.add(tLbl);
+
+    /* Σα ring (green = ok, rose = error) */
+    const ring = new T.Mesh(
+      new T.TorusGeometry(0.73, 0.045, 8, 42),
+      new T.MeshBasicMaterial({ color: Math.abs(sumAlpha - 1) < 0.01 ? C.green : C.rose })
+    );
+    gNode.add(ring);
+
+    /* context-specific captions */
+    if (gcnCmp) {
+      const lLbl = api.bigLabel("▬ bright = GAT α  ▬ slate = GCN fixed", "#8a99ad", 1.18);
+      lLbl.position.set(0, -R - 1.25, 0);
+      gLbl.add(lLbl);
+    }
+    if (mode === "not-causal") {
+      const cLbl = api.bigLabel("High α ≠ causal — validate with perturbation (Perturb-seq / CRISPR)", C.roses, 1.15);
+      cLbl.position.set(0, -R - 1.1, 0);
+      gLbl.add(cLbl);
+    }
+    if (mode === "multihead" && K > 1) {
+      const headNames = ["Head 1", "Head 2", "Head 3", "Head 4"];
+      const hcStr     = [C.cyans, C.greens, C.ambers, C.violets];
+      for (let k = 0; k < K; k++) {
+        const hl = api.label(headNames[k], hcStr[k], 0.29);
+        hl.position.set(-R - 1.9, R * 0.6 - k * 0.65, 0);
+        gLbl.add(hl);
+      }
+      const avgLbl = api.bigLabel("Avg α on main edges", "#9fb4cc", 1.15);
+      avgLbl.position.set(0, -R - 1.1, 0);
+      gLbl.add(avgLbl);
+    }
+
+    /* ── cache snapshot ──────────────────────────────────────── */
+    _snap = {
+      mode, N, K, gcnCompare: gcnCmp,
+      focusEvidence: +(focusEvidence).toFixed(3),
+      alphas: alphas.map(a => +a.toFixed(4)),
+      displayAlpha: dispAlpha.map(a => +a.toFixed(4)),
+      maxAlpha: +maxAlpha.toFixed(4),
+      entropy: +H.toFixed(4),
+      hPrime: +hPrime.toFixed(4),
+      sumAlpha: +sumAlpha.toFixed(6),
+      sumAlphaCheck: Math.abs(sumAlpha - 1) < 0.01,
+      heads: K
+    };
+
+    /* ── narrative ───────────────────────────────────────────── */
+    const modeLabels = {
+      attention:    "GAT · learned attention on sparse neighbourhood",
+      multihead:    "Multi-head GAT · K independent attention distributions",
+      "not-causal": "Attention ≠ causation · DB-bias hub concentration"
+    };
+    let insight, state;
+    if (mode === "attention") {
+      insight = `eᵢⱼ = LeakyReLU(aᵀ[Whᵢ ‖ Whⱼ]) per edge → softmax over the ${N}-node neighbourhood → Σα = ${sumAlpha.toFixed(4)} ≈ 1. ` +
+        `Raising focusEvidence boosts TF1's logit by up to +2.5, increasing its α = ${alphas[0].toFixed(3)} while all others fall (softmax competition). ` +
+        (gcnCmp ? `GCN uses fixed 1/√(d̃ᵢd̃ⱼ) = ${gcnW.toFixed(3)} for every edge — uniform, not learned. Slate edges show GCN vs bright GAT edges.` : "Toggle GAT⇄GCN to see fixed vs learned weights.");
+      state = `TF1 α = ${alphas[0].toFixed(3)} · max α = ${maxAlpha.toFixed(3)} · entropy = ${H.toFixed(3)} · h'ᵢ = ${hPrime.toFixed(3)}`;
+    } else if (mode === "multihead") {
+      insight = `${K} independent heads each learn a different a⁽ᵏ⁾/W⁽ᵏ⁾, producing K different α distributions over the same ${N} neighbours. ` +
+        `The averaged α (main edges) summarises all heads; thin arcs show per-head routing. Robustness: if heads agree, the preference is stable; divergence can signal complementary evidence.`;
+      state = `K = ${K} heads · avg max α = ${maxAlpha.toFixed(3)} · avg entropy = ${H.toFixed(3)} · Σavg α = ${sumAlpha.toFixed(4)}`;
+    } else {
+      insight = `Attention concentrates on the hub (α = ${alphas[hubIdx].toFixed(3)}) due to high logit from co-expression or database over-representation. ` +
+        `Entropy = ${H.toFixed(3)} (low → concentrated). This is routing weight, not regulatory proof. ` +
+        `Validate causal claims with perturbation experiments (Perturb-seq, CRISPR).`;
+      state = `Hub α = ${alphas[hubIdx].toFixed(3)} · entropy = ${H.toFixed(3)} · Σα = ${sumAlpha.toFixed(4)}`;
+    }
+    return {
+      badge:   modeLabels[mode] + ` · N=${N}`,
+      formula: "eᵢⱼ = LeakyReLU(aᵀ[Whᵢ‖Whⱼ])  →  αᵢⱼ = exp(eᵢⱼ)/Σₖexp(eᵢₖ)  →  h′ᵢ = σ(Σⱼ αᵢⱼ Whⱼ)",
+      insight, state,
+      metrics: {
+        maxA:   maxAlpha.toFixed(3),
+        ent:    H.toFixed(3),
+        hprime: hPrime.toFixed(3),
+        check:  mode === "multihead" ? `K=${K}` : `Σα=${sumAlpha.toFixed(3)}`
+      },
+      focus: { center: [0, 0, 0], radius: 8.5 }
+    };
+  }
+
+  /* ════════════════════════════════════════════════════════════════
+     MathLab.create
+  ═════════════════════════════════════════════════════════════════*/
+  MathLab.create({
+    id: "b03",
+    kind: "gat-attention-lab",
+    eyebrow: "Block B · GNN Architectures",
+    title: "B03 · GAT and attention on sparse neighborhoods",
+    subtitle: "A target gene listens to neighbours with learned α weights — softmax competition means raising one α lowers the rest. Explore multi-head robustness and the attention ≠ causation warning.",
+    selectedLabel: "Node",
+    selectedHint: "Click a neighbour to inspect its α and logit.",
+
+    modes: [
+      { value: "attention",   label: "Attention (learned α)" },
+      { value: "multihead",   label: "Multi-head GAT" },
+      { value: "not-causal",  label: "Attention ≠ causation" }
+    ],
+
+    params: [
+      {
+        key: "neighbors", label: "neighbours N", min: 3, max: 7, step: 1, value: 4,
+        fmt: v => Math.round(v).toString()
+      },
+      {
+        key: "focusEvidence", label: "focusEvidence (TF1 boost)", min: 0, max: 1, step: 0.05, value: 0.3,
+        fmt: v => v.toFixed(2),
+        modes: ["attention"]
+      },
+      {
+        key: "heads", label: "heads K", min: 1, max: 4, step: 1, value: 2,
+        fmt: v => Math.round(v).toString(),
+        modes: ["multihead"]
+      },
+      {
+        key: "gcnCompare", label: "GAT ⇄ GCN overlay", min: 0, max: 1, step: 1, value: 0,
+        fmt: v => (v >= 0.5 ? "ON" : "OFF"),
+        modes: ["attention"]
+      }
+    ],
+
+    metrics: [
+      { key: "maxA",   label: "max α",            accent: "cyan"   },
+      { key: "ent",    label: "attention entropy", accent: "green"  },
+      { key: "hprime", label: "aggregated h′ᵢ",   accent: "amber"  },
+      { key: "check",  label: "#heads / Σα=1",    accent: "violet" }
+    ],
+
+    layers: [
+      { group: "edges",  label: "Edges (α-weighted)" },
+      { group: "nodes",  label: "Nodes" },
+      { group: "labels", label: "Labels" }
+    ],
+
+    primary: {
+      label: "Spotlight a neighbour",
+      on: api => {
+        if (api.state.mode === "attention") {
+          const cur = +(api.state.focusEvidence || 0);
+          api.setParam("focusEvidence", Math.min(1, +(cur + 0.2).toFixed(2)));
+        }
+      }
+    },
+
+    secondary: {
+      label: "GAT ⇄ GCN",
+      on: api => {
+        if (api.state.mode === "attention") {
+          const cur = api.state.gcnCompare || 0;
+          api.setParam("gcnCompare", cur >= 0.5 ? 0 : 1);
+        } else {
+          const modes = ["attention","multihead","not-causal"];
+          const el = document.getElementById("ml-mode");
+          if (el) {
+            const idx = modes.indexOf(api.state.mode);
+            el.value = modes[(idx + 1) % modes.length];
+            el.dispatchEvent(new Event("change"));
+          }
+        }
+      }
+    },
+
+    defaultCam: { theta: -0.3, phi: 0.55, r: 9 },
+    hint: '<span class="g">edge thickness</span> = attention α · <span class="c">bright node</span> = high α · ring = <span class="g">Σα≈1 ✓</span> · <span class="v">coloured arcs</span> = per-head routes · <span class="r">rose hub</span> = DB-bias (not-causal mode)',
+
+    onParam(api) { api.frame([0,0,0], 8.5); },
+
+    onSelect(api, d) {
+      if (d && d.neighbour !== undefined) {
+        api.setSelected(
+          `Neighbour ${d.neighbour} · α = ${d.alpha.toFixed(4)} · logit = ${d.logit.toFixed(3)}` +
+          (d.isHub ? " · HUB (DB bias)" : "")
+        );
+      }
+    },
+
+    build,
+
+    snapshot(s) {
+      return {
+        mode:          _snap.mode    || s.mode,
+        neighbors:     _snap.N       || Math.round(s.neighbors),
+        heads:         _snap.heads   || 1,
+        gcnCompare:    _snap.gcnCompare !== undefined ? _snap.gcnCompare : 0,
+        focusEvidence: +((s.focusEvidence)||0).toFixed(3),
+        maxAlpha:      _snap.maxAlpha    || 0,
+        entropy:       _snap.entropy     || 0,
+        hPrime:        _snap.hPrime      || 0,
+        sumAlpha:      _snap.sumAlpha    || 0,
+        sumAlphaCheck: _snap.sumAlphaCheck || false,
+        alphas:        _snap.alphas      || []
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F13 — Same predictor, three gold standards, three AUROCs</title>
+<desc id="d">Four-panel captioned figure: Same predictor, three gold standards, three AUROCs</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F13 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Same predictor, three gold standards, three AUROCs</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">One 4-gene network, one predictor</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">genes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">real edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">+2</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">true non-edge</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">1</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">scores</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">0.90/0.70/0.30</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#34d399"/>
+<circle cx="510" cy="108" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="510" y="113" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Gold A · complete, correct</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">P={A,B}  N={C}</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">AUROC = 1.00</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">|P|</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">2</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Gold B · incomplete N</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">GeneB real but ∈ N</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">AUROC → 0.75</text>
+<text x="56" y="349.5" fill="#fbbf24" font-size="11.5" font-weight="700">hidden TP</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">+1</text>
+<text x="56" y="369.5" fill="#fbbf24" font-size="11.5" font-weight="700">AUROC</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.75</text>
+<text x="56" y="397" fill="#8a99ad" font-size="11">A real edge sits in the negative set. The model is</text>
+<text x="56" y="417" fill="#8a99ad" font-size="11">unchanged and correct, yet AUROC drops — the open-world</text>
+<text x="56" y="437" fill="#8a99ad" font-size="11">penalty.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Gold C · easy random N</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">|P| / |N|</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">2 / 3</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">negatives</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">random bg genes</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">AUROC</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">~0.95</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">read first</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">how was N built?</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F13. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">4-gene </text>
+<text x="216.85" y="538" fill="#c7d2dd" font-size="13">network </text>
+<text x="281.33" y="538" fill="#c7d2dd" font-size="13">(TF1, </text>
+<text x="332.11" y="538" fill="#c7d2dd" font-size="13">GeneA, </text>
+<text x="390.95" y="538" fill="#c7d2dd" font-size="13">GeneB, </text>
+<text x="449.79" y="538" fill="#c7d2dd" font-size="13">GeneC) </text>
+<text x="508.62" y="538" fill="#c7d2dd" font-size="13">with </text>
+<text x="548.92" y="538" fill="#c7d2dd" font-size="13">scores </text>
+<text x="605.34" y="538" fill="#c7d2dd" font-size="13">0.90/0.70/0.30 </text>
+<text x="726.24" y="538" fill="#c7d2dd" font-size="13">from </text>
+<text x="766.54" y="538" fill="#c7d2dd" font-size="13">ONE </text>
+<text x="802.41" y="538" fill="#c7d2dd" font-size="13">predictor.</text>
+<text x="40" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="73.53" y="559" fill="#c7d2dd" font-size="13">TF1→GeneA </text>
+<text x="165.41" y="559" fill="#c7d2dd" font-size="13">and </text>
+<text x="197.65" y="559" fill="#c7d2dd" font-size="13">TF1→GeneB </text>
+<text x="289.54" y="559" fill="#c7d2dd" font-size="13">are </text>
+<text x="321.78" y="559" fill="#c7d2dd" font-size="13">real; </text>
+<text x="370.14" y="559" fill="#c7d2dd" font-size="13">TF1→GeneC </text>
+<text x="462.02" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="486.2" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="502.32" y="559" fill="#c7d2dd" font-size="13">true </text>
+<text x="542.62" y="559" fill="#c7d2dd" font-size="13">non-edge. </text>
+<text x="623.22" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="656.75" y="559" fill="#c7d2dd" font-size="13">Gold </text>
+<text x="698.26" y="559" fill="#c7d2dd" font-size="13">A </text>
+<text x="715.59" y="559" fill="#c7d2dd" font-size="13">(P={A,B}, </text>
+<text x="799.82" y="559" fill="#c7d2dd" font-size="13">N={C})</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">gives </text>
+<text x="88.36" y="580" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="142.76" y="580" fill="#c7d2dd" font-size="13">1.00. </text>
+<text x="191.13" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="224.65" y="580" fill="#c7d2dd" font-size="13">Gold </text>
+<text x="266.16" y="580" fill="#c7d2dd" font-size="13">B </text>
+<text x="283.49" y="580" fill="#c7d2dd" font-size="13">demotes </text>
+<text x="347.97" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="380.21" y="580" fill="#c7d2dd" font-size="13">real </text>
+<text x="420.51" y="580" fill="#c7d2dd" font-size="13">edge </text>
+<text x="460.81" y="580" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="511.59" y="580" fill="#c7d2dd" font-size="13">into </text>
+<text x="551.89" y="580" fill="#c7d2dd" font-size="13">N, </text>
+<text x="577.28" y="580" fill="#c7d2dd" font-size="13">so </text>
+<text x="601.46" y="580" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="655.86" y="580" fill="#c7d2dd" font-size="13">falls </text>
+<text x="704.22" y="580" fill="#c7d2dd" font-size="13">to </text>
+<text x="728.4" y="580" fill="#c7d2dd" font-size="13">~0.75 </text>
+<text x="776.76" y="580" fill="#c7d2dd" font-size="13">for </text>
+<text x="809" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="841.24" y="580" fill="#c7d2dd" font-size="13">same</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">model. </text>
+<text x="96.42" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="129.95" y="601" fill="#c7d2dd" font-size="13">Gold </text>
+<text x="171.46" y="601" fill="#c7d2dd" font-size="13">C </text>
+<text x="188.79" y="601" fill="#c7d2dd" font-size="13">scores </text>
+<text x="245.21" y="601" fill="#c7d2dd" font-size="13">against </text>
+<text x="309.69" y="601" fill="#c7d2dd" font-size="13">3 </text>
+<text x="325.81" y="601" fill="#c7d2dd" font-size="13">easy </text>
+<text x="366.11" y="601" fill="#c7d2dd" font-size="13">random </text>
+<text x="422.53" y="601" fill="#c7d2dd" font-size="13">negatives, </text>
+<text x="511.19" y="601" fill="#c7d2dd" font-size="13">inflating </text>
+<text x="591.79" y="601" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="646.19" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="670.37" y="601" fill="#c7d2dd" font-size="13">~0.95. </text>
+<text x="726.79" y="601" fill="#c7d2dd" font-size="13">The </text>
+<text x="760.24" y="601" fill="#c7d2dd" font-size="13">number </text>
+<text x="816.66" y="601" fill="#c7d2dd" font-size="13">is</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">meaningless </text>
+<text x="136.72" y="622" fill="#c7d2dd" font-size="13">without </text>
+<text x="201.2" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="233.44" y="622" fill="#c7d2dd" font-size="13">negative-set </text>
+<text x="338.22" y="622" fill="#c7d2dd" font-size="13">construction.</text>
+</svg>

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B10 · Heterogeneous graph neural networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (frac-of-sin hash; no nondeterministic calls)
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS: the lesson's Section-5 worked example (target gene IL7R) ───────
+  // Three relation channels arrive at IL7R; each = source_value * relation_weight.
+  // (TF regulates gene)   GATA3 : 0.90 · w 0.80 -> 0.72
+  // (drug targets gene)   DrugX : 0.60 · w 0.40 -> 0.24
+  // (cell expresses gene) Tcell : 0.75 · w 0.60 -> 0.45
+  // signed/typed total = 1.41 ; TF fraction = 0.72/1.41 = 0.511
+  // homogeneous collapse = mean(0.90,0.60,0.75) = 0.75  (channel identity lost)
+  const F={
+    relations:[
+      {key:"tf",   triple:"(TF, regulates, gene)",        src:"GATA3", srcType:"TF",    val:0.90, w:0.80, col:"cyan",   note:"regulatory evidence"},
+      {key:"drug", triple:"(drug, targets, gene)",        src:"DrugX", srcType:"drug",  val:0.60, w:0.40, col:"amber",  note:"therapeutic / perturbation"},
+      {key:"cell", triple:"(cell, expresses, gene)",      src:"Tcell", srcType:"cell",  val:0.75, w:0.60, col:"green",  note:"marker / cell-state"}
+    ],
+    target:"IL7R",
+    collapseMean:0.75
+  };
+
+  let sceneSnap={};
+
+  // per-relation message with a live TF relation-weight override
+  function messages(tfW){
+    return F.relations.map(r=>{
+      const w=(r.key==="tf")?tfW:r.w;
+      return {...r, wEff:w, msg:+(r.val*w).toFixed(4)};
+    });
+  }
+  // HGT typed-attention reweighting: softmax over (val*temp) per relation,
+  // i.e. typed attention prefers the strongest typed source as temp rises.
+  function typedAttention(msgs,temp){
+    const logits=msgs.map(m=>m.val*temp);
+    const mx=Math.max(...logits);
+    const ex=logits.map(l=>Math.exp(l-mx));
+    const Z=ex.reduce((a,b)=>a+b,0);
+    return ex.map((e,i)=>({...msgs[i], attn:e/Z}));
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const tfW=s.tfWeight;
+    const temp=s.attnTemp;
+    const metapath=Math.round(s.metapath);   // 0 safe · 1 mixed · 2 leaky
+    const schema=Math.round(s.schema);        // # node types 3..6
+
+    const gGraph =api.group("graph");
+    const gFlow  =api.group("flow");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const CY="#4dd7ff", AM="#fbbf24", GR="#34d399", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+    const colOf={cyan:CY,amber:AM,green:GR,violet:VI,rose:RO};
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const msgs=messages(tfW);
+    const total=+(msgs.reduce((a,m)=>a+m.msg,0)).toFixed(4);
+    const tfFrac=total>0?msgs[0].msg/total:0;
+
+    // central target gene IL7R (shared by every mode)
+    function placeTarget(x,y,z){
+      api.node([x,y,z],{r:0.62,color:"violet",label:F.target,labelColor:"#c4b5fd",group:"graph",
+        pick:{target:F.target,total}});
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: rgcn — relation-specific transforms W_r (the canonical view)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="rgcn"){
+      placeTarget(0,0,0);
+      const R=3.6;
+      msgs.forEach((m,i)=>{
+        const ang=(i/msgs.length)*Math.PI*2 - Math.PI/2;
+        const sx=Math.cos(ang)*R, sz=Math.sin(ang)*R;
+        api.node([sx,0,sz],{r:0.40,color:m.col,label:m.src,labelColor:colOf[m.col],group:"graph",
+          pick:{relation:m.triple,src:m.src,val:m.val,w:m.wEff,msg:m.msg}});
+        // W_r relation box on the edge (relation-specific transform)
+        const mid=new T.Vector3(sx*0.55,0,sz*0.55);
+        const box=new T.Mesh(new T.BoxGeometry(0.52,0.34,0.52),api.mat(m.col,{emissive:0.5}));
+        box.position.copy(mid);gGraph.add(box);
+        lbl("W_"+m.key,colOf[m.col],0.85,mid.x,0.55,mid.z);
+        // typed arrow src -> target, thickness ~ message
+        api.arrow([sx*0.78,0,sz*0.78],[0,0,0],{color:m.col,width:0.03+m.msg*0.10,head:0.26,group:"graph"});
+      });
+      // per-relation message bars stacked behind
+      msgs.forEach((m,i)=>{
+        const x=-3.2+i*3.2, h=0.1+m.msg*4.2;
+        const bar=new T.Mesh(new T.BoxGeometry(1.1,h,1.1),api.mat(m.col,{emissive:0.45}));
+        bar.position.set(x,h/2,-4.2);gBars.add(bar);
+        api.pick(bar,{barRelation:m.triple,msg:m.msg});
+        lbl(m.msg.toFixed(2),colOf[m.col],1.2,x,h+0.45,-4.2);
+        lbl(m.srcType,colOf[m.col],0.7,x,0.05,-4.2);
+      });
+      lbl("Σ_r W_r · per-relation channels","#cfe0f0",1.0,0,-1.0,4.2);
+
+      sceneSnap={mode,tfWeight:+tfW.toFixed(3),messageTotal:total,tfMessage:msgs[0].msg,
+        drugMessage:msgs[1].msg,cellMessage:msgs[2].msg,tfFraction:+tfFrac.toFixed(3),
+        collapseMean:F.collapseMean,channelsPreserved:3,metapathRisk:0,typeFidelity:1};
+
+      return {
+        badge:"R-GCN · "+msgs.length+" relation channels · Σ="+total.toFixed(2),
+        formula:"h'<sub>IL7R</sub> = σ( Σ<sub>r</sub> Σ<sub>u∈N<sub>r</sub></sub> W<sub>r</sub> h<sub>u</sub> )",
+        insight:"Each relation type owns a transform W_r. Messages from (TF,regulates,gene), (drug,targets,gene) and (cell,expresses,gene) stay on separate channels, so the prediction can be attributed: the TF channel carries "+(tfFrac*100).toFixed(0)+"% of the total inflow. Drag the TF relation weight to watch attribution shift — the channel identity is never lost.",
+        state:"Inflow into "+F.target+": TF "+msgs[0].msg.toFixed(2)+" + drug "+msgs[1].msg.toFixed(2)+" + cell "+msgs[2].msg.toFixed(2)+" = "+total.toFixed(2)+". TF fraction "+(tfFrac*100).toFixed(0)+"%.",
+        metrics:{
+          messageTotal:total.toFixed(2),
+          tfFraction:(tfFrac*100).toFixed(0)+"%",
+          typeFidelity:"high",
+          channels:"3 typed"
+        },
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: han — metapath semantic routes (node + semantic attention)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="han"){
+      placeTarget(0,0,0);
+      // three candidate metapaths, ordered by biological validity
+      const paths=[
+        {nodes:[F.target,"peak","GATA3"], reverse:true, label:"TF → peak → gene", valid:0.92, col:"cyan",  sentence:"binding evidence in a cis-element linked to the gene"},
+        {nodes:[F.target,"pathway","GATA3"],            label:"TF → pathway → gene", valid:0.55, col:"amber", sentence:"shared function, weaker than direct regulation"},
+        {nodes:[F.target,"disease","DrugX","GATA3b"],   label:"gene → disease → drug → gene", valid:0.18, col:"rose", sentence:"literature proximity — LEAKAGE risk"}
+      ];
+      // metapath param selects how many leaky paths are admitted: 0 safe,1 mixed,2 leaky
+      const admit=metapath===0?1:(metapath===1?2:3);
+      const used=paths.slice(0,admit);
+      // semantic attention = softmax over validity of admitted paths
+      const mx=Math.max(...used.map(p=>p.valid));
+      const ex=used.map(p=>Math.exp((p.valid-mx)*3));
+      const Z=ex.reduce((a,b)=>a+b,0);
+      const semAttn=ex.map(e=>e/Z);
+      // mean validity of admitted neighbourhood (the leakage-sensitive metric)
+      const meanValid=used.reduce((a,p,i)=>a+p.valid*semAttn[i],0);
+
+      used.forEach((p,pi)=>{
+        const yLift=1.6-pi*1.6;
+        let prev=new T.Vector3(0,0,0);
+        p.nodes.forEach((nm,ni)=>{
+          if(ni===0) return; // target already placed
+          const t=ni/(p.nodes.length-1);
+          const px=(2.0+ni*1.5), py=yLift, pz=-2.4+pi*2.4;
+          const here=new T.Vector3(px,py,pz);
+          api.node([px,py,pz],{r:0.30,color:p.col,label:nm,labelColor:colOf[p.col],group:"graph",
+            pick:{metapathNode:nm,path:p.label,validity:p.valid}});
+          api.edge(prev,here,{color:p.col,width:0.035+semAttn[pi]*0.06,opacity:0.9,group:"graph"});
+          prev=here;
+        });
+        // semantic-attention weight label at the path head
+        lbl(p.label,colOf[p.col],0.8,3.0,yLift+0.55,-2.4+pi*2.4);
+        lbl("α="+semAttn[pi].toFixed(2)+" · valid "+p.valid.toFixed(2),colOf[p.col],0.62,3.0,yLift+0.0,-2.4+pi*2.4);
+      });
+      lbl(metapath===2?"LEAKY metapath admitted":"metapath neighbourhood","#cfe0f0",1.0,1.0,2.6,0);
+
+      const risk=metapath===0?0.08:(metapath===1?0.35:0.82);
+      sceneSnap={mode,tfWeight:+tfW.toFixed(3),messageTotal:+meanValid.toFixed(4),tfMessage:msgs[0].msg,
+        drugMessage:msgs[1].msg,cellMessage:msgs[2].msg,tfFraction:+(semAttn[0]||0).toFixed(3),
+        collapseMean:F.collapseMean,channelsPreserved:used.length,metapathRisk:+risk.toFixed(3),typeFidelity:1};
+
+      return {
+        badge:"HAN · "+used.length+" metapaths · leakage "+(risk*100).toFixed(0)+"%",
+        formula:"z<sub>IL7R</sub> = Σ<sub>Φ</sub> β<sub>Φ</sub> · attn<sub>Φ</sub>( N<sub>Φ</sub>(IL7R) )",
+        insight:"HAN defines semantic routes (metapaths) and learns attention across them. \"TF → peak → gene\" reads as a real regulatory sentence (validity 0.92). \"gene → disease → drug → gene\" reads as literature proximity (validity 0.18) and can leak disease-gold-standard labels. Admit the leaky path and mean neighbourhood validity falls while leakage risk jumps to "+(risk*100).toFixed(0)+"%.",
+        state:"Admitted metapaths: "+used.length+". Top semantic weight α="+ (semAttn[0]||0).toFixed(2)+" on \""+used[0].label+"\". Mean validity "+meanValid.toFixed(2)+", leakage risk "+(risk*100).toFixed(0)+"%.",
+        metrics:{
+          messageTotal:meanValid.toFixed(2),
+          tfFraction:((semAttn[0]||0)*100).toFixed(0)+"%",
+          typeFidelity:metapath===2?"leaky":"high",
+          channels:used.length+" paths"
+        },
+        focus:{center:[1.5,0.5,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: hgt — typed attention (source/target/edge-type parameters)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="hgt"){
+      placeTarget(0,0,0);
+      const att=typedAttention(msgs,temp);
+      const R=3.4;
+      // attention-weighted aggregate
+      const agg=+(att.reduce((a,m)=>a+m.attn*m.val,0)).toFixed(4);
+      att.forEach((m,i)=>{
+        const ang=(i/att.length)*Math.PI*2 - Math.PI/2;
+        const sx=Math.cos(ang)*R, sz=Math.sin(ang)*R;
+        api.node([sx,0,sz],{r:0.34+m.attn*0.30,color:m.col,label:m.src,labelColor:colOf[m.col],group:"graph",
+          pick:{relation:m.triple,attn:+m.attn.toFixed(3),val:m.val,srcType:m.srcType}});
+        // typed Q/K/V projection box per (srcType,edge,targetType)
+        const mid=new T.Vector3(sx*0.5,0,sz*0.5);
+        const box=new T.Mesh(new T.BoxGeometry(0.46,0.30,0.46),api.mat(m.col,{emissive:0.4}));
+        box.position.copy(mid);gGraph.add(box);
+        lbl("Q·K^T",colOf[m.col],0.62,mid.x,0.5,mid.z);
+        // attention beam thickness ~ attn weight
+        api.arrow([sx*0.74,0,sz*0.74],[0,0,0],{color:m.col,width:0.02+m.attn*0.16,head:0.24,group:"graph"});
+        lbl("α="+m.attn.toFixed(2),colOf[m.col],0.78,sx*0.62,0.85,sz*0.62);
+      });
+      // attention distribution bars
+      att.forEach((m,i)=>{
+        const x=-3.2+i*3.2, h=0.1+m.attn*4.4;
+        const bar=new T.Mesh(new T.BoxGeometry(1.0,h,1.0),api.mat(m.col,{emissive:0.45}));
+        bar.position.set(x,h/2,-4.2);gBars.add(bar);
+        lbl(m.attn.toFixed(2),colOf[m.col],1.1,x,h+0.4,-4.2);
+        lbl(m.srcType,colOf[m.col],0.7,x,0.05,-4.2);
+      });
+      lbl("typed attention · temp "+temp.toFixed(1),"#cfe0f0",1.0,0,-1.0,4.2);
+
+      // entropy of attention (sharpness diagnostic)
+      const H=-att.reduce((a,m)=>a+(m.attn>0?m.attn*Math.log(m.attn):0),0);
+      sceneSnap={mode,tfWeight:+tfW.toFixed(3),messageTotal:agg,tfMessage:+(att[0].attn).toFixed(4),
+        drugMessage:+(att[1].attn).toFixed(4),cellMessage:+(att[2].attn).toFixed(4),
+        tfFraction:+att[0].attn.toFixed(3),collapseMean:F.collapseMean,channelsPreserved:3,
+        metapathRisk:0,attnTemp:+temp.toFixed(3),attnEntropy:+H.toFixed(3),typeFidelity:1};
+
+      return {
+        badge:"HGT · typed attention · temp "+temp.toFixed(1),
+        formula:"Att(s,e,t) = softmax<sub>r</sub>( (W<sub>K</sub><sup>τ(s)</sup> h<sub>s</sub>)ᵀ W<sub>e</sub> (W<sub>Q</sub><sup>τ(t)</sup> h<sub>t</sub>) )",
+        insight:"HGT makes source type, target type and edge type part of the attention. The query/key/value projections depend on node type, so a message from a disease node into a gene node is compared differently from a TF→gene message. Raise the temperature and typed attention sharpens onto the strongest source (GATA3); lower it and the channels blend toward uniform.",
+        state:"Typed attention: TF "+att[0].attn.toFixed(2)+", drug "+att[1].attn.toFixed(2)+", cell "+att[2].attn.toFixed(2)+". Aggregate "+agg.toFixed(2)+", entropy "+H.toFixed(2)+".",
+        metrics:{
+          messageTotal:agg.toFixed(2),
+          tfFraction:(att[0].attn*100).toFixed(0)+"%",
+          typeFidelity:"typed",
+          channels:"3 typed"
+        },
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: collapse — homogeneous flatten (the cautionary baseline)
+    // ════════════════════════════════════════════════════════════════
+    placeTarget(0,0,0);
+    const R=3.4;
+    // all three sources become ONE generic relation; mean of raw values
+    const mean=+( (msgs.reduce((a,m)=>a+m.val,0))/msgs.length ).toFixed(4);
+    msgs.forEach((m,i)=>{
+      const ang=(i/msgs.length)*Math.PI*2 - Math.PI/2;
+      const sx=Math.cos(ang)*R, sz=Math.sin(ang)*R;
+      // grey out the type identity — one generic edge color
+      api.node([sx,0,sz],{r:0.38,color:"#5a6b80",label:m.src,labelColor:"#8a99ad",group:"graph",
+        pick:{relation:"generic edge",src:m.src,val:m.val,collapsed:true}});
+      api.arrow([sx*0.76,0,sz*0.76],[0,0,0],{color:"#5a6b80",width:0.06,head:0.24,group:"graph"});
+    });
+    // single grey "W" box (one shared transform)
+    const wbox=new T.Mesh(new T.BoxGeometry(0.9,0.5,0.9),api.mat("#5a6b80",{emissive:0.3}));
+    wbox.position.set(0,1.7,0);gGraph.add(wbox);
+    lbl("one generic W","#8a99ad",1.0,0,2.4,0);
+    // single mean bar
+    const h=0.1+mean*4.4;
+    const bar=new T.Mesh(new T.BoxGeometry(1.4,h,1.4),api.mat("#5a6b80",{emissive:0.35}));
+    bar.position.set(0,h/2,-4.2);gBars.add(bar);
+    lbl(mean.toFixed(2),"#c7d2dd",1.4,0,h+0.5,-4.2);
+    lbl("mean — channel identity lost","#fb7185",0.85,0,-0.3,-4.2);
+    lbl("mean(0.90, 0.60, 0.75) = "+mean.toFixed(2),"#cfe0f0",1.0,0,-1.0,4.2);
+
+    sceneSnap={mode,tfWeight:+tfW.toFixed(3),messageTotal:mean,tfMessage:null,
+      drugMessage:null,cellMessage:null,tfFraction:0,collapseMean:F.collapseMean,
+      channelsPreserved:1,metapathRisk:0,typeFidelity:0};
+
+    return {
+      badge:"Homogeneous collapse · mean "+mean.toFixed(2)+" · 1 channel",
+      formula:"h'<sub>IL7R</sub> = σ( W · mean<sub>u∈N(IL7R)</sub> h<sub>u</sub> )",
+      insight:"Flatten every relation into one generic edge and the arithmetic gets simpler: mean(0.90, 0.60, 0.75) = "+mean.toFixed(2)+". But the number "+mean.toFixed(2)+" cannot tell you whether the signal came from TF regulation, drug targeting, or cell expression. Type fidelity drops to zero — the simpler model can even win on a metric while erasing the biology. Switch back to R-GCN to recover the channels.",
+      state:"Collapsed mean "+mean.toFixed(2)+" over 3 sources. Channels preserved: 1. Type fidelity: none. Evidence channel is unrecoverable.",
+      metrics:{
+        messageTotal:mean.toFixed(2),
+        tfFraction:"—",
+        typeFidelity:"none",
+        channels:"1 generic"
+      },
+      focus:{center:[0,0,0],radius:12}
+    };
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"b10",
+    kind:"heterogeneous-gnn",
+    eyebrow:"Block B · GNN Architectures",
+    title:"B10 · Heterogeneous graph neural networks",
+    subtitle:"One target gene (IL7R), three typed relation channels. Compare R-GCN, HAN metapaths, HGT typed attention, and the homogeneous-collapse baseline that erases the schema.",
+    selectedLabel:"Element",
+    selectedHint:"Click a source node, relation box, or bar.",
+    insightLabel:"Reading the scene",
+    modes:[
+      {value:"rgcn",     label:"R-GCN (relation-specific W_r)"},
+      {value:"han",      label:"HAN (metapath semantic attention)"},
+      {value:"hgt",      label:"HGT (typed attention)"},
+      {value:"collapse", label:"Homogeneous collapse (baseline)"}
+    ],
+    params:[
+      {key:"tfWeight",label:"TF relation weight w(TF→gene)",min:0.0,max:1.0,step:0.05,value:0.80,
+       fmt:v=>v.toFixed(2),modes:["rgcn","hgt","collapse"]},
+      {key:"attnTemp",label:"HGT attention temperature",min:0.5,max:6.0,step:0.5,value:2.0,
+       fmt:v=>v.toFixed(1),modes:["hgt"]},
+      {key:"metapath",label:"HAN metapaths (0=safe 1=mixed 2=leaky)",min:0,max:2,step:1,value:0,
+       fmt:v=>["safe","mixed","leaky"][Math.round(v)],modes:["han"]},
+      {key:"schema",  label:"schema richness (# node types)",min:3,max:6,step:1,value:4,
+       fmt:v=>Math.round(v)+" types"}
+    ],
+    metrics:[
+      {key:"messageTotal",label:"Aggregate into IL7R",accent:"violet"},
+      {key:"tfFraction",  label:"TF channel share",  accent:"cyan"},
+      {key:"typeFidelity",label:"Type fidelity",     accent:"green"},
+      {key:"channels",    label:"Evidence channels", accent:"amber"}
+    ],
+    layers:[
+      {group:"graph",  label:"Typed nodes / edges"},
+      {group:"flow",   label:"Message flow"},
+      {group:"bars",   label:"Per-relation bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Reset TF weight (0.80)",
+      on:api=>{api.setParam("tfWeight",0.80);}
+    },
+    secondary:{
+      label:"Collapse the schema",
+      on:api=>{api.setMode("collapse");}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF→gene · <span style="color:#fbbf24">amber</span>=drug→gene · <span style="color:#34d399">green</span>=cell→gene · <span style="color:#a78bfa">violet</span>=target IL7R · <span style="color:#fb7185">rose</span>=leaky metapath · grey=collapsed generic edge.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="han") api.frame([1.5,0.5,0],13);
+      else api.frame([0,0,0],12);
+    },
+    onSelect(api,d){
+      if(d.target)        api.setSelected("Target "+d.target+" · aggregate inflow "+(d.total!=null?d.total.toFixed(2):"—"));
+      if(d.relation&&d.msg!=null)  api.setSelected(d.relation+" · "+d.src+" "+d.val+" × w"+d.w+" = "+d.msg.toFixed(2));
+      if(d.relation&&d.attn!=null) api.setSelected(d.relation+" · "+d.srcType+" · attn "+d.attn.toFixed(2));
+      if(d.relation&&d.collapsed)  api.setSelected("generic edge · "+d.src+" "+d.val+" · TYPE ERASED");
+      if(d.barRelation)   api.setSelected(d.barRelation+" · message "+d.msg.toFixed(2));
+      if(d.metapathNode)  api.setSelected(d.metapathNode+" on "+d.path+" · validity "+d.validity.toFixed(2));
+    },
+    build,
+    snapshot(s){
+      const m={...sceneSnap};
+      // ensure the live param values are always visible to a verifier
+      m.tfWeight=+s.tfWeight.toFixed(3);
+      m.attnTemp=+s.attnTemp.toFixed(3);
+      m.metapath=Math.round(s.metapath);
+      m.schema=Math.round(s.schema);
+      m.collapseDanger=(s.mode==="collapse");
+      return m;
+    }
+  });
+
+  // expose FACTS for tooling/inspection (does not affect engine)
+  window.__b10Facts=F;
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 900 230" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-label="Figure E02 inline">
+<rect x="0" y="0" width="900" height="230" fill="#070b14"/>
+<text x="40" y="30" fill="#4dd7ff" font-size="11" font-weight="700" letter-spacing="2.2">E02 · BLOCK E · SINGLE-CELL &amp; MULTI-OMICS</text>
+<text x="40" y="56" fill="#8a99ad" font-size="11">edges |E|</text>
+<rect x="40" y="80" width="14" height="70" rx="2" fill="#34d399"/>
+<text x="47" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">co</text>
+<rect x="69" y="126.67" width="14" height="23.33" rx="2" fill="#a78bfa"/>
+<text x="76" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">reg</text>
+<rect x="98" y="126.67" width="14" height="23.33" rx="2" fill="#fbbf24"/>
+<text x="105" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">cell</text>
+<line x1="40" y1="80" x2="127" y2="80" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="270" y="124" fill="#8a99ad" font-size="26" text-anchor="middle">→</text>
+<rect x="310" y="78" width="70" height="40" rx="6" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<text x="345" y="93" fill="#8a99ad" font-size="9" text-anchor="middle">co-expr ρ</text>
+<text x="345" y="110" fill="#7fe7c0" font-size="13" font-weight="700" text-anchor="middle">0.9</text>
+<rect x="388" y="78" width="70" height="40" rx="6" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<text x="423" y="93" fill="#8a99ad" font-size="9" text-anchor="middle">GENIE3 λ</text>
+<text x="423" y="110" fill="#c4b5fd" font-size="13" font-weight="700" text-anchor="middle">0.30</text>
+<line x1="470" y1="60" x2="470" y2="178" stroke="rgba(150,170,200,.2)" stroke-width="1"/>
+<text x="500" y="86" fill="#34d399" font-size="11.5" font-weight="700">co-expr</text>
+<text x="620" y="86" fill="#9fb4cc" font-size="11.5">undirected signed</text>
+<text x="500" y="110" fill="#a78bfa" font-size="11.5" font-weight="700">GENIE3</text>
+<text x="620" y="110" fill="#9fb4cc" font-size="11.5">directed TF→g</text>
+<text x="500" y="134" fill="#fbbf24" font-size="11.5" font-weight="700">cell</text>
+<text x="620" y="134" fill="#9fb4cc" font-size="11.5">kNN, no genes</text>
+<text x="500" y="158" fill="#4dd7ff" font-size="11.5" font-weight="700">rule</text>
+<text x="620" y="158" fill="#9fb4cc" font-size="11.5">claim first</text>
+<text x="450" y="210" fill="#c7d2dd" font-size="12" text-anchor="middle">Same matrix, three claims: signed co-variation, directed regulation, cell similarity — never concatenate th…</text>
+</svg>

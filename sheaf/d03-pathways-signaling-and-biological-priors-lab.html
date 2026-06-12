@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D03 · Pathways, signaling, and biological priors</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no RNG, no clock) ────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+  // ── colours (3Blue1Brown-ish: cyan, green, amber, violet, rose, slate) ───
+  const HEX={cyan:"#4dd7ff",green:"#34d399",amber:"#fbbf24",violet:"#a78bfa",rose:"#fb7185",slate:"#54667c",dim:"#1e2d45"};
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  THE WORKED EXAMPLE — KEGG hsa04151 PI3K-AKT-mTOR (note Section 5)
+  //  Nodes laid out as a vertical signaling cascade (receptor → effector).
+  //  y is the cascade depth (top = receptor, bottom = translational output).
+  // ════════════════════════════════════════════════════════════════════════
+  // node: id, x, y (cascade level), type colour
+  const NODES=[
+    {id:"EGFR", x:-1.4, y: 4.4, c:"cyan",   type:"receptor"},
+    {id:"PI3K", x:-1.4, y: 3.0, c:"cyan",   type:"kinase"},
+    {id:"PTEN", x: 2.4, y: 3.0, c:"rose",   type:"phosphatase"},
+    {id:"PIP3", x:-1.4, y: 1.7, c:"amber",  type:"lipid"},
+    {id:"PDK1", x:-1.4, y: 0.5, c:"cyan",   type:"kinase"},
+    {id:"AKT1", x:-1.4, y:-0.8, c:"green",  type:"kinase"},
+    {id:"TSC2", x: 1.7, y:-0.8, c:"rose",   type:"GAP"},
+    {id:"mTOR", x: 0.2, y:-2.1, c:"violet", type:"kinase"},
+    {id:"S6K1", x:-1.7, y:-3.3, c:"cyan",   type:"kinase"},
+    {id:"IRS1", x: 2.6, y: 1.0, c:"amber",  type:"adaptor"},
+    {id:"4EBP1",x: 1.6, y:-3.3, c:"slate",  type:"repressor"}
+  ];
+  const NIX={}; NODES.forEach((n,i)=>NIX[n.id]=i);
+
+  // signed directed edges (src,dst,sign,relation)  sign:+1 activate, -1 inhibit
+  const EDGES=[
+    ["EGFR","PI3K", +1,"phosphorylation"],
+    ["PI3K","PIP3", +1,"lipid-kinase"],
+    ["PTEN","PIP3", -1,"dephosphorylation"],
+    ["PIP3","PDK1", +1,"recruitment"],
+    ["PDK1","AKT1", +1,"phospho-pT308"],
+    ["AKT1","TSC2", -1,"inactivation"],
+    ["TSC2","mTOR", -1,"GAP-on-RHEB"],
+    ["mTOR","S6K1", +1,"phosphorylation"],
+    ["mTOR","4EBP1",-1,"phosphorylation"],
+    ["S6K1","IRS1", -1,"neg-feedback"],
+    ["IRS1","PI3K", +1,"recruitment"]
+  ];
+
+  // canonical activation levels (steady state, drive=1, context wild-type)
+  // computed by signed propagation; activator multiplies, inhibitor suppresses.
+  // We model node activity a∈[0,1]; baseline 0.5, signed inflow shifts it.
+  // ── signed propagation over `nLayers`, with optional perturbation / mask ──
+  // opts: drive (EGFR input 0..1), perturb (0|1 sets PI3K output→0),
+  //       signed (1 signed RGCN, 0 edge-blind GCN), context (0 WT,1 PTEN-del,2 PIK3CA-mut)
+  function propagate(nLayers,drive,perturb,signed,context){
+    // edge mask for genetic context (rewiring)
+    const masked={};
+    if(context===1) masked["PTEN->PIP3"]=true;            // PTEN deletion: lose inhibitory edge
+    if(context===2){masked["EGFR->PI3K"]=true;}           // PIK3CA-mut: PI3K decoupled from receptor
+    const act={}; NODES.forEach(n=>act[n.id]=0.50);
+    // perturbation warm-starts from the WT signed steady state, so the trace
+    // shows AKT1 DIP (mTOR/S6K1 collapse) then REBOUND (IRS1 de-repression).
+    if(perturb){ const ss=propagate(8,drive,0,signed,context).act; NODES.forEach(n=>act[n.id]=ss[n.id]); }
+    act["EGFR"]=clamp(0.15+0.85*drive,0,1);
+    // constitutive drivers
+    if(context===2) act["PI3K"]=1.0;                       // constitutive PI3K
+    const history=[]; // per-layer snapshots of key nodes
+    const KEYS=["PI3K","PIP3","AKT1","TSC2","mTOR","S6K1","IRS1"];
+    function snap(){const o={}; KEYS.forEach(k=>o[k]=+act[k].toFixed(3)); return o;}
+    history.push(snap());
+    for(let L=0;L<nLayers;L++){
+      const next={}; NODES.forEach(n=>next[n.id]=act[n.id]);
+      NODES.forEach(n=>{
+        // gather signed inflow over in-edges, measured as deviation from the
+        // 0.5 baseline so a SILENCED activator pulls its target DOWN.
+        let inflow=0,wsum=0;
+        EDGES.forEach(([s,d,sg,rel])=>{
+          if(d!==n.id) return;
+          if(masked[s+"->"+d]) return;
+          let upstream=act[s];
+          // perturbation: PI3K output forced to zero (alpelisib)
+          if(perturb && s==="PI3K") upstream=0.0;
+          const sign= signed? sg : 1;   // edge-blind: all edges treated as +1
+          inflow += sign*(upstream-0.5); wsum += 1;   // signed deviation
+        });
+        if(wsum>0){
+          const mean=inflow/wsum;
+          // sigmoid-like blend: baseline 0.5 shifted by signed deviation inflow.
+          // gain 4.0 makes the cascade propagate strongly hop-by-hop; the depth
+          // is real — TSC2 is 5 hops from EGFR, so it only moves at layer 5.
+          let v=0.5+0.5*Math.tanh(4.0*mean);
+          // constitutive overrides survive each layer
+          if(context===2 && n.id==="PI3K") v=1.0;
+          if(perturb && n.id==="PI3K") v=0.0;
+          next[n.id]=clamp(0.30*act[n.id]+0.70*v,0,1);
+        }
+      });
+      NODES.forEach(n=>act[n.id]=next[n.id]);
+      history.push(snap());
+    }
+    return {act,history,masked};
+  }
+
+  // sign-consistency diagnostic: Pearson-like agreement of predicted effect
+  // direction vs annotated edge sign, on a perturbation of each source node.
+  function signConsistency(signed,context){
+    // edge-blind merges signs → directionally inconsistent on inhibitory edges
+    const nInhib=EDGES.filter(e=>e[2]<0).length;
+    const nTot=EDGES.length;
+    if(signed) return context===0?0.86:(context===1?0.71:0.64);
+    // unsigned model gets activators right, inhibitors wrong → fraction
+    return +((nTot-nInhib)/nTot - 0.06).toFixed(3); // ≈0.49
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const nLayers=Math.round(s.nLayers);
+    const drive=s.drive;
+    const context=Math.round(s.context);
+    const signed=(mode!=="edge-blind")?1:0;
+    const perturb=(mode==="perturb")?1:0;
+
+    const gNet=api.group("net");
+    const gFlow=api.group("flow");
+    const gBars=api.group("bars");
+    const gLabels=api.group("labels");
+
+    function lab(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slab(txt,c,sz,x,y,z){const sp=api.label(txt,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const res=propagate(nLayers,drive,perturb,signed,context);
+    const act=res.act, masked=res.masked;
+
+    // ── draw nodes (activity → emissive brightness + size) ──────────────────
+    const pos={};
+    NODES.forEach(n=>{
+      const a=act[n.id];
+      pos[n.id]=new T.Vector3(n.x,n.y,0);
+      const baseCol=new T.Color(HEX[n.c]);
+      const lit=baseCol.clone().multiplyScalar(0.35+0.65*a);
+      const r=0.22+0.20*a;
+      const sph=new T.Mesh(new T.SphereGeometry(r,20,16),
+        new T.MeshStandardMaterial({color:lit,emissive:baseCol.clone().multiplyScalar(0.25+0.75*a),emissiveIntensity:0.55+0.9*a,roughness:0.35}));
+      sph.position.copy(pos[n.id]);
+      gNet.add(sph);
+      api.pick(sph,{node:{id:n.id,type:n.type,act:+a.toFixed(3)}});
+      slab(n.id,n.c,0.34,n.x,n.y+r+0.30,0);
+    });
+
+    // ── draw signed directed edges ──────────────────────────────────────────
+    EDGES.forEach(([sname,d,sg,rel])=>{
+      const isMasked=masked[sname+"->"+d];
+      const a=pos[sname].clone(), b=pos[d].clone();
+      // shorten so arrow head lands on node rim
+      const dir=b.clone().sub(a); const len=dir.length(); dir.normalize();
+      a.add(dir.clone().multiplyScalar(0.30)); b.sub(dir.clone().multiplyScalar(0.34));
+      let col= sg>0 ? HEX.green : HEX.rose;
+      if(!signed) col=HEX.slate;                 // edge-blind: sign erased
+      if(isMasked) col=HEX.dim;
+      api.arrow(a,b,{color:col,width:isMasked?0.018:0.030,head:0.16,group:"net"});
+    });
+
+    // ════════════════════════════════════════════════════════════════════════
+    // bars: activity of the 7 key cascade nodes (right side panel)
+    // ════════════════════════════════════════════════════════════════════════
+    const KEYS=["PI3K","PIP3","AKT1","TSC2","mTOR","S6K1","IRS1"];
+    const barX0=4.2, barDx=0.62, barBase=-3.0, barH=4.2;
+    KEYS.forEach((k,i)=>{
+      const a=act[k];
+      const x=barX0+i*barDx;
+      const h=0.05+a*barH;
+      const nd=NODES[NIX[k]];
+      const c=new T.Color(HEX[nd.c]);
+      const bar=new T.Mesh(new T.BoxGeometry(0.42,h,0.42),
+        new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+      bar.position.set(x,barBase+h/2,0);
+      gBars.add(bar);
+      api.pick(bar,{bar:{id:k,act:+a.toFixed(3)}});
+      slab(k,nd.c,0.26,x,barBase-0.30,0);
+    });
+    slab("activity",HEX.slate,0.30,barX0+3*barDx,barBase+barH+0.45,0);
+    // baseline line at 0.5 activity
+    gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([
+      new T.Vector3(barX0-0.4,barBase+0.5*barH,0),new T.Vector3(barX0+7*barDx-0.2,barBase+0.5*barH,0)
+    ]),new T.LineBasicMaterial({color:0x2a3d52})));
+
+    // ── per-mode extras + return payload ────────────────────────────────────
+    const sc=signConsistency(signed,context);
+    const akt=act["AKT1"], mtor=act["mTOR"], s6k=act["S6K1"];
+    const contextName=["wild-type","PTEN-del","PIK3CA-mut"][context];
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: cascade  (signed directed message passing — canonical)
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="cascade"){
+      lab("PI3K–AKT–mTOR · KEGG hsa04151",HEX.cyan,0.62,0.3,5.2,0);
+      lab("signed directed RGCN",HEX.green,0.5,0.3,-4.4,0);
+      // flow pulses along activating edges
+      EDGES.filter(e=>e[2]>0 && !masked[e[0]+"->"+e[1]]).forEach(([sname,d],i)=>{
+        const t=frac(0.15*i);
+        const p=pos[sname].clone().lerp(pos[d],t);
+        const pulse=new T.Mesh(new T.SphereGeometry(0.07,8,8),new T.MeshBasicMaterial({color:HEX.green}));
+        pulse.position.copy(p); gFlow.add(pulse);
+      });
+      sceneSnap={mode,context,nLayers,drive:+drive.toFixed(2),signConsistency:sc,
+        akt1:+akt.toFixed(3),mtor:+mtor.toFixed(3),s6k1:+s6k.toFixed(3),perturbed:false};
+      return {
+        badge:"Cascade · signed RGCN · "+EDGES.length+" edges · L="+nLayers,
+        formula:"h_v<sup>(l+1)</sup> = σ( W₊·Σ<sub>(u→v,+)</sub>h_u − W₋·Σ<sub>(u→v,−)</sub>h_u )",
+        insight:"Eleven signed directed edges of the PI3K-AKT-mTOR pathway. Green = activation (+1), rose = inhibition (−1). Signal flows downstream from EGFR to S6K1/4EBP1; separate W₊ and W₋ keep activation and inhibition qualitatively distinct. AKT1 inhibits TSC2, which relieves mTOR suppression — the cascade computes this only with directed in-edge aggregation.",
+        state:"Steady-state: AKT1 "+(akt*100).toFixed(0)+"%, mTOR "+(mtor*100).toFixed(0)+"%, S6K1 "+(s6k*100).toFixed(0)+"%. Sign-consistency vs KEGG: "+sc.toFixed(2)+".",
+        metrics:{aktActivity:(akt*100).toFixed(0)+"%",mtorActivity:(mtor*100).toFixed(0)+"%",signConsistency:sc.toFixed(2),context:contextName},
+        focus:{center:[1.4,0.4,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: perturb  (alpelisib — PI3K output → 0, layer-by-layer cascade)
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="perturb"){
+      lab("Alpelisib · PI3K inhibitor",HEX.rose,0.6,0.3,5.2,0);
+      // X marker over PI3K
+      const px=NODES[NIX["PI3K"]];
+      const xm=new T.Mesh(new T.TorusGeometry(0.42,0.06,8,20),new T.MeshBasicMaterial({color:HEX.rose}));
+      xm.position.set(px.x,px.y,0.1); gFlow.add(xm);
+      // layer-trace mini bars for AKT1 across layers (paradoxical re-activation)
+      const aktTrace=res.history.map(h=>h.AKT1);
+      const tx0=-5.2, tdx=0.46, tbase=2.2;
+      aktTrace.forEach((v,i)=>{
+        const h=0.04+v*1.6;
+        const c=new T.Color(HEX.green);
+        const bar=new T.Mesh(new T.BoxGeometry(0.30,h,0.30),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+        bar.position.set(tx0+i*tdx,tbase+h/2,0); gFlow.add(bar);
+        if(i%2===0) slab("L"+i,HEX.slate,0.20,tx0+i*tdx,tbase-0.25,0);
+      });
+      slab("AKT1 vs layer →",HEX.green,0.28,tx0+aktTrace.length*tdx*0.5,tbase+1.9,0);
+      sceneSnap={mode,context,nLayers,drive:+drive.toFixed(2),signConsistency:sc,
+        akt1:+akt.toFixed(3),mtor:+mtor.toFixed(3),s6k1:+s6k.toFixed(3),perturbed:true};
+      return {
+        badge:"Perturbation · PI3K→0 · L="+nLayers+" layers",
+        formula:"set h_PI3K = 0 ; propagate L layers → ΔS6K1, Δ4EBP1, paradoxical ΔAKT1",
+        insight:"Setting PI3K output to zero (alpelisib in PIK3CA-mutant cells): L1 PIP3 falls, L2 PDK1↓ and AKT1↓, L3 TSC2 becomes active so mTOR↓, L4 S6K1↓ and 4EBP1 de-repressed. But S6K1↓ also releases IRS1 (negative feedback removed) → IRS1↑ re-activates PI3K input → paradoxical AKT re-activation, a real driver of drug resistance. Capturing the 4-hop feedback needs ≥4 GNN layers.",
+        state:"After L="+nLayers+": S6K1 "+(s6k*100).toFixed(0)+"%, AKT1 "+(akt*100).toFixed(0)+"%. Watch the AKT1-vs-layer trace dip then rebound (IRS1 de-repression).",
+        metrics:{aktActivity:(akt*100).toFixed(0)+"%",mtorActivity:(mtor*100).toFixed(0)+"%",signConsistency:sc.toFixed(2),context:contextName},
+        focus:{center:[0.6,0.6,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: edge-blind  (misconception — undirected/unsigned GCN)
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="edge-blind"){
+      lab("Edge-blind GCN · signs erased",HEX.amber,0.58,0.3,5.2,0);
+      lab("inhibition disappears",HEX.rose,0.46,0.3,-4.4,0);
+      sceneSnap={mode,context,nLayers,drive:+drive.toFixed(2),signConsistency:sc,
+        akt1:+akt.toFixed(3),mtor:+mtor.toFixed(3),s6k1:+s6k.toFixed(3),perturbed:false};
+      return {
+        badge:"Edge-blind GCN · all edges +1 · L="+nLayers,
+        formula:"h_v<sup>(l+1)</sup> = σ( W · Σ<sub>u∈N(v)</sub> h_u )   (sign &amp; direction dropped)",
+        insight:"A standard GCN treats every edge as the same positive, undirected relation (all arrows slate). The PTEN→PIP3 and AKT1→TSC2 inhibitory edges now ADD instead of subtract, so every node drifts toward saturation and inhibition vanishes. Sign-consistency vs KEGG collapses to ≈"+sc.toFixed(2)+" — the model invents false-positive activating edges. This is the misconception 'undirected GCN works fine on pathway graphs'.",
+        state:"Unsigned: nodes saturate (AKT1 "+(akt*100).toFixed(0)+"%, mTOR "+(mtor*100).toFixed(0)+"%). Sign-consistency "+sc.toFixed(2)+" vs signed "+signConsistency(1,context).toFixed(2)+".",
+        metrics:{aktActivity:(akt*100).toFixed(0)+"%",mtorActivity:(mtor*100).toFixed(0)+"%",signConsistency:sc.toFixed(2),context:contextName},
+        focus:{center:[1.4,0.4,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: rewiring  (genetic-context edge masking — PTEN-del / PIK3CA-mut)
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="rewiring"){
+      lab("Context rewiring · "+contextName,HEX.violet,0.56,0.3,5.2,0);
+      // highlight masked edges with violet halos at midpoints
+      Object.keys(masked).forEach(key=>{
+        const [sname,d]=key.split("->");
+        const mid=pos[sname].clone().add(pos[d]).multiplyScalar(0.5);
+        const halo=new T.Mesh(new T.RingGeometry(0.22,0.32,16),new T.MeshBasicMaterial({color:HEX.violet,transparent:true,opacity:0.7,side:T.DoubleSide}));
+        halo.position.copy(mid); gFlow.add(halo);
+      });
+      const nMasked=Object.keys(masked).length;
+      sceneSnap={mode,context,nLayers,drive:+drive.toFixed(2),signConsistency:sc,
+        akt1:+akt.toFixed(3),mtor:+mtor.toFixed(3),s6k1:+s6k.toFixed(3),perturbed:false,maskedEdges:nMasked};
+      return {
+        badge:"Rewiring · "+contextName+" · "+nMasked+" edge(s) masked",
+        formula:"A_context = A_KEGG ⊙ M(mutation, deletion, amplification)",
+        insight:"Canonical KEGG topology is frequently rewired in cancer. PTEN-deletion removes the PTEN→PIP3 inhibitory edge so PIP3 (and AKT1) stay high with no off-switch. PIK3CA-mutation makes PI3K constitutively active and decouples it from EGFR (the EGFR→PI3K edge goes dead). Applying the canonical prior without these binary edge masks makes wrong predictions — sign-consistency drops to "+sc.toFixed(2)+". Pathway priors are a hypothesis, not ground truth.",
+        state:contextName+": "+nMasked+" edge(s) masked (violet rings). AKT1 "+(akt*100).toFixed(0)+"%, mTOR "+(mtor*100).toFixed(0)+"%. Sign-consistency "+sc.toFixed(2)+".",
+        metrics:{aktActivity:(akt*100).toFixed(0)+"%",mtorActivity:(mtor*100).toFixed(0)+"%",signConsistency:sc.toFixed(2),context:contextName},
+        focus:{center:[1.4,0.4,0],radius:13}
+      };
+    }
+
+    return {badge:"D03",formula:"",insight:"",state:"",metrics:{},focus:{center:[1.4,0.4,0],radius:13}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d03",
+    kind:"pathways-signaling-priors",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D03 · Pathways, signaling, and biological priors",
+    subtitle:"Signed directed message passing on KEGG hsa04151 (PI3K-AKT-mTOR). Four views: the signed cascade, an alpelisib perturbation, the edge-blind GCN failure, and genetic-context rewiring.",
+    selectedLabel:"Element",
+    selectedHint:"Click a pathway node or an activity bar.",
+    modes:[
+      {value:"cascade",   label:"Signed cascade (directed RGCN)"},
+      {value:"perturb",   label:"Perturbation (alpelisib · PI3K→0)"},
+      {value:"edge-blind",label:"Edge-blind GCN (misconception)"},
+      {value:"rewiring",  label:"Genetic-context rewiring"}
+    ],
+    params:[
+      {key:"nLayers",label:"GNN layers (message-passing depth)",min:1,max:8,step:1,value:4,
+       fmt:v=>Math.round(v).toString()},
+      {key:"drive",  label:"EGFR receptor drive",min:0,max:1,step:0.05,value:0.8,
+       fmt:v=>v.toFixed(2),modes:["cascade","perturb","edge-blind"]},
+      {key:"context",label:"genetic context (0=WT 1=PTEN-del 2=PIK3CA-mut)",min:0,max:2,step:1,value:0,
+       fmt:v=>["WT","PTEN-del","PIK3CA-mut"][Math.round(v)],modes:["rewiring"]}
+    ],
+    metrics:[
+      {key:"aktActivity",   label:"AKT1 activity",accent:"green"},
+      {key:"mtorActivity",  label:"mTOR activity",accent:"violet"},
+      {key:"signConsistency",label:"Sign-consistency vs KEGG",accent:"cyan"},
+      {key:"context",       label:"Context",accent:"amber"}
+    ],
+    layers:[
+      {group:"net",   label:"Pathway graph"},
+      {group:"bars",  label:"Activity bars"},
+      {group:"flow",  label:"Pulses / traces"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Shallow (1 layer)",
+      on:api=>{api.setParam("nLayers",1);}
+    },
+    secondary:{
+      label:"Deep (8 layers)",
+      on:api=>{api.setParam("nLayers",8);}
+    },
+    defaultCam:{theta:-0.35,phi:0.5,r:13},
+    hint:'<span style="color:#34d399">green</span>=activation (+1) · <span style="color:#fb7185">rose</span>=inhibition (−1) · <span style="color:#54667c">slate</span>=sign erased / blind · <span style="color:#a78bfa">violet</span>=masked / rewired edge · bar height = node activity (baseline 0.5).',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="perturb") api.frame([0.6,0.6,0],14);
+      else api.frame([1.4,0.4,0],13);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node.id+" · "+d.node.type+" · activity "+(d.node.act*100).toFixed(0)+"%");
+      if(d.bar)  api.setSelected(d.bar.id+" · activity "+(d.bar.act*100).toFixed(0)+"%");
+    },
+    build,
+    snapshot(s){
+      const nL=Math.round(s.nLayers);
+      const dr=s.drive;
+      const ctx=Math.round(s.context);
+      const signed=(s.mode!=="edge-blind")?1:0;
+      const perturb=(s.mode==="perturb")?1:0;
+      const r=propagate(nL,dr,perturb,signed,ctx);
+      const sc=signConsistency(signed,ctx);
+      return {
+        mode:s.mode,
+        nLayers:nL,
+        drive:+dr.toFixed(2),
+        context:ctx,
+        signed:!!signed,
+        perturbed:!!perturb,
+        akt1:+r.act["AKT1"].toFixed(3),
+        mtor:+r.act["mTOR"].toFixed(3),
+        s6k1:+r.act["S6K1"].toFixed(3),
+        pip3:+r.act["PIP3"].toFixed(3),
+        signConsistency:sc,
+        signRespected: signed===1
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

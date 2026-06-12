@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I07 · Sparse tensors and block operators</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; fully reproducible) ────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453)*2-1;   // [-1,1]
+
+  // ── canonical worked example (note §5): 4-gene GRN, edges, d_v=2 ──────────
+  // Genes: TP53(0), MYC(1), CDKN1A(2), BCL2(3)
+  // Edges: e0 TP53→CDKN1A, e1 TP53→BCL2, e2 MYC→CDKN1A
+  const GENES=["TP53","MYC","CDKN1A","BCL2"];
+  const EDGES=[[0,2],[0,3],[1,2]];          // (src,dst) per edge
+  const NW=GENES.length, MW=EDGES.length;   // N=4, M=3 (worked example)
+  const DEG=[0,0,0,0];
+  EDGES.forEach(([u,v])=>{DEG[u]++;DEG[v]++;});   // 2,1,2,1
+
+  // ── 2x2 deterministic orthogonal restriction maps (R^T R = I) ────────────
+  function rot(a){const c=Math.cos(a),s=Math.sin(a);return [[c,-s],[s,c]];}
+  const Rsrc=[rot(0.4),rot(0.9),rot(0.2)];   // R_{src→e}
+  const Rdst=[rot(-0.3),rot(0.6),rot(0.7)];  // R_{dst→e}
+
+  // ── build the 8×8 sheaf Laplacian (d_v=2) for the worked example ─────────
+  // identityMaps=true → R=I (block graph Laplacian); else orthogonal maps.
+  function buildL(identityMaps){
+    const d=2, dim=NW*d;
+    const L=Array.from({length:dim},()=>Array(dim).fill(0));
+    const I2=[[1,0],[0,1]];
+    function Rt(M){return [[M[0][0],M[1][0]],[M[0][1],M[1][1]]];}
+    function mm(A,B){const C=[[0,0],[0,0]];for(let i=0;i<2;i++)for(let j=0;j<2;j++)for(let k=0;k<2;k++)C[i][j]+=A[i][k]*B[k][j];return C;}
+    function addBlk(bi,bj,B){for(let a=0;a<2;a++)for(let b=0;b<2;b++)L[bi*d+a][bj*d+b]+=B[a][b];}
+    function neg(B){return [[-B[0][0],-B[0][1]],[-B[1][0],-B[1][1]]];}
+    EDGES.forEach(([u,v],k)=>{
+      const Ru=identityMaps?I2:Rsrc[k], Rv=identityMaps?I2:Rdst[k];
+      addBlk(u,u,mm(Rt(Ru),Ru));            // +R_u^T R_u
+      addBlk(v,v,mm(Rt(Rv),Rv));            // +R_v^T R_v
+      addBlk(u,v,neg(mm(Rt(Ru),Rv)));       // -R_u^T R_v
+      addBlk(v,u,neg(mm(Rt(Rv),Ru)));       // -R_v^T R_u
+    });
+    return L;   // dim×dim (8×8)
+  }
+
+  // number of stored nonzeros per block (identity maps → diagonal blocks,
+  // so d_v nonzeros per block; general → full d_v² block).
+  function blockNnz(d,identityMaps){return identityMaps?d:d*d;}
+
+  // ── memory model (note §1, §3, §6) ───────────────────────────────────────
+  function denseBytes(N,d){return (N*d)*(N*d)*4;}              // float32
+  function sparseBytes(N,M,d){return (N+2*M)*d*d*4;}           // (N+2M)·d²·4
+  function fmtBytes(b){
+    if(b>=1e9) return (b/1e9).toFixed(b>=1e10?0:1)+" GB";
+    if(b>=1e6) return (b/1e6).toFixed(1)+" MB";
+    if(b>=1e3) return (b/1e3).toFixed(1)+" KB";
+    return b+" B";
+  }
+
+  // ── sheaf diffusion on the 8-vector (note §4/§5): x ← x − αL_Fx ───────────
+  function flat(L,x){const n=x.length,y=new Array(n).fill(0);for(let i=0;i<n;i++)for(let j=0;j<n;j++)y[i]+=L[i][j]*x[j];return y;}
+  function energy(L,x){const lx=flat(L,x);let e=0;for(let i=0;i<x.length;i++)e+=x[i]*lx[i];return e;}
+  function diffuse(L,x0,alpha,steps){
+    let x=x0.slice(); const hist=[energy(L,x)];
+    for(let s=0;s<steps;s++){const lx=flat(L,x);for(let i=0;i<x.length;i++)x[i]-=alpha*lx[i];hist.push(energy(L,x));}
+    return {x,hist};
+  }
+  // deterministic initial section x∈R^8
+  function initX(){const x=[];for(let i=0;i<NW*2;i++)x.push(prand(i*5.7+2.3));return x;}
+
+  // ── scene snapshot ───────────────────────────────────────────────────────
+  let sceneSnap={};
+
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const dv=Math.round(s.dv);                  // stalk dimension 1..6
+    const Nlog=Math.round(s.logN);              // 0..4 → N decade
+    const Nvals=[100,1000,10000,30000,60000];
+    const N=Nvals[Math.max(0,Math.min(4,Nlog))];
+    const avgDeg=Math.round(s.deg);             // average degree
+    const M=Math.round(N*avgDeg/2);
+    const ident=Math.round(s.maps)===0;         // 0=identity, 1=general
+    const alpha=s.alpha, steps=Math.round(s.steps);
+
+    const gNodes =api.group("graph");
+    const gMatrix=api.group("matrix");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function L3(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function L2(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // diagonal blocks / dense
+    const VI=new T.Color("#a78bfa");   // off-diagonal blocks / structure
+    const AM=new T.Color("#fbbf24");   // sparse / energy
+    const GR=new T.Color("#34d399");   // consistent / feasible
+    const RO=new T.Color("#fb7185");   // OOM / wall
+    const SL=new T.Color("#3a4d63");   // zero block
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 1: BLOCKS — L_F as a block matrix over the 4-gene GRN
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="blocks"){
+      // (left) the 4-gene GRN graph
+      const gx=-5.2;
+      const gpos=[[gx,2.4,0],[gx+0.2,-2.4,0],[gx+3.0,1.0,0],[gx+3.0,-1.4,0]];
+      EDGES.forEach(([u,v])=>{
+        const a=new T.Vector3(...gpos[u]), b=new T.Vector3(...gpos[v]);
+        gNodes.add(new T.Line(new T.BufferGeometry().setFromPoints([a,b]),new T.LineBasicMaterial({color:0x2a4d63})));
+      });
+      gpos.forEach((p,i)=>{
+        const col=i<2?CY:VI; // TFs cyan, targets violet
+        const sph=new T.Mesh(new T.SphereGeometry(0.42,18,14),new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.55,roughness:0.4}));
+        sph.position.set(...p); gNodes.add(sph);
+        api.pick(sph,{gene:{name:GENES[i],deg:DEG[i]}});
+        L2(GENES[i],col.getStyle(),0.42,p[0],p[1]+0.75,p[2]);
+        L2("deg "+DEG[i],"#8a99ad",0.32,p[0],p[1]-0.7,p[2]);
+      });
+      L3("4-gene GRN","#cfe0f0",1.2,gx+1.4,3.6,0);
+
+      // (right) the (N·d_v)×(N·d_v) block matrix grid (worked example uses d_v=2)
+      const d=Math.max(1,Math.min(6,dv));
+      const dim=NW*d;                     // e.g. 8 for d_v=2
+      const cell=Math.min(0.62,5.0/dim);
+      const ox=1.4, oy=0, oz=0;
+      const x0=ox-dim*cell/2, y0=oy+dim*cell/2;
+      // is block (bi,bj) structurally nonzero?
+      function isEdge(bi,bj){return EDGES.some(([u,v])=>(u===bi&&v===bj)||(v===bi&&u===bj));}
+      // draw d_v×d_v block borders + filled cells
+      let nzCells=0;
+      for(let bi=0;bi<NW;bi++)for(let bj=0;bj<NW;bj++){
+        const diag=(bi===bj), edge=isEdge(bi,bj);
+        const live=diag||edge;
+        const blkCol= diag?CY : (edge?VI:SL);
+        for(let a=0;a<d;a++)for(let b=0;b<d;b++){
+          // identity maps → only the within-block diagonal entries are nonzero
+          const onDiag=(a===b);
+          const filled= live && (ident? onDiag : true);
+          if(filled) nzCells++;
+          const gi=bi*d+a, gj=bj*d+b;
+          const px=x0+gj*cell+cell/2, py=y0-gi*cell-cell/2;
+          const c=filled?blkCol:SL;
+          const op=filled?0.92:0.12;
+          const m=new T.Mesh(new T.PlaneGeometry(cell*0.86,cell*0.86),
+            new T.MeshBasicMaterial({color:c,transparent:true,opacity:op,side:T.DoubleSide}));
+          m.position.set(px,py,oz);
+          gMatrix.add(m);
+        }
+        // block outline for live blocks
+        if(live){
+          const bx=x0+bj*d*cell, by=y0-bi*d*cell;
+          const pts=[new T.Vector3(bx,by,0.02),new T.Vector3(bx+d*cell,by,0.02),
+                     new T.Vector3(bx+d*cell,by-d*cell,0.02),new T.Vector3(bx,by-d*cell,0.02),new T.Vector3(bx,by,0.02)];
+          gMatrix.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),
+            new T.LineBasicMaterial({color:diag?CY.getHex():VI.getHex()})));
+          const cx=bx+d*cell/2, cy=by-d*cell/2;
+          const hit=new T.Mesh(new T.PlaneGeometry(d*cell,d*cell),new T.MeshBasicMaterial({visible:false}));
+          hit.position.set(cx,cy,0.03); gMatrix.add(hit);
+          api.pick(hit,{block:{i:GENES[bi],j:GENES[bj],kind:diag?"diagonal":"off-diagonal"}});
+        }
+      }
+      L3("L_F  ("+dim+"×"+dim+")","#cfe0f0",1.15,ox,y0+0.8,0);
+      L2(ident?"R = I  (block graph Laplacian)":"general R  (full d×d blocks)",
+         ident?"#34d399":"#a78bfa",0.4,ox,y0-dim*cell-0.7,0);
+      L2("diag = Σ Rᵀ R","#4dd7ff",0.36,ox-2.4,y0-dim*cell-1.25,0);
+      L2("off = −R_uᵀ R_v","#a78bfa",0.36,ox+1.6,y0-dim*cell-1.25,0);
+
+      const totalCells=dim*dim;
+      sceneSnap={mode,dv:d,blockDim:dim,storedNonzeros:nzCells,
+                 fillFraction:+(nzCells/totalCells).toFixed(4),
+                 N:NW,M:MW,denseBytes:denseBytes(NW,d),sparseBytes:sparseBytes(NW,MW,d)};
+
+      return {
+        badge:"Block structure · d_v="+d+" · "+nzCells+"/"+totalCells+" nz",
+        formula:"L_F[v,v]=Σ_{e∋v} R_{v→e}ᵀR_{v→e} ·· L_F[u,v]=−R_{u→e}ᵀR_{v→e}",
+        insight:"The sheaf Laplacian is a "+dim+"×"+dim+" block matrix: one d_v×d_v block per node-pair. A block is nonzero only on the diagonal (cyan, Σ RᵀR) or where an edge exists (violet, −RᵀR). All other blocks are exactly zero — L_F inherits the graph's sparsity. With identity maps the blocks are diagonal and L_F reduces to the scalar graph Laplacian in block form.",
+        state:"d_v="+d+" → L_F is "+dim+"×"+dim+" = "+totalCells+" entries, "+nzCells+" stored. "+(ident?"Identity maps: "+nzCells+" diagonal nonzeros.":"General maps: full d×d blocks on "+(NW+2*MW)+" live positions."),
+        metrics:{
+          blockDim:dim+"×"+dim,
+          storedNnz:""+nzCells,
+          fillPct:(100*nzCells/totalCells).toFixed(1)+"%",
+          memRatio:(denseBytes(NW,d)/sparseBytes(NW,MW,d)).toFixed(1)+"×"
+        },
+        focus:{center:[-0.6,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 2: STORAGE — dense memory wall vs sparse feasibility (scaling)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="storage"){
+      const d=Math.max(1,Math.min(6,dv));
+      const Nvals2=[100,1000,10000,30000,60000];
+      const xPos=[-4.6,-2.3,0,2.3,4.6];
+      const OOM=8e9;   // ~8 GB single-GPU practical ceiling
+      const yS=0.55;   // log10(bytes) → height scale
+
+      Nvals2.forEach((n,idx)=>{
+        const m=Math.round(n*avgDeg/2);
+        const db=denseBytes(n,d), sb=sparseBytes(n,m,d);
+        const dh=Math.max(0.1,(Math.log10(db)-3)*yS);
+        const sh=Math.max(0.1,(Math.log10(sb)-3)*yS);
+        const oom=db>OOM;
+        const isSel=(n===N);
+        // dense bar (red if OOM, cyan otherwise)
+        const dCol=oom?RO:CY;
+        const db3=new T.Mesh(new T.BoxGeometry(0.62,dh,0.62),
+          new T.MeshStandardMaterial({color:dCol,emissive:dCol,emissiveIntensity:isSel?0.7:0.25,roughness:0.4,transparent:!isSel,opacity:isSel?1:0.55}));
+        db3.position.set(xPos[idx]-0.42,dh/2,0); gBars.add(db3);
+        api.pick(db3,{store:{kind:"dense",N:n,bytes:db,oom}});
+        // sparse bar (green = feasible)
+        const sb3=new T.Mesh(new T.BoxGeometry(0.62,sh,0.62),
+          new T.MeshStandardMaterial({color:GR,emissive:GR,emissiveIntensity:isSel?0.7:0.25,roughness:0.4,transparent:!isSel,opacity:isSel?1:0.55}));
+        sb3.position.set(xPos[idx]+0.42,sh/2,0); gBars.add(sb3);
+        api.pick(sb3,{store:{kind:"sparse",N:n,bytes:sb,oom:false}});
+
+        L2((n>=1000?(n/1000)+"k":""+n),isSel?"#e8eef6":"#8a99ad",isSel?0.42:0.34,xPos[idx],-0.55,0);
+        L2(fmtBytes(db),oom?"#fb7185":"#4dd7ff",0.3,xPos[idx]-0.42,dh+0.32,0);
+        L2(fmtBytes(sb),"#34d399",0.3,xPos[idx]+0.42,sh+0.32,0);
+        if(oom){const cone=new T.Mesh(new T.ConeGeometry(0.15,0.4,8),new T.MeshBasicMaterial({color:RO}));cone.position.set(xPos[idx]-0.42,dh+0.75,0);gBars.add(cone);}
+      });
+
+      // OOM ceiling plane
+      const yOOM=(Math.log10(OOM)-3)*yS;
+      const ceil=new T.Mesh(new T.PlaneGeometry(11,0.06),new T.MeshBasicMaterial({color:RO,transparent:true,opacity:0.6}));
+      ceil.position.set(0,yOOM,0); gBars.add(ceil);
+      L2("GPU OOM ≈ 8 GB","#fb7185",0.4,4.7,yOOM+0.35,0);
+
+      L3("dense  vs  sparse  L_F  storage  (d_v="+d+")","#cfe0f0",1.05,0,(Math.log10(denseBytes(60000,d))-3)*yS+0.9,0);
+      L2("dense O((N·d_v)²)","#4dd7ff",0.36,-3.6,-1.25,0);
+      L2("sparse O((N+2M)·d_v²)","#34d399",0.36,2.2,-1.25,0);
+
+      const db=denseBytes(N,d), sb=sparseBytes(N,M,d);
+      sceneSnap={mode,dv:d,N,M,avgDeg,denseBytes:db,sparseBytes:sb,
+                 memRatio:+(db/sb).toFixed(1),denseOOM:db>OOM};
+
+      return {
+        badge:"Storage · N="+(N>=1000?(N/1000)+"k":N)+" · d_v="+d+" · "+(db>OOM?"DENSE OOM":"dense ok"),
+        formula:"dense = (N·d_v)²·4 B  ·· sparse = (N+2M)·d_v²·4 B",
+        insight:"Dense L_F grows as (N·d_v)² — at N=10k, d_v=4 that is 6.4 GB, at N=30k, d_v=8 it is 230 GB (impossible). Sparse storage holds only (N+2M)·d_v² nonzeros, so the same N=30k graph fits in ~84 MB. The red bars/ceiling mark where dense overflows GPU memory. Sparse is MANDATORY for N>5000 with d_v≥4.",
+        state:"At N="+(N>=1000?(N/1000)+"k":N)+", d_v="+d+", deg="+avgDeg+" → dense "+fmtBytes(db)+(db>OOM?" (OOM)":"")+" vs sparse "+fmtBytes(sb)+" → "+(db/sb).toFixed(0)+"× smaller.",
+        metrics:{
+          blockDim:(N*d)+"×"+(N*d),
+          storedNnz:fmtBytes(sb),
+          fillPct:(100*(N+2*M)*d*d/((N*d)*(N*d))).toExponential(1)+"%",
+          memRatio:(db/sb).toFixed(0)+"×"
+        },
+        focus:{center:[0,1.8,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 3: DIFFUSION — SpMM sheaf diffusion x ← x − αL_Fx lowers energy
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="diffusion"){
+      const L=buildL(ident);
+      const x0=initX();
+      const {x:xf,hist}=diffuse(L,x0,alpha,steps);
+      const lamMax=ident?3.414:3.0;            // λ_max of the 8×8 (identity case)
+      const stable=alpha<1/lamMax;
+
+      // energy decay curve
+      const xOff=-4.4, yOff=-1.4, xS=8.4/Math.max(1,steps), yS=3.6/Math.max(hist[0],1e-6);
+      // axes
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff+steps*xS,yOff,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff,yOff+3.8,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      const curvePts=hist.map((e,i)=>new T.Vector3(xOff+i*xS,yOff+Math.max(0,e)*yS,0));
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(curvePts),new T.LineBasicMaterial({color:stable?AM.getHex():RO.getHex()})));
+      hist.forEach((e,i)=>{
+        const mk=new T.Mesh(new T.SphereGeometry(0.1,10,10),new T.MeshStandardMaterial({color:stable?AM:RO,emissive:stable?AM:RO,emissiveIntensity:0.8,roughness:0.3}));
+        mk.position.set(xOff+i*xS,yOff+Math.max(0,e)*yS,0.05); gBars.add(mk);
+        api.pick(mk,{step:{k:i,energy:+e.toFixed(3)}});
+      });
+      L2("E_F = xᵀL_Fx","#fbbf24",0.4,xOff-0.2,yOff+3.95,0);
+      L2("step","#8a99ad",0.34,xOff+steps*xS*0.5,yOff-0.5,0);
+      L2("E₀="+hist[0].toFixed(2),"#4dd7ff",0.34,xOff+0.3,yOff+hist[0]*yS+0.35,0);
+      L2("E="+hist[hist.length-1].toFixed(2),stable?"#34d399":"#fb7185",0.34,xOff+steps*xS-0.6,yOff+Math.max(0,hist[hist.length-1])*yS+0.35,0);
+
+      // node stalk vectors (R^2) as 2D arrows above each gene — current section
+      const gp=[[2.0,2.6],[2.0,0.4],[5.0,2.6],[5.0,0.4]];
+      for(let v=0;v<NW;v++){
+        const base=new T.Vector3(gp[v][0],gp[v][1],0);
+        const sph=new T.Mesh(new T.SphereGeometry(0.26,14,12),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.5,roughness:0.4}));
+        sph.position.copy(base); gBars.add(sph);
+        // stalk vector x_v (2 components) shown as a small arrow
+        const vx=xf[v*2], vy=xf[v*2+1];
+        const tip=new T.Vector3(base.x+vx*0.9,base.y+vy*0.9,0);
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([base,tip]),new T.LineBasicMaterial({color:GR.getHex()})));
+        const head=new T.Mesh(new T.SphereGeometry(0.08,8,8),new T.MeshBasicMaterial({color:GR}));
+        head.position.copy(tip); gBars.add(head);
+        L2(GENES[v],"#9fb4cc",0.32,base.x,base.y+0.55,0);
+        api.pick(sph,{stalk:{gene:GENES[v],x:[+vx.toFixed(2),+vy.toFixed(2)]}});
+      }
+      EDGES.forEach(([u,v])=>{
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(gp[u][0],gp[u][1],-0.05),new T.Vector3(gp[v][0],gp[v][1],-0.05)]),new T.LineBasicMaterial({color:0x2a4d63,transparent:true,opacity:0.6})));
+      });
+      L3("section x (R² stalks)","#cfe0f0",0.95,3.5,3.55,0);
+
+      const dropPct=hist[0]>1e-9?100*(1-hist[hist.length-1]/hist[0]):0;
+      sceneSnap={mode,dv:2,alpha:+alpha.toFixed(3),steps,
+                 energy0:+hist[0].toFixed(3),energyF:+hist[hist.length-1].toFixed(3),
+                 energyDropPct:+dropPct.toFixed(1),stable,lambdaMax:lamMax};
+
+      return {
+        badge:"Diffusion · α="+alpha.toFixed(2)+" · "+steps+" steps · "+(stable?"stable":"UNSTABLE"),
+        formula:"x ← x − α L_F x   ·· E_F = xᵀL_Fx = Σ_e ‖R_u x_u − R_v x_v‖²",
+        insight:"One SpMM step propagates the sheaf Laplacian against the section x. Each step lowers the sheaf energy E_F = Σ_e ‖R_{u→e}x_u − R_{v→e}x_v‖² — the disagreement across edges — but ONLY when α < 1/λ_max (here λ_max≈"+lamMax.toFixed(1)+", so α<"+(1/lamMax).toFixed(2)+"). Push α past that and the iteration diverges (curve turns red). The green stalk arrows show the section settling toward edge-consistency.",
+        state:"E_F: "+hist[0].toFixed(2)+" → "+hist[hist.length-1].toFixed(2)+" over "+steps+" steps ("+dropPct.toFixed(0)+"% drop). α="+alpha.toFixed(2)+(stable?" < "+(1/lamMax).toFixed(2)+" → converging.":" ≥ "+(1/lamMax).toFixed(2)+" → DIVERGING."),
+        metrics:{
+          blockDim:"8×8",
+          storedNnz:(ident?"20":"40")+" nz",
+          fillPct:"E "+hist[hist.length-1].toFixed(2),
+          memRatio:dropPct.toFixed(0)+"% ↓"
+        },
+        focus:{center:[0.5,1.0,0],radius:13}
+      };
+    }
+
+    return {badge:"I07",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i07",
+    kind:"sparse-tensors-block-operators",
+    eyebrow:"Block I · Implementation",
+    title:"I07 · Sparse tensors and block operators",
+    subtitle:"The sheaf Laplacian L_F is a block matrix. Three views: its block sparsity over a 4-gene GRN, the dense-vs-sparse memory wall, and energy-lowering sheaf diffusion via SpMM.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, a block, a storage bar, or a diffusion step.",
+    modes:[
+      {value:"blocks",    label:"Block structure (L_F = BᵀB)"},
+      {value:"storage",   label:"Dense vs sparse (memory wall)"},
+      {value:"diffusion", label:"Sheaf diffusion (SpMM, energy)"}
+    ],
+    params:[
+      {key:"dv",   label:"stalk dim d_v",min:1,max:6,step:1,value:2,
+        fmt:v=>Math.round(v).toString(),modes:["blocks","storage"]},
+      {key:"logN", label:"genes N (decade)",min:0,max:4,step:1,value:2,
+        fmt:v=>{const a=[100,1000,10000,30000,60000];return a[Math.round(v)].toLocaleString();},modes:["storage"]},
+      {key:"deg",  label:"avg degree",min:4,max:40,step:2,value:20,
+        fmt:v=>Math.round(v).toString(),modes:["storage"]},
+      {key:"maps", label:"restriction maps",min:0,max:1,step:1,value:1,
+        fmt:v=>Math.round(v)===0?"identity (R=I)":"general R",modes:["blocks","diffusion"]},
+      {key:"alpha",label:"step size α",min:0.02,max:0.5,step:0.02,value:0.1,
+        fmt:v=>v.toFixed(2),modes:["diffusion"]},
+      {key:"steps",label:"diffusion steps",min:1,max:16,step:1,value:10,
+        fmt:v=>Math.round(v).toString(),modes:["diffusion"]}
+    ],
+    metrics:[
+      {key:"blockDim",  label:"L_F block dim",accent:"cyan"},
+      {key:"storedNnz", label:"stored nonzeros",accent:"green"},
+      {key:"fillPct",   label:"fill / energy",accent:"violet"},
+      {key:"memRatio",  label:"dense ÷ sparse",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph",  label:"GRN / nodes"},
+      {group:"matrix", label:"Block matrix"},
+      {group:"bars",   label:"Bars / curve"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Reduce α (0.10)",
+      on:api=>{api.setParam("alpha",0.10);}
+    },
+    secondary:{
+      label:"Unstable α (0.40)",
+      on:api=>{api.setParam("alpha",0.40);}
+    },
+    defaultCam:{theta:-0.25,phi:0.5,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=diagonal block / dense · <span style="color:#a78bfa">violet</span>=off-diagonal (edge) block · <span style="color:#34d399">green</span>=sparse / consistent · <span style="color:#fbbf24">amber</span>=energy curve · <span style="color:#fb7185">red</span>=OOM / unstable.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="storage") api.frame([0,1.8,0],14);
+      else if(s.mode==="diffusion") api.frame([0.5,1.0,0],13);
+      else api.frame([-0.6,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.gene)  api.setSelected(d.gene.name+" · degree "+d.gene.deg+" → diagonal block Σ RᵀR over "+d.gene.deg+" edge(s)");
+      if(d.block) api.setSelected("Block ("+d.block.i+","+d.block.j+") · "+d.block.kind);
+      if(d.store) api.setSelected(d.store.kind+" @ N="+d.store.N.toLocaleString()+" → "+(d.store.bytes>=1e9?(d.store.bytes/1e9).toFixed(1)+" GB":(d.store.bytes/1e6).toFixed(1)+" MB")+(d.store.oom?" · OOM":""));
+      if(d.step)  api.setSelected("step "+d.step.k+" · E_F = "+d.step.energy);
+      if(d.stalk) api.setSelected("stalk "+d.stalk.gene+" · x = ["+d.stalk.x.join(", ")+"]");
+    },
+    build,
+    snapshot(s){
+      const dv=Math.round(s.dv);
+      const Nvals=[100,1000,10000,30000,60000];
+      const N=Nvals[Math.max(0,Math.min(4,Math.round(s.logN)))];
+      const avgDeg=Math.round(s.deg), M=Math.round(N*avgDeg/2);
+      const ident=Math.round(s.maps)===0;
+      const db=denseBytes(N,dv), sb=sparseBytes(N,M,dv);
+      // worked-example block dim and nonzeros (always d_v=2 worked example for diffusion)
+      const blockDim=NW*dv;
+      return {
+        mode:s.mode,
+        dv:dv,
+        N:N, M:M, avgDeg:avgDeg,
+        identityMaps:ident,
+        workedBlockDim:NW*dv,
+        denseBytes:db,
+        sparseBytes:sb,
+        memRatio:+(db/sb).toFixed(1),
+        denseOOM:db>8e9,
+        alpha:+s.alpha.toFixed(3),
+        steps:Math.round(s.steps),
+        sparseMandatory:(N>5000&&dv>=4)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B07 · Graph Transformers &amp; Global Attention</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ── deterministic pseudo-random helpers (NO Math.random / Date) ── */
+  const frac = v => v - Math.floor(v);
+  const prand = i => frac(Math.sin(i * 127.1 + 31.7) * 43758.5453);
+
+  /* ── fixed ring graph (n nodes, deterministic layout) ── */
+  function buildGraph(n) {
+    const nodes = [];
+    for (let i = 0; i < n; i++) {
+      const ang = i * 2 * Math.PI / n + 0.3;
+      const r   = 3.0 + prand(i * 7 + 1) * 1.2;
+      nodes.push({ id: i, x: r * Math.cos(ang), z: r * Math.sin(ang) });
+    }
+    /* ring edges */
+    const edges = [];
+    for (let i = 0; i < n; i++) edges.push([i, (i + 1) % n]);
+    /* long-range target: node roughly opposite the source */
+    const src = 0, dst = Math.min(Math.floor(n / 2) + 1, n - 1);
+    return { nodes, edges, src, dst };
+  }
+
+  /* ── maths ── */
+  function softmax(arr, temp) {
+    const t = Math.max(temp, 0.05);
+    const ex = arr.map(v => Math.exp(v / t));
+    const s  = ex.reduce((a, b) => a + b, 0) || 1;
+    return ex.map(v => v / s);
+  }
+  function entropy(w) {
+    return -w.reduce((s, v) => s + (v > 1e-9 ? v * Math.log(v) : 0), 0);
+  }
+  /* Laplacian-inspired positional encoding (purely deterministic) */
+  function lpe(i, n) {
+    return Math.sin(i * Math.PI / n) * 0.6 + Math.cos(i * 2 * Math.PI / n) * 0.4;
+  }
+  /* raw content similarity scores: stable, no random */
+  function contentScores(nodes, src, n) {
+    return nodes.map((_, j) =>
+      0.3 + 0.7 * frac(Math.sin((src * 13 + j * 7 + 3) * 2.5))
+    );
+  }
+
+  /* ── scene state passed to snapshot ── */
+  let SD = {};
+
+  /* ── THREE helpers ── */
+  function drawLine(T, x1, y1, z1, x2, y2, z2, color, opacity) {
+    const pts = [new T.Vector3(x1, y1, z1), new T.Vector3(x2, y2, z2)];
+    const geo  = new T.BufferGeometry().setFromPoints(pts);
+    const mat  = new T.LineBasicMaterial({ color: new T.Color(color), transparent: true, opacity, linewidth: 1 });
+    return new T.Line(geo, mat);
+  }
+  function ring(T, x, z, col) {
+    const m = new T.Mesh(
+      new T.RingGeometry(0.5, 0.72, 32),
+      new T.MeshBasicMaterial({ color: new T.Color(col), transparent: true, opacity: 0.65, side: T.DoubleSide })
+    );
+    m.rotation.x = -Math.PI / 2;
+    m.position.set(x, 0.04, z);
+    return m;
+  }
+
+  /* ═══════════════════════════════════════════════════════════ BUILD ═══ */
+  function build(api) {
+    const T    = api.THREE;
+    const s    = api.state;
+    const n    = Math.round(s.nodes);
+    const tmp  = s.attnTemp;
+    const peO  = s.peOn > 0.5;
+    const hops = Math.round(s.hops);
+    const mode = s.mode;
+    const G    = buildGraph(n);
+    const COL  = api.COL;
+
+    const nodeG  = api.group("nodes");
+    const edgeG  = api.group("edges");
+    const attnG  = api.group("attn");
+    const labelG = api.group("labels");
+
+    /* ── draw nodes ── */
+    G.nodes.forEach((nd, i) => {
+      const col = i === G.src ? COL.cyan : i === G.dst ? COL.amber : "#607a9a";
+      const geo  = new T.SphereGeometry(0.36, 18, 12);
+      const mat  = new T.MeshStandardMaterial({ color: new T.Color(col), emissive: new T.Color(col), emissiveIntensity: 0.5, roughness: 0.35 });
+      const mesh = new T.Mesh(geo, mat);
+      mesh.position.set(nd.x, 0.36, nd.z);
+      api.pick(mesh, { node: i });
+      nodeG.add(mesh);
+      const lbl = i === G.src ? "TF1" : i === G.dst ? "TgtB" : "G" + i;
+      const sp  = api.label(lbl, i === G.src ? COL.cyan : i === G.dst ? COL.amber : "#8a99ad", 0.7);
+      sp.position.set(nd.x, 1.02, nd.z);
+      labelG.add(sp);
+    });
+
+    /* ── draw graph edges ── */
+    G.edges.forEach(([a, b]) => {
+      const na = G.nodes[a], nb = G.nodes[b];
+      edgeG.add(drawLine(T, na.x, 0.36, na.z, nb.x, 0.36, nb.z, "#2a4460", 0.45));
+    });
+
+    /* ════════════════ MODE: global-attention ════════════════════════ */
+    if (mode === "global-attention") {
+      const scores = contentScores(G.nodes, G.src, n);
+      scores[G.dst] += 0.5;          /* boost long-range target */
+      scores[G.src]  = -99;
+      const weights  = softmax(scores, tmp);
+      const ent      = entropy(weights.filter((_, i) => i !== G.src));
+      const maxW     = Math.max(...weights);
+
+      G.nodes.forEach((nd, j) => {
+        if (j === G.src) return;
+        const w   = weights[j];
+        const src = G.nodes[G.src];
+        const col = j === G.dst ? COL.amber : w > maxW * 0.5 ? COL.cyan : "#446688";
+        attnG.add(drawLine(T, src.x, 0.36, src.z, nd.x, 0.36, nd.z, col, Math.min(0.1 + w * 2.8, 0.95)));
+        const wsp = api.bigLabel(w.toFixed(2), col, 0.85);
+        wsp.position.set((src.x + nd.x) / 2, 0.55 + j * 0.07, (src.z + nd.z) / 2);
+        labelG.add(wsp);
+      });
+      attnG.add(ring(T, G.nodes[G.dst].x, G.nodes[G.dst].z, COL.amber));
+
+      const hopsLocal = Math.max(2, Math.floor(n / 2));
+      SD = { mode, n, attnEntropy: ent, longRangeReach: 1, costN2: n * n, nodes: n };
+
+      return {
+        badge: "Global attention · " + n + " nodes · TF1 → all",
+        formula: "α<sub>ij</sub> = softmax(q<sub>i</sub>·k<sub>j</sub>/τ) &nbsp; τ=" + tmp.toFixed(2),
+        insight: "TF1 attends to distant TgtB in ONE layer. A local MPNN would need " + hopsLocal + " hops. Watch amber (TgtB) attention weight despite no direct edge.",
+        state: "H(α)=" + ent.toFixed(3) + " · α(TgtB)=" + weights[G.dst].toFixed(3) + " · local hops needed=" + hopsLocal,
+        metrics: { attnEntropy: ent.toFixed(3), longRangeReach: "1 step", costN2: n * n, numNodes: n },
+        focus: { center: [0, 0.5, 0], radius: 10 }
+      };
+    }
+
+    /* ════════════════ MODE: positional-encoding ════════════════════ */
+    if (mode === "positional-encoding") {
+      const idA = 1, idB = Math.min(Math.floor(n / 2), n - 1);
+
+      const scores  = contentScores(G.nodes, G.src, n);
+      if (peO) G.nodes.forEach((_, j) => { scores[j] += lpe(j, n) * 0.5; });
+      scores[G.src] = -99;
+      const weights  = softmax(scores, tmp);
+      const ent      = entropy(weights.filter((_, i) => i !== G.src));
+
+      const noPEScores = contentScores(G.nodes, G.src, n);
+      noPEScores[G.src] = -99;
+      const wNoPE = softmax(noPEScores, tmp);
+
+      G.nodes.forEach((nd, j) => {
+        if (j === G.src) return;
+        const w   = weights[j];
+        const src = G.nodes[G.src];
+        const col = j === idA ? COL.green : j === idB ? COL.violet : "#3a5570";
+        attnG.add(drawLine(T, src.x, 0.36, src.z, nd.x, 0.36, nd.z, col, Math.min(0.08 + w * 3.0, 0.95)));
+        const wsp = api.bigLabel(w.toFixed(2), col, 0.8);
+        wsp.position.set((src.x + nd.x) / 2, 0.52 + j * 0.06, (src.z + nd.z) / 2);
+        labelG.add(wsp);
+      });
+      [idA, idB].forEach((id, k) => {
+        attnG.add(ring(T, G.nodes[id].x, G.nodes[id].z, k === 0 ? COL.green : COL.violet));
+      });
+
+      /* PE value bars above each node */
+      G.nodes.forEach((nd, i) => {
+        const pv = lpe(i, n);
+        const h  = Math.abs(pv) * 0.8 + 0.05;
+        const col = pv >= 0 ? COL.cyan : "#fb7185";
+        const bar = new T.Mesh(
+          new T.BoxGeometry(0.18, h, 0.18),
+          new T.MeshStandardMaterial({ color: new T.Color(col), emissive: new T.Color(col), emissiveIntensity: peO ? 0.7 : 0.12, roughness: 0.4, transparent: true, opacity: peO ? 0.9 : 0.22 })
+        );
+        bar.position.set(nd.x, 1.6 + h / 2, nd.z - 0.7);
+        attnG.add(bar);
+      });
+
+      const diffPE   = Math.abs(weights[idA]  - weights[idB]);
+      const diffNoPE = Math.abs(wNoPE[idA]    - wNoPE[idB]);
+      SD = { mode, n, attnEntropy: ent, longRangeReach: 1, costN2: n * n, nodes: n };
+
+      return {
+        badge: (peO ? "PE ON — structure-aware" : "PE OFF — collision") + " · " + n + " nodes",
+        formula: "s<sub>ij</sub>=q<sup>T</sup>k/√d" + (peO ? "+<span style='color:#4dd7ff'>PE(i)·PE(j)</span>" : " (no PE)") + " · τ=" + tmp.toFixed(2),
+        insight: peO
+          ? "With PE, G" + idA + " and G" + idB + " are now distinguishable. |Δweight|=" + diffPE.toFixed(3) + ". The two highlighted nodes get different attention even with similar features."
+          : "WITHOUT PE, content-only attention treats structurally different nodes as near-identical. |Δweight|=" + diffNoPE.toFixed(3) + " ≈ 0. Toggle peOn to see them separate.",
+        state: "H(α)=" + ent.toFixed(3) + " · |Δ(G" + idA + ",G" + idB + ")|=" + (peO ? diffPE : diffNoPE).toFixed(3) + (peO ? " distinguishable" : " collision"),
+        metrics: { attnEntropy: ent.toFixed(3), longRangeReach: peO ? "distinct" : "collision", costN2: n * n, numNodes: n },
+        focus: { center: [0, 0.8, 0], radius: 11 }
+      };
+    }
+
+    /* ════════════════ MODE: local-vs-global ════════════════════════ */
+    if (mode === "local-vs-global") {
+      /* k-hop BFS from src */
+      const reached = new Set([G.src]);
+      let frontier   = [G.src];
+      const hopCols  = [COL.cyan, COL.green, COL.amber, COL.violet, "#fb7185"];
+      const hopOf    = new Array(n).fill(-1);
+      hopOf[G.src] = 0;
+      for (let h = 0; h < hops && frontier.length; h++) {
+        const next = [];
+        frontier.forEach(fi => {
+          G.edges.forEach(([a, b]) => {
+            const nb2 = a === fi ? b : b === fi ? a : null;
+            if (nb2 !== null && !reached.has(nb2)) { reached.add(nb2); next.push(nb2); hopOf[nb2] = h + 1; }
+          });
+        });
+        frontier = next;
+      }
+
+      /* recolour node spheres by hop distance */
+      G.nodes.forEach((nd, i) => {
+        const col  = i === G.src ? COL.cyan : hopOf[i] >= 0 ? hopCols[Math.min(hopOf[i] - 1, 4)] : "#2a3a4a";
+        nodeG.children.forEach(c => { if (c.userData.pick && c.userData.pick.node === i) c.material.color.set(col); });
+      });
+
+      /* local reach halos */
+      reached.forEach(ri => {
+        if (ri === G.src) return;
+        attnG.add(ring(T, G.nodes[ri].x, G.nodes[ri].z, COL.cyan));
+      });
+
+      /* global attention arcs from src */
+      const scores = contentScores(G.nodes, G.src, n);
+      scores[G.src] = -99;
+      const weights = softmax(scores, tmp);
+      G.nodes.forEach((nd, j) => {
+        if (j === G.src) return;
+        const w   = weights[j];
+        const src = G.nodes[G.src];
+        const col = reached.has(j) ? COL.green : COL.amber;
+        attnG.add(drawLine(T, src.x, 0.36, src.z, nd.x, 0.36, nd.z, col, reached.has(j) ? 0.22 : Math.min(0.55 + w, 0.9)));
+      });
+
+      /* cost / hops bars on the left */
+      const costH = (n * n) / 22;
+      const costBar = new T.Mesh(
+        new T.BoxGeometry(0.42, costH, 0.42),
+        new T.MeshStandardMaterial({ color: new T.Color(COL.rose), emissive: new T.Color(COL.rose), emissiveIntensity: 0.5, roughness: 0.4 })
+      );
+      costBar.position.set(-6.8, costH / 2, 0);
+      attnG.add(costBar);
+      const cL = api.bigLabel("O(n²)=" + (n * n), COL.rose, 1.35);
+      cL.position.set(-6.8, costH + 0.85, 0);
+      labelG.add(cL);
+
+      const hopH = hops * 0.55;
+      const hopBar = new T.Mesh(
+        new T.BoxGeometry(0.42, hopH, 0.42),
+        new T.MeshStandardMaterial({ color: new T.Color(COL.cyan), emissive: new T.Color(COL.cyan), emissiveIntensity: 0.5, roughness: 0.4 })
+      );
+      hopBar.position.set(-5.6, hopH / 2, 0);
+      attnG.add(hopBar);
+      const hL = api.bigLabel("k=" + hops, COL.cyan, 1.2);
+      hL.position.set(-5.6, hopH + 0.8, 0);
+      labelG.add(hL);
+
+      const dstReached = reached.has(G.dst);
+      const hopsNeeded = Math.max(2, Math.floor(n / 2));
+      const ent        = entropy(weights.filter((_, i) => i !== G.src));
+
+      SD = { mode, n, attnEntropy: ent, longRangeReach: dstReached ? hops : hopsNeeded, costN2: n * n, nodes: n };
+
+      return {
+        badge: "k=" + hops + " hops → " + reached.size + "/" + n + " · global → " + n + "/"+n+" (1 step) · O(n²)=" + (n * n),
+        formula: "MPNN: O(k·|E|) · Global attn: O(n²)=" + (n * n) + " pair scores",
+        insight: "Local MPNN (k=" + hops + ") reaches " + reached.size + " of " + n + " nodes. " +
+          (dstReached ? "TgtB IS reachable at k=" + hops + "." : "TgtB NOT reachable at k=" + hops + " — needs k≥" + hopsNeeded + " or global attention (1 step).") +
+          " Global always reaches every node but pays O(n²)=" + (n * n) + " pair scores.",
+        state: "Local reach=" + reached.size + "/" + n + (dstReached ? " ✓ TgtB" : " ✗ TgtB needs k≥" + hopsNeeded) + " · global="+n+"/"+n+" · cost=" + (n * n),
+        metrics: { attnEntropy: ent.toFixed(3), longRangeReach: dstReached ? hops + " hops" : ">k=" + hops, costN2: n * n, numNodes: n },
+        focus: { center: [0, 0.5, 0], radius: 12 }
+      };
+    }
+
+    return { badge: "B07", formula: "", insight: "", state: "", metrics: { attnEntropy: "—", longRangeReach: "—", costN2: "—", numNodes: "—" } };
+  }
+
+  /* ═══════════════════════════════════════════════════════════ CONFIG ═ */
+  MathLab.create({
+    id: "b07", kind: "graph-transformer",
+    eyebrow: "Block B · GNN Architectures",
+    title: "B07 · Graph Transformers &amp; Global Attention",
+    subtitle: "Global attention reaches any node in 1 step but is structure-blind without PE. Explore all three regimes.",
+    selectedLabel: "Node", selectedHint: "Click a node to inspect it.",
+
+    modes: [
+      { value: "global-attention",    label: "Global attention (1-step long-range)" },
+      { value: "positional-encoding", label: "Positional encoding (collision vs aware)" },
+      { value: "local-vs-global",     label: "Local vs global (hops vs O(n²))" }
+    ],
+
+    params: [
+      { key: "nodes",    label: "nodes n",             min: 5, max: 9, step: 1,   value: 7,   fmt: v => Math.round(v) },
+      { key: "attnTemp", label: "τ attention (sharp↔diffuse)", min: 0.1, max: 2.0, step: 0.1, value: 0.8, fmt: v => v.toFixed(1) },
+      { key: "peOn",     label: "positional encoding",  min: 0, max: 1, step: 1,   value: 0,   fmt: v => v > 0.5 ? "ON" : "OFF", modes: ["positional-encoding"] },
+      { key: "hops",     label: "local k-hops",         min: 1, max: 4, step: 1,   value: 2,   fmt: v => Math.round(v) + " hops", modes: ["local-vs-global"] }
+    ],
+
+    metrics: [
+      { key: "attnEntropy",    label: "Attention entropy",  accent: "cyan"   },
+      { key: "longRangeReach", label: "Long-range reach",   accent: "amber"  },
+      { key: "costN2",         label: "Cost ~n²",           accent: "rose"   },
+      { key: "numNodes",       label: "#nodes",             accent: "violet" }
+    ],
+
+    layers: [
+      { group: "nodes",  label: "Nodes"  },
+      { group: "edges",  label: "Edges"  },
+      { group: "attn",   label: "Attn"   },
+      { group: "labels", label: "Labels" }
+    ],
+
+    primary: {
+      label: "Toggle PE",
+      on: api => {
+        if (api.state.mode === "positional-encoding") {
+          api.setParam("peOn", api.state.peOn > 0.5 ? 0 : 1);
+        }
+      }
+    },
+    secondary: {
+      label: "Cycle mode →",
+      on: api => {
+        const o = ["global-attention", "positional-encoding", "local-vs-global"];
+        const sel = document.getElementById("ml-mode");
+        if (sel) { sel.value = o[(o.indexOf(api.state.mode) + 1) % 3]; sel.dispatchEvent(new Event("change")); }
+      }
+    },
+
+    defaultCam: { theta: -0.55, phi: 0.78, r: 12 },
+
+    hint: '<span style="color:#4dd7ff">cyan</span>=TF1 query &nbsp; <span style="color:#fbbf24">amber</span>=TgtB long-range target &nbsp; edge opacity=attention weight &nbsp; PE bars=positional encoding &nbsp; <span style="color:#fb7185">rose bar</span>=O(n²) cost',
+
+    onParam(api) { api.frame([0, 0.5, 0], 12); },
+
+    onSelect(api, d) {
+      if (d.node != null) {
+        const n   = Math.round(api.state.nodes);
+        const dst = Math.min(Math.floor(n / 2) + 1, n - 1);
+        api.setSelected("Node " + d.node + (d.node === 0 ? " — TF1 (query)" : d.node === dst ? " — TgtB (long-range target)" : " — intermediate"));
+      }
+    },
+
+    build,
+
+    snapshot(s) {
+      const sc = SD;
+      return {
+        mode:            s.mode,
+        nodes:           Math.round(s.nodes),
+        attnTemp:        +s.attnTemp.toFixed(2),
+        peOn:            s.peOn > 0.5 ? 1 : 0,
+        hops:            Math.round(s.hops),
+        attnEntropy:     sc.attnEntropy  != null ? +sc.attnEntropy.toFixed(4)  : 0,
+        longRangeReach:  sc.longRangeReach != null ? sc.longRangeReach : 0,
+        costN2:          sc.costN2 || 0,
+        numNodes:        sc.nodes  || 0
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

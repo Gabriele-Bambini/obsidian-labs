@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F08 · GeneLink, GNNLink, and link-prediction GRNs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no rng, no clock) ───────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── lesson FACTS (Section-5 worked example, erythroid GRN) ────────────────
+  // TFs: GATA1, KLF1 (erythroid masters), FOXA2 (hepatocyte pioneer).
+  // Genes: HBB, ALAS2, GYPA (erythroid), ALB (liver).
+  const TFS=[
+    {n:"GATA1",expr:2.1,vr:0.8,nt:250,ic:1.8,ery:1},   // erythroid
+    {n:"KLF1", expr:1.8,vr:0.7,nt:120,ic:1.6,ery:1},   // erythroid
+    {n:"FOXA2",expr:0.3,vr:0.2,nt:180,ic:1.9,ery:0}    // hepatocyte (low expr here)
+  ];
+  const GENES=[
+    {n:"HBB",  expr:3.5,vr:1.2,atac:0.92,ery:1},
+    {n:"ALAS2",expr:2.8,vr:0.9,atac:0.85,ery:1},
+    {n:"GYPA", expr:2.2,vr:0.8,atac:0.78,ery:1},   // query target, no known regulators in training
+    {n:"ALB",  expr:0.1,vr:0.1,atac:0.12,ery:0}
+  ];
+  // Known positive training edges (tf,gene): GATA1->HBB,GATA1->ALAS2,KLF1->HBB,KLF1->ALAS2,FOXA2->ALB
+  const POS=[[0,0],[0,1],[1,0],[1,1],[2,3]];
+  // GYPA (idx 2) deliberately has NO training regulator -> m_GYPA = 0.
+  // Query (novel) edges to score: GATA1->GYPA(+), KLF1->GYPA(+), FOXA2->GYPA(-)
+  const QUERY=[
+    {tf:0,gene:2,label:1},   // GATA1 -> GYPA : true positive
+    {tf:1,gene:2,label:1},   // KLF1  -> GYPA : true positive
+    {tf:2,gene:2,label:0}    // FOXA2 -> GYPA : false-positive risk
+  ];
+  // GNNLink evidence vectors for GATA1->GYPA and FOXA2->GYPA (K=4 sources).
+  // sources: corr, motif, ATAC, prior(DB confidence)
+  const EVID={
+    GATA1_GYPA:{corr:0.72,motif:1.95,atac:0.68,prior:0.0, attn:[0.15,0.60,0.25,0.0], fused:1.2,  p:0.77},
+    FOXA2_GYPA:{corr:0.05,motif:1.10,atac:0.22,prior:0.0, attn:[0.05,0.30,0.55,0.10],fused:-1.5, p:0.18}
+  };
+  const SRC=["corr","motif","ATAC","prior"];
+
+  const sigmoid=x=>1/(1+Math.exp(-x));
+
+  let sceneSnap={};
+
+  // ── deterministic toy embeddings (2D) so the scene can show TF/gene geometry.
+  // Built from features the way the note describes: bipartite message passing
+  // pulls GATA1 & KLF1 together (shared erythroid targets) and pushes FOXA2 away.
+  // mpStrength in [0,1] interpolates init -> post-message-passing positions.
+  function tfEmbed(i,mpStrength){
+    const t=TFS[i];
+    // init position: x ~ erythroid-ness from expr/ic, y ~ jitter from features
+    const ix=(t.expr-1.0)*1.1 + (t.ery?0.6:-1.6);
+    const iy=(t.ic-1.7)*1.6 + (prand(i*9+3)-0.5)*0.8;
+    // post-MP target: erythroid TFs collapse toward the shared "erythroid program" anchor
+    const anchor= t.ery? {x:1.6,y:0.5} : {x:-2.2,y:-1.2};
+    const px=ix+(anchor.x-ix)*mpStrength;
+    const py=iy+(anchor.y-iy)*mpStrength;
+    return {x:px,y:py};
+  }
+  function geneEmbed(j,mpStrength){
+    const g=GENES[j];
+    const ix=(g.expr-1.6)*0.9 + (g.ery?0.7:-1.7);
+    const iy=(g.atac-0.5)*2.2 + (prand(j*7+5)-0.5)*0.7;
+    // genes with known erythroid regulators move toward erythroid-target anchor.
+    // GYPA has NO regulator -> stays at its feature-only init (mpStrength has no pull).
+    const hasReg = !(j===2);
+    const anchor= g.ery? {x:1.4,y:0.9} : {x:-2.0,y:-1.4};
+    const k = hasReg? mpStrength : 0;
+    return {x:ix+(anchor.x-ix)*k, y:iy+(anchor.y-iy)*k};
+  }
+
+  // ── deterministic edge score for the message-passing view ─────────────────
+  // similarity of TF and gene embeddings after MP, squashed to a probability.
+  function edgeScore(tf,gene,mpStrength){
+    const a=tfEmbed(tf,mpStrength), b=geneEmbed(gene,mpStrength);
+    const dx=a.x-b.x, dy=a.y-b.y;
+    const d=Math.sqrt(dx*dx+dy*dy);
+    return sigmoid(2.2-1.05*d);   // close embeddings -> high score
+  }
+
+  // ── precision / recall over the 3 query edges at a score threshold ────────
+  function queryStats(thr,mpStrength){
+    let tp=0,fp=0,fn=0;
+    QUERY.forEach(q=>{
+      const s=edgeScore(q.tf,q.gene,mpStrength);
+      const pred=s>=thr?1:0;
+      if(pred&&q.label) tp++;
+      else if(pred&&!q.label) fp++;
+      else if(!pred&&q.label) fn++;
+    });
+    const prec=(tp+fp)>0?tp/(tp+fp):1;
+    const rec=(tp+fn)>0?tp/(tp+fn):1;
+    return {tp,fp,fn,prec,rec};
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const mp=s.mpRounds;            // 0..1  message-passing strength
+    const thr=s.scoreThr;           // 0.30..0.90 decision threshold
+    const fusion=Math.round(s.fusion); // 0=concat (GeneLink), 1=attention (GNNLink)
+    const queryIdx=Math.round(s.queryEdge); // 0=GATA1->GYPA, 1=KLF1->GYPA, 2=FOXA2->GYPA
+
+    const gGraph =api.group("graph");
+    const gEmbed =api.group("embed");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // genes / structure
+    const GR=new T.Color("#34d399");    // correct / activation
+    const AM=new T.Color("#fbbf24");    // TFs
+    const VI=new T.Color("#a78bfa");    // message passing / attention
+    const RO=new T.Color("#fb7185");    // FOXA2 / mismatch / false positive
+    const SL=new T.Color("#54667c");
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: bipartite — the GeneLink object (two node types, directed TF->gene)
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="bipartite"){
+      const tfX=-3.2, geneX=3.2;
+      const tfY=[2.2,0,-2.2];
+      const geneY=[3.0,1.0,-1.0,-3.0];
+      const tfPos=TFS.map((t,i)=>new T.Vector3(tfX,tfY[i],0));
+      const genePos=GENES.map((g,j)=>new T.Vector3(geneX,geneY[j],0));
+
+      // TF nodes (amber; FOXA2 rose to mark the off-lineage TF)
+      TFS.forEach((t,i)=>{
+        const col=t.ery?AM:RO;
+        const m=new T.Mesh(new T.SphereGeometry(0.42,20,16),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.copy(tfPos[i]); gGraph.add(m);
+        api.pick(m,{tf:{name:t.n,expr:t.expr,nt:t.nt,ery:t.ery}});
+        addLbl(t.n,col.getStyle(),1.35,tfPos[i].x-1.4,tfPos[i].y,0);
+      });
+      // Gene nodes (cyan; ALB dim - closed chromatin)
+      GENES.forEach((g,j)=>{
+        const col=g.ery?CY:SL;
+        const m=new T.Mesh(new T.SphereGeometry(0.34,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.55),emissiveIntensity:g.ery?0.55:0.2,roughness:0.4}));
+        m.position.copy(genePos[j]); gGraph.add(m);
+        api.pick(m,{gene:{name:g.n,expr:g.expr,atac:g.atac,ery:g.ery}});
+        addLbl(g.n,col.getStyle(),1.2,genePos[j].x+1.35,genePos[j].y,0);
+      });
+
+      // directed positive training edges TF -> gene
+      POS.forEach(([i,j])=>{
+        api.arrow(tfPos[i],genePos[j],{color:0x34d399,head:0.22,opacity:0.9,group:"graph"});
+      });
+      // the GYPA "no known regulator" annotation
+      addLbl("GYPA: no training regulator → m=0","#a78bfa",1.0,geneX+0.2,geneY[2]-0.8,0);
+
+      addLbl("V_TF (W_TF encoder)","#fbbf24",1.25,tfX,3.9,0);
+      addLbl("V_gene (W_gene encoder)","#4dd7ff",1.25,geneX,4.0,0);
+      addLbl("directed TF → gene only · no TF–TF or gene–gene edges","#8a99ad",1.0,0,-4.1,0);
+
+      sceneSnap={mode,tfNodes:TFS.length,geneNodes:GENES.length,posEdges:POS.length,
+        queryEdges:QUERY.length,orphanGenes:1,fusion,mpRounds:+mp.toFixed(2),
+        scoreThr:+thr.toFixed(2),queryScore:null,precision:null,recall:null};
+
+      return {
+        badge:"Bipartite graph · "+TFS.length+" TFs · "+GENES.length+" genes · "+POS.length+" pos edges",
+        formula:"G_bip = (V_TF, V_gene, E) · z = ReLU(W_type · H)",
+        insight:"GeneLink replaces GRGNN's single shared encoder with TWO type-specific encoders: W_TF for transcription factors (amber) and W_gene for target genes (cyan). Edges run only TF→gene; there are no TF–TF or gene–gene edges. GATA1 and KLF1 are erythroid masters; FOXA2 (rose) is a hepatocyte pioneer with low erythroid expression. GYPA has no training regulator, so its message vector is zero.",
+        state:"Green arrows = "+POS.length+" known positive training edges. Query edges (GATA1/KLF1/FOXA2 → GYPA) are scored in the next mode. ALB (dim) sits in closed chromatin (ATAC 0.12).",
+        metrics:{queryScore:"—",precision:"—",recall:"—",orphanGenes:"1 (GYPA)"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: message-pass — bipartite message passing -> embeddings -> scoring
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="message-pass"){
+      // 2D embedding plane (x,y) shown in 3D at z=0; axes
+      gEmbed.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-4.5,0,0),new T.Vector3(4.5,0,0)]),new T.LineBasicMaterial({color:0x223348})));
+      gEmbed.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0,-3.6,0),new T.Vector3(0,3.6,0)]),new T.LineBasicMaterial({color:0x223348})));
+
+      // TF embeddings
+      TFS.forEach((t,i)=>{
+        const e=tfEmbed(i,mp);
+        const col=t.ery?AM:RO;
+        const m=new T.Mesh(new T.SphereGeometry(0.34,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.7,roughness:0.35}));
+        m.position.set(e.x,e.y,0); gEmbed.add(m);
+        api.pick(m,{emb:{name:t.n,type:"TF",x:+e.x.toFixed(2),y:+e.y.toFixed(2)}});
+        addLbl(t.n,col.getStyle(),1.1,e.x,e.y+0.5,0);
+      });
+      // gene embeddings (squares-ish via small boxes)
+      GENES.forEach((g,j)=>{
+        const e=geneEmbed(j,mp);
+        const col=g.ery?CY:SL;
+        const m=new T.Mesh(new T.BoxGeometry(0.46,0.46,0.46),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:g.ery?0.6:0.25,roughness:0.4}));
+        m.position.set(e.x,e.y,0); gEmbed.add(m);
+        api.pick(m,{emb:{name:g.n,type:"gene",x:+e.x.toFixed(2),y:+e.y.toFixed(2)}});
+        addLbl(g.n,col.getStyle(),1.0,e.x,e.y-0.55,0);
+      });
+
+      // GATA1 ~ KLF1 proximity link (erythroid similarity emerges with MP)
+      if(mp>0.05){
+        const a=tfEmbed(0,mp),b=tfEmbed(1,mp);
+        api.edge(new T.Vector3(a.x,a.y,0),new T.Vector3(b.x,b.y,0),{color:0xa78bfa,opacity:0.5+0.4*mp,dashed:false,group:"embed"});
+      }
+
+      // score the selected query edge as a connecting line, colored by correctness
+      const q=QUERY[queryIdx];
+      const sScore=edgeScore(q.tf,q.gene,mp);
+      const pass=sScore>=thr;
+      const correct=(pass?1:0)===q.label;
+      const a=tfEmbed(q.tf,mp), b=geneEmbed(q.gene,mp);
+      api.arrow(new T.Vector3(a.x,a.y,0.05),new T.Vector3(b.x,b.y,0.05),
+        {color: correct?0x34d399:0xfb7185, head:0.2, opacity:0.95, group:"embed"});
+      addLbl(TFS[q.tf].n+"→"+GENES[q.gene].n+"  score="+sScore.toFixed(2),
+        correct?"#34d399":"#fb7185",1.15,0,3.0,0);
+
+      const st=queryStats(thr,mp);
+      addLbl("threshold τ = "+thr.toFixed(2),"#8a99ad",1.0,0,-3.0,0);
+      addLbl("erythroid cluster ← shared targets pull GATA1≈KLF1","#a78bfa",0.95,0,3.5,0);
+
+      sceneSnap={mode,fusion,mpRounds:+mp.toFixed(2),scoreThr:+thr.toFixed(2),
+        queryEdge:queryIdx,queryScore:+sScore.toFixed(3),queryPass:pass?1:0,
+        precision:+st.prec.toFixed(3),recall:+st.rec.toFixed(3),
+        tp:st.tp,fp:st.fp,orphanGenes:1};
+
+      return {
+        badge:"Message passing · MP="+mp.toFixed(2)+" · "+TFS[q.tf].n+"→"+GENES[q.gene].n+" = "+sScore.toFixed(2),
+        formula:"z_TF' = ReLU(W_upd·[z_TF ‖ m_TF]) · score = σ(MLP([z_TF' ‖ z_gene']))",
+        insight:"Bipartite message passing makes GATA1 and KLF1 converge (violet link) because they share targets HBB and ALAS2 — both develop an 'erythroid TF' embedding. FOXA2 (rose) drifts away toward its hepatocyte target ALB. GYPA has no regulator, so it stays at its feature-only init, but its features (expr 2.2, ATAC 0.78) already look erythroid — so GATA1→GYPA scores high while FOXA2→GYPA does not.",
+        state:"At MP="+mp.toFixed(2)+", "+TFS[q.tf].n+"→"+GENES[q.gene].n+" scores "+sScore.toFixed(2)+" ("+(pass?"≥":"<")+"τ="+thr.toFixed(2)+", "+(correct?"correct":"WRONG")+"). Over all 3 queries: precision "+(st.prec*100).toFixed(0)+"%, recall "+(st.rec*100).toFixed(0)+"%, FP="+st.fp+".",
+        metrics:{
+          queryScore:sScore.toFixed(2),
+          precision:(st.prec*100).toFixed(0)+"%",
+          recall:(st.rec*100).toFixed(0)+"%",
+          orphanGenes:"1 (GYPA)"
+        },
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: attention — GNNLink multi-source attention over K=4 evidence sources
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="attention"){
+      const key=(queryIdx===2)?"FOXA2_GYPA":"GATA1_GYPA";
+      const ev=EVID[key];
+      const evals=[ev.corr,ev.motif,ev.atac,ev.prior];
+      const attn=ev.attn;
+      const colmap=[GR,AM,CY,VI];
+
+      // evidence value bars (left cluster) and attention-weight bars (right cluster)
+      const xL=[-4.4,-3.2,-2.0,-0.8];
+      const xR=[0.8,2.0,3.2,4.4];
+      const maxEv=2.0;
+
+      SRC.forEach((name,k)=>{
+        // evidence magnitude bar
+        const ev0=evals[k];
+        const hE=0.12+Math.min(1,ev0/maxEv)*3.2;
+        const cE=colmap[k];
+        const bE=new T.Mesh(new T.BoxGeometry(0.9,hE,0.9),
+          new T.MeshStandardMaterial({color:cE,emissive:cE.clone().multiplyScalar(0.4),emissiveIntensity:0.4,roughness:0.45,transparent:ev0===0,opacity:ev0===0?0.3:1}));
+        bE.position.set(xL[k],hE/2,-1.4); gBars.add(bE);
+        api.pick(bE,{ev:{src:name,value:ev0,kind:"evidence"}});
+        addLbl(ev0.toFixed(2),cE.getStyle(),1.2,xL[k],hE+0.5,-1.4);
+        addSlbl(name,cE.getStyle(),0.34,xL[k],0.05,-1.4);
+
+        // attention-weight bar (fraction of softmax mass)
+        const a0=attn[k];
+        const hA=0.12+a0*4.2;
+        const bA=new T.Mesh(new T.BoxGeometry(0.9,hA,0.9),
+          new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.3+0.7*a0,roughness:0.4,transparent:a0===0,opacity:a0===0?0.25:1}));
+        bA.position.set(xR[k],hA/2,-1.4); gBars.add(bA);
+        api.pick(bA,{ev:{src:name,value:a0,kind:"attention"}});
+        addLbl(a0.toFixed(2),"#c4b5fd",1.2,xR[k],hA+0.5,-1.4);
+        addSlbl("a^"+name,"#a78bfa",0.32,xR[k],0.05,-1.4);
+      });
+
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5.2,0,-1.4),new T.Vector3(5.2,0,-1.4)]),new T.LineBasicMaterial({color:0x1e3046})));
+      addLbl("evidence eᵏ","#8a99ad",1.15,-2.6,4.0,-1.4);
+      addLbl("attention aᵏ (softmax)","#a78bfa",1.15,2.6,4.4,-1.4);
+
+      // fused score + sigmoid probability readout as a vertical bar at front
+      const p=ev.p;
+      const correct=(queryIdx===2)? p<0.5 : p>=0.5;
+      const hP=0.15+p*4.0;
+      const cP=correct?GR:RO;
+      const bP=new T.Mesh(new T.BoxGeometry(1.3,hP,1.3),
+        new T.MeshStandardMaterial({color:cP,emissive:cP,emissiveIntensity:0.8,roughness:0.35}));
+      bP.position.set(0,hP/2,2.6); gBars.add(bP);
+      api.pick(bP,{score:{edge:key,fused:ev.fused,p}});
+      addLbl("p = "+p.toFixed(2),cP.getStyle(),1.6,0,hP+0.6,2.6);
+      addLbl(key.replace("_"," → "),cP.getStyle(),1.2,0,0.1,3.7);
+
+      sceneSnap={mode,fusion:1,queryEdge:queryIdx,scoreThr:+thr.toFixed(2),mpRounds:+mp.toFixed(2),
+        aCorr:attn[0],aMotif:attn[1],aAtac:attn[2],aPrior:attn[3],
+        fusedScore:+ev.fused.toFixed(3),queryScore:+p.toFixed(3),
+        precision:null,recall:null,orphanGenes:1};
+
+      const dom=SRC[attn.indexOf(Math.max(...attn))];
+      return {
+        badge:"GNNLink attention · "+key.replace("_"," → ")+" · p="+p.toFixed(2),
+        formula:"aᵏ = softmax(uᵏ) · S = Σ_k aᵏ·sᵏ · p = σ(S)",
+        insight:"GNNLink does not concat the K=4 evidence sources flatly (that is GeneLink). It learns an attention weight aᵏ per source FROM the TF and gene embeddings, so the same evidence is fused differently per pair. For GATA1→GYPA the motif source dominates (a^motif=0.60) and prior=0 contributes nothing; the fused logit is +1.2 → p=0.77. For FOXA2→GYPA the ATAC mismatch and low correlation drag the fused logit negative → p=0.18.",
+        state:"Edge "+key.replace("_"," → ")+": dominant source = "+dom+" (a="+Math.max(...attn).toFixed(2)+"). Fused logit S="+ev.fused.toFixed(2)+" → p=σ(S)="+p.toFixed(2)+" — "+(correct?"correctly":"incorrectly")+" classified. prior=0 ⇒ a^prior contributes 0 (no DB leakage).",
+        metrics:{
+          queryScore:p.toFixed(2),
+          precision:"a^"+dom,
+          recall:"S="+ev.fused.toFixed(1),
+          orphanGenes:"1 (GYPA)"
+        },
+        focus:{center:[0,1.6,0.5],radius:12}
+      };
+    }
+
+    return {badge:"F08",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f08",
+    kind:"genelink-gnnlink-link-prediction",
+    eyebrow:"Block F · GRN Inference",
+    title:"F08 · GeneLink, GNNLink & link-prediction GRNs",
+    subtitle:"The bipartite TF→gene graph, dual-encoder message passing, and GNNLink's multi-source attention — on the erythroid worked example (GATA1, KLF1, FOXA2 → HBB, ALAS2, GYPA, ALB).",
+    selectedLabel:"Element",
+    selectedHint:"Click a TF, gene, embedding, evidence bar, or score.",
+    modes:[
+      {value:"bipartite",    label:"Bipartite graph (GeneLink object)"},
+      {value:"message-pass", label:"Message passing → embeddings → score"},
+      {value:"attention",    label:"GNNLink attention (multi-source fusion)"}
+    ],
+    params:[
+      {key:"mpRounds", label:"message-passing strength",min:0,max:1,step:0.05,value:1,
+       fmt:v=>v.toFixed(2),modes:["message-pass"]},
+      {key:"scoreThr", label:"decision threshold τ",min:0.30,max:0.90,step:0.01,value:0.50,
+       fmt:v=>v.toFixed(2),modes:["message-pass"]},
+      {key:"queryEdge",label:"query edge (0=GATA1 1=KLF1 2=FOXA2 → GYPA)",min:0,max:2,step:1,value:0,
+       fmt:v=>["GATA1→GYPA","KLF1→GYPA","FOXA2→GYPA"][Math.round(v)],modes:["message-pass","attention"]},
+      {key:"fusion",   label:"fusion (0=GeneLink concat 1=GNNLink attn)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"concat":"attention",modes:["bipartite"]}
+    ],
+    metrics:[
+      {key:"queryScore", label:"Query edge score p",accent:"green"},
+      {key:"precision",  label:"Precision / dominant aᵏ",accent:"cyan"},
+      {key:"recall",     label:"Recall / fused S",accent:"amber"},
+      {key:"orphanGenes",label:"Orphan genes (m=0)",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"Bipartite graph"},
+      {group:"embed",  label:"Embedding plane"},
+      {group:"bars",   label:"Evidence / attention"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Query: GATA1→GYPA",
+      on:api=>{api.setParam("queryEdge",0);}
+    },
+    secondary:{
+      label:"Query: FOXA2→GYPA",
+      on:api=>{api.setParam("queryEdge",2);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:12.5},
+    hint:'<span style="color:#fbbf24">amber</span>=TF · <span style="color:#4dd7ff">cyan</span>=gene/structure · <span style="color:#a78bfa">violet</span>=message passing / attention · <span style="color:#34d399">green</span>=correct/positive · <span style="color:#fb7185">rose</span>=FOXA2 / mismatch / false-positive.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="attention") api.frame([0,1.6,0.5],12);
+      else if(s.mode==="message-pass") api.frame([0,0,0],11);
+      else api.frame([0,0,0],12);
+    },
+    onSelect(api,d){
+      if(d.tf)    api.setSelected("TF "+d.tf.name+" · expr "+d.tf.expr+" · "+d.tf.nt+" known targets · "+(d.tf.ery?"erythroid":"hepatocyte"));
+      if(d.gene)  api.setSelected("Gene "+d.gene.name+" · expr "+d.gene.expr+" · ATAC "+d.gene.atac+" · "+(d.gene.ery?"erythroid":"liver"));
+      if(d.emb)   api.setSelected(d.emb.type+" "+d.emb.name+" · embedding ("+d.emb.x+", "+d.emb.y+")");
+      if(d.ev)    api.setSelected(d.ev.kind+" · source "+d.ev.src+" = "+d.ev.value.toFixed(2));
+      if(d.score) api.setSelected(d.score.edge.replace("_"," → ")+" · fused S="+d.score.fused.toFixed(2)+" · p="+d.score.p.toFixed(2));
+    },
+    build,
+    snapshot(s){
+      const mp=+s.mpRounds.toFixed(2);
+      const thr=+s.scoreThr.toFixed(2);
+      const qi=Math.round(s.queryEdge);
+      const fusion=Math.round(s.fusion);
+      const q=QUERY[qi];
+      const sc=edgeScore(q.tf,q.gene,mp);
+      const st=queryStats(thr,mp);
+      const key=(qi===2)?"FOXA2_GYPA":"GATA1_GYPA";
+      const ev=EVID[key];
+      return {
+        mode:s.mode,
+        mpRounds:mp,
+        scoreThr:thr,
+        queryEdge:qi,
+        fusion:fusion,
+        mpQueryScore:+sc.toFixed(3),
+        precision:+st.prec.toFixed(3),
+        recall:+st.rec.toFixed(3),
+        falsePositives:st.fp,
+        attnDominant:["corr","motif","ATAC","prior"][ev.attn.indexOf(Math.max(...ev.attn))],
+        attnMotif:ev.attn[1],
+        fusedScore:+ev.fused.toFixed(3),
+        attnProb:ev.p,
+        orphanGenes:1,
+        gata1KlfErythroidConverge:mp>0.5
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

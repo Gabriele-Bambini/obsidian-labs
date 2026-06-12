@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J01 · Robustness and adversarial attacks on graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (frac of sin; no stochastic / clock calls) ─
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── the worked-example GRN (note Section 5) ──────────────────────────────
+  // 5 genes; features = [log-expr, prior]; ring layout for a clean scene.
+  const GENES=[
+    {id:0,name:"TP53",  type:"TF",     expr:2.1, prior:0.90},
+    {id:1,name:"CDKN1A",type:"target", expr:1.8, prior:0.75},
+    {id:2,name:"MDM2",  type:"TF",     expr:1.2, prior:0.60},
+    {id:3,name:"BCL2",  type:"target", expr:0.4, prior:0.20},
+    {id:4,name:"BAX",   type:"target", expr:1.6, prior:0.70}
+  ];
+  // ground-truth regulatory edges: [src,dst,sign] (1=activation,-1=repression,0=PPI)
+  const EDGES=[
+    [0,1, 1], // TP53 -> CDKN1A  activation
+    [0,2, 1], // TP53 -> MDM2    activation
+    [2,0,-1], // MDM2 -> TP53    repression
+    [0,4, 1], // TP53 -> BAX     activation
+    [3,4, 0]  // BCL2 -- BAX     protein interaction
+  ];
+  // ring positions (TP53 at top)
+  const RING=3.4;
+  const POS=GENES.map((g,i)=>{
+    const ang=Math.PI/2 - i/GENES.length*Math.PI*2;
+    return [Math.cos(ang)*RING, 0, Math.sin(ang)*RING];
+  });
+
+  // ── deterministic surrogate "GCN confidence" for the active TP53 program ──
+  // 1-hop mean aggregation at TP53 → a logit → confidence in "active" class.
+  // Calibrated so the clean graph yields ~0.88 (note), the k=1 topology attack
+  // (add BCL2–TP53) yields ~0.51, and PGD at ε=0.15 flips. The model is
+  // monotone & smooth so every slider visibly moves it.
+  // logit = W_AE·aggExpr + W_AP·aggPrior + W_SE·(self/target expr the readout keeps) + BIAS
+  // Topology attack damages the AGGREGATE (BCL2 dilutes prior+expr); PGD attacks the
+  // SELF/target expression term. Weights solved so clean→0.88, k=1→0.45 (flip),
+  // PGD ε=0.15→0.45 (flip) — mirroring the note's worked example.
+  const sigmoid=z=>1/(1+Math.exp(-z));
+  const W_AE=5.225, W_AP=8.0, W_SE=6.0, BIAS=-34.859475;
+
+  // aggregated [expr,prior] over TP53 self + its current 1-hop neighbours
+  function aggregateTP53(exprTP53,exprBAX,extraNbr){
+    // TP53 ground-truth 1-hop neighbours: CDKN1A, MDM2, BAX
+    const nbr=[
+      {expr:GENES[1].expr, prior:GENES[1].prior}, // CDKN1A
+      {expr:GENES[2].expr, prior:GENES[2].prior}, // MDM2
+      {expr:exprBAX,        prior:GENES[4].prior}  // BAX (PGD-perturbable)
+    ];
+    if(extraNbr) nbr.push(extraNbr);              // adversarial BCL2 edge
+    let se=exprTP53, sp=GENES[0].prior;           // include self
+    nbr.forEach(n=>{se+=n.expr; sp+=n.prior;});
+    const k=nbr.length+1;
+    return [se/k, sp/k];
+  }
+  function confActive(exprTP53,exprBAX,extraNbr){
+    const a=aggregateTP53(exprTP53,exprBAX,extraNbr);
+    const z=W_AE*a[0]+W_AP*a[1]+W_SE*(exprTP53+exprBAX)+BIAS;
+    return sigmoid(z);
+  }
+
+  // certified radius via randomized smoothing (note Section 5)
+  // r = (σ/2)·(Φ^-1(pA) - Φ^-1(pB)); pB = 1 - pA here (binary)
+  function probit(p){ // Acklam inverse-normal CDF, deterministic
+    p=Math.max(1e-6,Math.min(1-1e-6,p));
+    const a=[-39.69683028665376,220.9460984245205,-275.9285104469687,138.3577518672690,-30.66479806614716,2.506628277459239];
+    const b=[-54.47609879822406,161.5858368580409,-155.6989798598866,66.80131188771972,-13.28068155288572];
+    const c=[-0.007784894002430293,-0.3223964580411365,-2.400758277161838,-2.549732539343734,4.374664141464968,2.938163982698783];
+    const d=[0.007784695709041462,0.3224671290700398,2.445134137142996,3.754408661907416];
+    const plow=0.02425, phigh=1-plow; let q,r,x;
+    if(p<plow){q=Math.sqrt(-2*Math.log(p));x=(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);}
+    else if(p<=phigh){q=p-0.5;r=q*q;x=(((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);}
+    else{q=Math.sqrt(-2*Math.log(1-p));x=-(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);}
+    return x;
+  }
+  function certRadius(sigma,pA){const pB=1-pA;return (sigma/2)*(probit(pA)-probit(pB));}
+
+  let sceneSnap={};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+
+    const gGraph =api.group("graph");
+    const gAttack=api.group("attack");
+    const gPanel =api.group("panel");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");  // clean / TF
+    const GR=new T.Color("#34d399");  // activation / certificate
+    const AM=new T.Color("#fbbf24");  // target gene / warning
+    const VI=new T.Color("#a78bfa");  // adversarial / perturbation
+    const RO=new T.Color("#f87171");  // flipped / repression
+    const SL=new T.Color("#54667c");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    const typeColor=g=>g.type==="TF"?CY:AM;
+
+    // params
+    const kBudget = Math.round(s.kBudget);     // 0 or 1 (topology)
+    const epsF    = s.epsFeat;                  // 0..0.30 feature L-inf budget
+    const sigma   = s.sigma;                    // 0.05..0.6 smoothing noise
+    const pA      = s.pA;                       // 0.55..0.95 top-class prob under noise
+
+    // shared: draw the 5-gene GRN nodes + ground-truth edges
+    function drawBaseGraph(perturbExpr){
+      const eTP=perturbExpr?perturbExpr.tp53:GENES[0].expr;
+      const eBAX=perturbExpr?perturbExpr.bax:GENES[4].expr;
+
+      EDGES.forEach(([a,b,sign])=>{
+        const pa=new T.Vector3(...POS[a]), pb=new T.Vector3(...POS[b]);
+        const eCol= sign>0?GR.clone(): sign<0?RO.clone(): SL.clone();
+        const dir=pb.clone().sub(pa); const len=dir.length(); dir.normalize();
+        const geo=new T.CylinderGeometry(0.045,0.045,len*0.82,10,1,true);
+        const m=new T.MeshStandardMaterial({color:eCol,emissive:eCol.clone().multiplyScalar(0.3),roughness:0.5,transparent:true,opacity:0.85});
+        const mesh=new T.Mesh(geo,m);
+        mesh.position.copy(pa).add(pb).multiplyScalar(0.5);
+        mesh.quaternion.copy(new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0),dir));
+        gGraph.add(mesh);
+        if(sign!==0){
+          const cone=new T.Mesh(new T.ConeGeometry(0.12,0.3,10),new T.MeshBasicMaterial({color:eCol}));
+          const tip=pa.clone().add(dir.clone().multiplyScalar(len*0.74));
+          cone.position.copy(tip); cone.quaternion.copy(mesh.quaternion);
+          gGraph.add(cone);
+        }
+      });
+
+      GENES.forEach((g,i)=>{
+        let expr=g.expr;
+        if(i===0) expr=eTP; if(i===4) expr=eBAX;
+        const isHub=(i===0); // TP53 is the hub / target
+        const r=0.30+(expr/2.5)*0.18+(isHub?0.10:0);
+        const baseCol=typeColor(g);
+        const col=g.id===3?baseCol.clone().lerp(SL,0.45):baseCol.clone(); // BCL2 low-evidence -> dim
+        const sph=new T.Mesh(new T.SphereGeometry(r,20,16),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(isHub?0.8:0.55),emissiveIntensity:isHub?0.85:0.6,roughness:0.35}));
+        sph.position.set(POS[i][0],0,POS[i][2]);
+        gGraph.add(sph);
+        api.pick(sph,{node:{id:g.id,name:g.name,type:g.type,expr:+expr.toFixed(2),prior:g.prior,hub:isHub}});
+        addLbl(g.name, col.getStyle(), 1.25, POS[i][0], r+0.55, POS[i][2]);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: topology  (Nettack greedy k=1 → add BCL2–TP53)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="topology"){
+      const attacked = kBudget>=1;
+      const extra = attacked? {expr:GENES[3].expr, prior:GENES[3].prior} : null;
+      const conf = confActive(GENES[0].expr, GENES[4].expr, extra);
+      const flipped = conf<0.5;
+
+      drawBaseGraph(null);
+
+      if(attacked){
+        const pa=new T.Vector3(...POS[3]), pb=new T.Vector3(...POS[0]);
+        const dir=pb.clone().sub(pa); const len=dir.length(); dir.normalize();
+        const geo=new T.CylinderGeometry(0.07,0.07,len*0.84,10,1,true);
+        const m=new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.6),emissiveIntensity:0.9,roughness:0.3,transparent:true,opacity:0.92});
+        const mesh=new T.Mesh(geo,m);
+        mesh.position.copy(pa).add(pb).multiplyScalar(0.5);
+        mesh.quaternion.copy(new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0),dir));
+        gAttack.add(mesh);
+        const mid=pa.clone().add(pb).multiplyScalar(0.5);
+        const warn=new T.Mesh(new T.ConeGeometry(0.18,0.5,10),new T.MeshBasicMaterial({color:VI}));
+        warn.position.set(mid.x,1.0,mid.z); warn.rotation.z=Math.PI;
+        gAttack.add(warn);
+        addLbl("adversarial edge","#a78bfa",1.0,mid.x,1.55,mid.z);
+      }
+
+      const bx=5.2;
+      const h=0.2+conf*4.2;
+      const barCol = flipped?RO:CY;
+      const bar=new T.Mesh(new T.BoxGeometry(1.0,h,1.0),
+        new T.MeshStandardMaterial({color:barCol,emissive:barCol.clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.4}));
+      bar.position.set(bx,h/2,0);
+      gPanel.add(bar);
+      api.pick(bar,{bar:{kind:"confidence",conf:+conf.toFixed(3)}});
+      addLbl((conf*100).toFixed(0)+"%",barCol.getStyle(),1.5,bx,h+0.5,0);
+      const thY=0.2+0.5*4.2;
+      gPanel.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(bx-1.1,thY,0),new T.Vector3(bx+1.1,thY,0)]),new T.LineBasicMaterial({color:0x9aa7b5})));
+      addSlbl("flip 0.5",SL.getStyle(),0.42,bx+1.5,thY,0);
+      addLbl(flipped?"INACTIVE (flipped)":"ACTIVE program", flipped?"#f87171":"#4dd7ff",1.15,bx,-0.7,0);
+
+      sceneSnap={mode,kBudget,confidence:+conf.toFixed(3),flipped,certRadius:null,featDelta:null,attackInside:null};
+
+      return {
+        badge:"Topology · Nettack k="+kBudget+(attacked?" · BCL2–TP53 added":" · clean"),
+        formula:"Δscore(i,j)=L(f<sub>θ</sub>(G+e<sub>ij</sub>),y<sub>v</sub>)−L(f<sub>θ</sub>(G),y<sub>v</sub>)",
+        insight:"Nettack greedily adds the single edge that most damages TP53's prediction. The winner is BCL2–TP53: biologically plausible, so it passes a sanity check, yet BCL2 has low expression (0.4) and low prior (0.20). Mean aggregation now dilutes TP53's strong signal with this low-evidence vector.",
+        state:"k="+kBudget+" → confidence "+(conf*100).toFixed(0)+"% "+(flipped?"→ FLIPPED to inactive.":"(clean, active).")+" Clean=88%, one adversarial edge drives it to ~51%.",
+        metrics:{
+          confidence:(conf*100).toFixed(0)+"%",
+          certRadius:"—",
+          featDelta:"—",
+          flip:flipped?"YES":"no"
+        },
+        focus:{center:[1.2,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: feature  (PGD on node features, L-inf budget ε)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="feature"){
+      // PGD pushes TP53 & BAX expression DOWN by up to ε (signed gradient)
+      const dTP=Math.min(epsF, 0.15);   // attack saturates the meaningful drop
+      const dBAX=Math.min(epsF, 0.15);
+      const eTP=GENES[0].expr - dTP;
+      const eBAX=GENES[4].expr - dBAX;
+      const conf=confActive(eTP,eBAX,null);
+      const flipped=conf<0.5;
+      const deltaNorm=Math.sqrt(dTP*dTP+dBAX*dBAX); // ‖δ‖₂
+
+      drawBaseGraph({tp53:eTP,bax:eBAX});
+
+      [[0,dTP],[4,dBAX]].forEach(([idx,d])=>{
+        if(d>0.001){
+          const p=POS[idx];
+          const arr=new T.Mesh(new T.ConeGeometry(0.13,0.4,10),new T.MeshBasicMaterial({color:VI}));
+          arr.position.set(p[0],1.15,p[2]); arr.rotation.z=Math.PI;
+          gAttack.add(arr);
+          gAttack.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(p[0],0.7,p[2]),new T.Vector3(p[0],1.35,p[2])]),new T.LineBasicMaterial({color:VI.getHex()})));
+        }
+      });
+      addLbl("δ expr (PGD)","#a78bfa",1.0,POS[0][0],1.9,POS[0][2]);
+
+      const bx=5.2; const h=0.2+conf*4.2; const barCol=flipped?RO:CY;
+      const bar=new T.Mesh(new T.BoxGeometry(1.0,h,1.0),new T.MeshStandardMaterial({color:barCol,emissive:barCol.clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.4}));
+      bar.position.set(bx,h/2,0); gPanel.add(bar);
+      api.pick(bar,{bar:{kind:"confidence",conf:+conf.toFixed(3)}});
+      addLbl((conf*100).toFixed(0)+"%",barCol.getStyle(),1.5,bx,h+0.5,0);
+      const thY=0.2+0.5*4.2;
+      gPanel.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(bx-1.1,thY,0),new T.Vector3(bx+1.1,thY,0)]),new T.LineBasicMaterial({color:0x9aa7b5})));
+      addSlbl("flip 0.5",SL.getStyle(),0.42,bx+1.5,thY,0);
+      addLbl(flipped?"INACTIVE (flipped)":"ACTIVE program",flipped?"#f87171":"#4dd7ff",1.15,bx,-0.7,0);
+
+      sceneSnap={mode,epsFeat:+epsF.toFixed(3),confidence:+conf.toFixed(3),flipped,featDelta:+deltaNorm.toFixed(3),certRadius:null,attackInside:null};
+
+      return {
+        badge:"Feature · PGD · ε="+epsF.toFixed(2)+(flipped?" · FLIPPED":""),
+        formula:"δ<sub>X</sub><sup>(t+1)</sup>=Π<sub>‖δ‖∞≤ε</sub>( δ<sub>X</sub><sup>(t)</sup>+α·∇<sub>δ</sub>L )",
+        insight:"PGD finds the smallest expression perturbation that flips the call. Reducing TP53 (2.1→"+eTP.toFixed(2)+") and BAX (1.6→"+eBAX.toFixed(2)+") within ε is enough. ‖δ‖₂≈"+deltaNorm.toFixed(2)+" — within single-cell dropout noise, so QC would not flag it.",
+        state:"ε="+epsF.toFixed(2)+" → ‖δ‖₂="+deltaNorm.toFixed(2)+", confidence "+(conf*100).toFixed(0)+"% "+(flipped?"→ FLIPPED.":"(still active)."),
+        metrics:{
+          confidence:(conf*100).toFixed(0)+"%",
+          certRadius:"—",
+          featDelta:deltaNorm.toFixed(2),
+          flip:flipped?"YES":"no"
+        },
+        focus:{center:[1.2,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: certified  (randomized smoothing radius around TP53)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="certified"){
+      const r=certRadius(sigma,pA);
+      const attackNorm=0.21; // worked-example PGD ‖δ‖₂
+      const inside=attackNorm<=r;
+
+      drawBaseGraph(null);
+
+      const scale=2.4; // visual units per unit certified-radius
+      const ring=new T.Mesh(new T.RingGeometry(Math.max(0.05,r*scale-0.06),r*scale,48),
+        new T.MeshBasicMaterial({color:GR,transparent:true,opacity:0.85,side:T.DoubleSide}));
+      ring.rotation.x=-Math.PI/2; ring.position.set(POS[0][0],0.02,POS[0][2]);
+      gAttack.add(ring);
+      const disk=new T.Mesh(new T.CircleGeometry(r*scale,48),
+        new T.MeshBasicMaterial({color:GR,transparent:true,opacity:0.14,side:T.DoubleSide}));
+      disk.rotation.x=-Math.PI/2; disk.position.set(POS[0][0],0.01,POS[0][2]);
+      gAttack.add(disk);
+      addLbl("certified r="+r.toFixed(3),"#34d399",1.15,POS[0][0],r*scale+0.6,POS[0][2]);
+
+      const aRing=new T.Mesh(new T.RingGeometry(Math.max(0.05,attackNorm*scale-0.05),attackNorm*scale,48),
+        new T.MeshBasicMaterial({color:RO,transparent:true,opacity:0.9,side:T.DoubleSide}));
+      aRing.rotation.x=-Math.PI/2; aRing.position.set(POS[0][0],0.03,POS[0][2]);
+      gAttack.add(aRing);
+      addLbl("PGD ‖δ‖≈"+attackNorm.toFixed(2),"#f87171",0.95,POS[0][0]+attackNorm*scale+0.3,0.3,POS[0][2]);
+
+      const bx=5.2;
+      [[pA,GR,"pA",0.0],[1-pA,SL,"pB",1.3]].forEach(([p,c,lbl,off])=>{
+        const h=0.15+p*3.6;
+        const bar=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.6),emissiveIntensity:0.65,roughness:0.4}));
+        bar.position.set(bx+off,h/2,-0.6); gPanel.add(bar);
+        addLbl(p.toFixed(2),c.getStyle(),1.2,bx+off,h+0.45,-0.6);
+        addSlbl(lbl,c.getStyle(),0.42,bx+off,0.05,-0.6);
+      });
+
+      sceneSnap={mode,sigma:+sigma.toFixed(3),pA:+pA.toFixed(3),certRadius:+r.toFixed(3),attackInside:inside,confidence:null,flipped:null,featDelta:+attackNorm.toFixed(3)};
+
+      return {
+        badge:"Certified · σ="+sigma.toFixed(2)+" · pA="+pA.toFixed(2)+" · r="+r.toFixed(3),
+        formula:"r = (σ/2)·( Φ<sup>−1</sup>(p<sub>A</sub>) − Φ<sup>−1</sup>(p<sub>B</sub>) )",
+        insight:"Randomized smoothing certifies a radius r in feature space at TP53. With σ=0.30, pA=0.82, pB=0.18 → r=0.274 (note). The green ring is the guarantee; the rose ring is the PGD attack norm ≈0.21. The attack sits "+(inside?"INSIDE":"OUTSIDE")+" the certificate"+(inside?" — the bound is conservative (loose).":" — certificate violated."),
+        state:"σ="+sigma.toFixed(2)+", pA="+pA.toFixed(2)+" → r="+r.toFixed(3)+". PGD ‖δ‖≈0.21 is "+(inside?"inside (bound loose)":"outside")+". Tighter certs need more noise → lower clean accuracy.",
+        metrics:{
+          confidence:"—",
+          certRadius:r.toFixed(3),
+          featDelta:"0.21",
+          flip:inside?"certified":"breach"
+        },
+        focus:{center:[1.6,0,0],radius:13}
+      };
+    }
+
+    return {badge:"J01",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"j01",
+    kind:"robustness-adversarial-attacks",
+    eyebrow:"Block J · Advanced GNN Theory",
+    title:"J01 · Robustness and adversarial attacks on graphs",
+    subtitle:"A 5-gene TP53 module classified as an active program. Three attacks: a single adversarial edge (Nettack), a tiny feature perturbation (PGD), and a randomized-smoothing certificate.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene node or a bar/ring.",
+    modes:[
+      {value:"topology",  label:"Topology attack (Nettack, k edges)"},
+      {value:"feature",   label:"Feature attack (PGD, ε budget)"},
+      {value:"certified", label:"Certified robustness (smoothing)"}
+    ],
+    params:[
+      {key:"kBudget", label:"topology budget k (edges added)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v).toString(),modes:["topology"]},
+      {key:"epsFeat", label:"feature budget ε (‖δ‖∞)",min:0,max:0.30,step:0.01,value:0.15,
+       fmt:v=>v.toFixed(2),modes:["feature"]},
+      {key:"sigma",   label:"smoothing noise σ",min:0.05,max:0.60,step:0.01,value:0.30,
+       fmt:v=>v.toFixed(2),modes:["certified"]},
+      {key:"pA",      label:"top-class prob p_A (under noise)",min:0.55,max:0.95,step:0.01,value:0.82,
+       fmt:v=>v.toFixed(2),modes:["certified"]}
+    ],
+    metrics:[
+      {key:"confidence",label:"TP53 conf (active)",accent:"cyan"},
+      {key:"certRadius",label:"Certified radius r",accent:"green"},
+      {key:"featDelta", label:"Perturbation ‖δ‖₂",accent:"violet"},
+      {key:"flip",      label:"Prediction flip",accent:"rose"}
+    ],
+    layers:[
+      {group:"graph", label:"GRN graph"},
+      {group:"attack",label:"Attack / certificate"},
+      {group:"panel", label:"Confidence panel"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Clean graph (k=0, ε=0)",
+      on:api=>{const m=api.state.mode;
+        if(m==="topology")api.setParam("kBudget",0);
+        else if(m==="feature")api.setParam("epsFeat",0);
+        else{api.setParam("sigma",0.30);api.setParam("pA",0.82);}}
+    },
+    secondary:{
+      label:"Worked-example attack",
+      on:api=>{const m=api.state.mode;
+        if(m==="topology")api.setParam("kBudget",1);
+        else if(m==="feature")api.setParam("epsFeat",0.15);
+        else{api.setParam("sigma",0.30);api.setParam("pA",0.82);}}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF/clean · <span style="color:#fbbf24">amber</span>=target gene · <span style="color:#34d399">green</span>=activation/certificate · <span style="color:#f87171">rose</span>=repression/flip · <span style="color:#a78bfa">violet</span>=adversarial perturbation.',
+    onParam(api){ api.frame([1.4,0,0],13); },
+    onMode(api){ api.frame([1.4,0,0],13); },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node.name+" · "+d.node.type+" · expr "+d.node.expr+" · prior "+d.node.prior+(d.node.hub?" · HUB/target":""));
+      if(d.bar)  api.setSelected(d.bar.kind+" = "+(d.bar.conf!=null?(d.bar.conf*100).toFixed(0)+"%":""));
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const kB=Math.round(s.kBudget);
+      const eps=+(s.epsFeat).toFixed(3);
+      const sig=+(s.sigma).toFixed(3);
+      const pA=+(s.pA).toFixed(3);
+      const extra = (mode==="topology"&&kB>=1)?{expr:GENES[3].expr,prior:GENES[3].prior}:null;
+      let conf=null, flipped=null, delta=null, r=null, inside=null;
+      if(mode==="topology"){
+        conf=confActive(GENES[0].expr,GENES[4].expr,extra);
+        flipped=conf<0.5;
+      } else if(mode==="feature"){
+        const dTP=Math.min(eps,0.15), dBAX=Math.min(eps,0.15);
+        conf=confActive(GENES[0].expr-dTP,GENES[4].expr-dBAX,null);
+        flipped=conf<0.5;
+        delta=Math.sqrt(dTP*dTP+dBAX*dBAX);
+      } else if(mode==="certified"){
+        r=certRadius(sig,pA);
+        delta=0.21;
+        inside=0.21<=r;
+      }
+      return {
+        mode,
+        kBudget:kB,
+        epsFeat:eps,
+        sigma:sig,
+        pA:pA,
+        confidence: conf==null?null:+conf.toFixed(3),
+        predictionFlipped: flipped,
+        featDeltaL2: delta==null?null:+delta.toFixed(3),
+        certifiedRadius: r==null?null:+r.toFixed(3),
+        attackInsideCertificate: inside
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

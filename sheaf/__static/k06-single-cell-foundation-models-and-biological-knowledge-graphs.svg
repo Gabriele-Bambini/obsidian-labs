@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure K06 — From pretrained gene tokens to a thresholded hepatocyte GRN</title>
+<desc id="d">Four-panel captioned figure: From pretrained gene tokens to a thresholded hepatocyte GRN</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE K06 · BLOCK K · GRAPH FOUNDATION MODELS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="22" font-weight="700">From pretrained gene tokens to a thresholded hepatocyte GRN</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Hepatocyte GRN node set</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">500</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TF nodes</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">5 (HNF4A…)</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">targets</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">5 (ALB…)</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">candidates</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">25 · 5 validated</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Predicted edge scores</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">score = σ( edge_pred[ GAT(h_gene) ] )</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">accept iff score ≥ τ</text>
+<rect x="502" y="178" width="12" height="26" rx="2" fill="#34d399"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">HNF4A→ALB</text>
+<rect x="576" y="180.57" width="12" height="23.43" rx="2" fill="#34d399"/>
+<text x="582" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">CEBPA→SERP</text>
+<rect x="650" y="195.14" width="12" height="8.86" rx="2" fill="#fb7185"/>
+<text x="656" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">NR1H4→ALB</text>
+<rect x="724" y="196.29" width="12" height="7.71" rx="2" fill="#fb7185"/>
+<text x="730" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">CEBPA→TTR</text>
+<line x1="502" y1="189.71" x2="798" y2="189.71" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Why two pairs score low</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">NR1H4→ALB (0.31) and CEBPA→TTR (0.27) fall below τ: no</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">direct ChIP-seq edge and no embedding co-expression</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">signal. Pretraining captures correlation, so the GNN</text>
+<text x="56" y="361" fill="#9fb4cc" font-size="11">correctly demotes indirect pairs.</text>
+<text x="56" y="389.5" fill="#34d399" font-size="11.5" font-weight="700">true positive @…</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="409.5" fill="#fb7185" font-size="11.5" font-weight="700">false positive …</text>
+<text x="196" y="409.5" fill="#9fb4cc" font-size="11.5">0</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Encoder choices</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">Geneformer</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">rank · 30M</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">scGPT</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">value-bin · 33M</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">scFoundation</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">read-depth · 50M</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">rule</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">depth-aware = transfer-robust</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure K06. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">hepatocyte </text>
+<text x="265.21" y="538" fill="#c7d2dd" font-size="13">worked </text>
+<text x="321.63" y="538" fill="#c7d2dd" font-size="13">example: </text>
+<text x="394.17" y="538" fill="#c7d2dd" font-size="13">500 </text>
+<text x="426.41" y="538" fill="#c7d2dd" font-size="13">cells, </text>
+<text x="482.83" y="538" fill="#c7d2dd" font-size="13">5×5 </text>
+<text x="521.52" y="538" fill="#c7d2dd" font-size="13">= </text>
+<text x="537.64" y="538" fill="#c7d2dd" font-size="13">25 </text>
+<text x="561.82" y="538" fill="#c7d2dd" font-size="13">candidate </text>
+<text x="642.42" y="538" fill="#c7d2dd" font-size="13">edges </text>
+<text x="690.78" y="538" fill="#c7d2dd" font-size="13">(5 </text>
+<text x="714.96" y="538" fill="#c7d2dd" font-size="13">validated). </text>
+<text x="811.68" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a)</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">Geneformer </text>
+<text x="129.87" y="559" fill="#c7d2dd" font-size="13">gene </text>
+<text x="170.17" y="559" fill="#c7d2dd" font-size="13">embeddings </text>
+<text x="258.83" y="559" fill="#c7d2dd" font-size="13">feed </text>
+<text x="299.13" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="315.25" y="559" fill="#c7d2dd" font-size="13">2-layer </text>
+<text x="379.73" y="559" fill="#c7d2dd" font-size="13">GAT. </text>
+<text x="423.66" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="457.19" y="559" fill="#c7d2dd" font-size="13">Validated </text>
+<text x="538.99" y="559" fill="#c7d2dd" font-size="13">edges </text>
+<text x="587.35" y="559" fill="#c7d2dd" font-size="13">score </text>
+<text x="635.71" y="559" fill="#c7d2dd" font-size="13">high </text>
+<text x="676.01" y="559" fill="#c7d2dd" font-size="13">(HNF4A→ALB </text>
+<text x="779.59" y="559" fill="#c7d2dd" font-size="13">0.91). </text>
+<text x="836.01" y="559" fill="#fde68a" font-size="13" font-weight="700">(c)</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">NR1H4→ALB </text>
+<text x="134.3" y="580" fill="#c7d2dd" font-size="13">(0.31) </text>
+<text x="190.72" y="580" fill="#c7d2dd" font-size="13">and </text>
+<text x="222.96" y="580" fill="#c7d2dd" font-size="13">CEBPA→TTR </text>
+<text x="319.68" y="580" fill="#c7d2dd" font-size="13">(0.27) </text>
+<text x="376.1" y="580" fill="#c7d2dd" font-size="13">are </text>
+<text x="408.34" y="580" fill="#c7d2dd" font-size="13">demoted: </text>
+<text x="480.88" y="580" fill="#c7d2dd" font-size="13">co-expression </text>
+<text x="593.72" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="617.9" y="580" fill="#c7d2dd" font-size="13">not </text>
+<text x="650.14" y="580" fill="#c7d2dd" font-size="13">causation. </text>
+<text x="738.8" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="772.33" y="580" fill="#c7d2dd" font-size="13">Rank </text>
+<text x="813.84" y="580" fill="#c7d2dd" font-size="13">vs </text>
+<text x="838.02" y="580" fill="#c7d2dd" font-size="13">value</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">vs </text>
+<text x="64.18" y="601" fill="#c7d2dd" font-size="13">read-depth </text>
+<text x="152.84" y="601" fill="#c7d2dd" font-size="13">encoders </text>
+<text x="225.38" y="601" fill="#c7d2dd" font-size="13">trade </text>
+<text x="273.74" y="601" fill="#c7d2dd" font-size="13">level </text>
+<text x="322.1" y="601" fill="#c7d2dd" font-size="13">against </text>
+<text x="386.58" y="601" fill="#c7d2dd" font-size="13">transfer </text>
+<text x="459.12" y="601" fill="#c7d2dd" font-size="13">robustness.</text>
+</svg>

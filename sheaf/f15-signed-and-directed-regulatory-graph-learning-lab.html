@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F15 · Signed and directed regulatory graph learning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG, no wall-clock calls) ────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── CANONICAL WORKED EXAMPLE (note Section 5) ────────────────────────────
+  // Network:
+  //   TF1 --[+1]--> GeneA      TF1 --[+1]--> GeneB     TF2 --[-1]--> GeneA
+  // Expression h:  TF1=8.0  TF2=6.0  GeneA=3.0  GeneB=7.0
+  const H={TF1:8.0, TF2:6.0, GeneA:3.0, GeneB:7.0};
+
+  let sceneSnap={};
+
+  // ── aggregation model (deterministic, mirrors the note's numbers) ────────
+  // GeneA in-neighbours: TF1(+), TF2(-).  GeneB in-neighbours: TF1(+).
+  // wPlus / wMinus are the learnable activation / repression pathway weights.
+  // In mode "unsigned" both channels collapse into ONE sign-blind mean channel.
+  function aggregates(wPlus,wMinus,wSelf){
+    const unsA=(H.TF1+H.TF2)/2;            // 7.0  sign-blind mean message into A
+    const unsB=(H.TF1)/1;                  // 8.0  sign-blind mean message into B
+    const aPlus =H.TF1;                    // 8.0  (only TF1 activates A)
+    const aMinus=H.TF2;                    // 6.0  (only TF2 represses A)
+    const bPlus =H.TF1;                    // 8.0  (only TF1 activates B)
+    const bMinus=0;                        // 0    (no repressor of B)
+    const driveSignedA = wPlus*aPlus - wMinus*aMinus + wSelf*H.GeneA;
+    const driveSignedB = wPlus*bPlus - wMinus*bMinus + wSelf*H.GeneB;
+    const driveUnsA = wPlus*unsA + wSelf*H.GeneA;
+    const driveUnsB = wPlus*unsB + wSelf*H.GeneB;
+    return {unsA,unsB,aPlus,aMinus,bPlus,bMinus,
+            driveSignedA,driveSignedB,driveUnsA,driveUnsB};
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const wPlus =s.wPlus;
+    const wMinus=s.wMinus;
+    const wSelf =s.wSelf;
+    const sourceConf=Math.max(0,Math.min(1,s.signConf)); // sign-source confidence 0..1
+
+    const gNodes =api.group("nodes");
+    const gEdges =api.group("edges");
+    const gChan  =api.group("channels");
+    const gLabels=api.group("labels");
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+
+    // 3Blue1Brown-ish palette: blues + one amber/brown accent
+    const CY ="#4dd7ff";   // activation / activator
+    const ROSE="#fb7185";  // repression / repressor
+    const AM ="#fbbf24";   // readout gene / highlight (brown-amber)
+    const VI ="#a78bfa";   // direction / structure / provenance
+    const SL ="#54667c";   // dim / merged / forbidden
+
+    // fixed worked-example layout (TF row on top, gene row on bottom)
+    const P={
+      TF1:[-3.0, 2.2, 0],
+      TF2:[ 3.0, 2.2, 0],
+      GeneA:[-1.4,-2.0, 0],
+      GeneB:[ 2.4,-2.0, 0]
+    };
+
+    function drawNodes(){
+      api.node(P.TF1,{color:CY,  r:0.5,label:"TF1  "+H.TF1.toFixed(1),group:"nodes",pick:{node:{id:"TF1",role:"activator",h:H.TF1}}});
+      api.node(P.TF2,{color:ROSE,r:0.5,label:"TF2  "+H.TF2.toFixed(1),group:"nodes",pick:{node:{id:"TF2",role:"repressor",h:H.TF2}}});
+      api.node(P.GeneA,{color:AM, r:0.48,label:"GeneA "+H.GeneA.toFixed(1),group:"nodes",pick:{node:{id:"GeneA",role:"target",h:H.GeneA}}});
+      api.node(P.GeneB,{color:CY, r:0.46,label:"GeneB "+H.GeneB.toFixed(1),haloScale:1.8,group:"nodes",pick:{node:{id:"GeneB",role:"target",h:H.GeneB}}});
+    }
+
+    const ag=aggregates(wPlus,wMinus,wSelf);
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: unsigned  — standard GNN, ONE sign-blind mean channel
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="unsigned"){
+      drawNodes();
+      api.arrow(P.TF1,P.GeneA,{color:SL,width:0.05,head:0.34,group:"edges"});
+      api.arrow(P.TF2,P.GeneA,{color:SL,width:0.05,head:0.34,group:"edges"});
+      api.arrow(P.TF1,P.GeneB,{color:SL,width:0.05,head:0.34,group:"edges"});
+
+      lbl("mean = 7.0","#cfe0f0",1.25,-1.4,-3.2,0);
+      lbl("(sign-blind)",SL,1.0,-1.4,-3.85,0);
+
+      // single merged channel bar above GeneA
+      const h=ag.unsA*0.35;
+      const bar=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),api.mat(SL,{emissive:0.3}));
+      bar.position.set(-1.4,-2.0+0.55+h/2,1.4);gChan.add(bar);
+      lbl("m = "+ag.unsA.toFixed(1),"#9fb4cc",1.1,-1.4,-2.0+0.55+h+0.5,1.4);
+
+      lbl("Unsigned: activator + repressor collapse","#9fb4cc",1.2,0,3.5,0);
+
+      const conflate=Math.abs(ag.unsA-ag.unsB); // 1.0 — how little it separates A vs B
+      api.setMetric("inflowA",ag.unsA.toFixed(2));
+      api.setMetric("inflowB",ag.unsB.toFixed(2));
+      api.setMetric("signGap","0.00");
+      api.setMetric("sepAB",conflate.toFixed(2));
+
+      sceneSnap={mode,wPlus,wMinus,wSelf,signConf:+sourceConf.toFixed(2),
+        inflowA:+ag.unsA.toFixed(3),inflowB:+ag.unsB.toFixed(3),
+        signGap:0,separationAB:+conflate.toFixed(3),signedCorrect:false};
+
+      return {
+        badge:"Unsigned · one mean channel · sign-blind",
+        formula:"m<sub>A</sub> = mean(h<sub>TF1</sub>, h<sub>TF2</sub>) = (8.0+6.0)/2 = <b>7.0</b>",
+        insight:"A standard GNN averages all in-neighbours. GeneA's message 7.0 is dominated by TF2 — a repressor — so the model is told \"high-expression neighbours ⇒ high expression\", yet GeneA is LOW (3.0). The repression signal is erased. GeneA (m=7.0) and GeneB (m=8.0) look almost identical, so the update function alone cannot explain why A is repressed and B is not.",
+        state:"Sign-blind mean: A=7.0, B=8.0. Separation |A−B| = "+conflate.toFixed(1)+" — the unsigned model conflates the repressed gene with the un-repressed one.",
+        metrics:{inflowA:ag.unsA.toFixed(2),inflowB:ag.unsB.toFixed(2),signGap:"0.00",sepAB:conflate.toFixed(2)},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: signed  — separate W+ / W- aggregation channels
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="signed"){
+      drawNodes();
+      api.arrow(P.TF1,P.GeneA,{color:CY,  width:0.06,head:0.36,label:"+1",labelColor:CY,group:"edges"});
+      api.arrow(P.TF1,P.GeneB,{color:CY,  width:0.06,head:0.36,label:"+1",labelColor:CY,group:"edges"});
+      api.arrow(P.TF2,P.GeneA,{color:ROSE,width:0.06,head:0.36,label:"−1",labelColor:ROSE,group:"edges"});
+
+      // two channel bars above GeneA: m+ (cyan) and m- (rose)
+      const hP=ag.aPlus*0.30, hM=ag.aMinus*0.30;
+      const barP=new T.Mesh(new T.BoxGeometry(0.6,hP,0.6),api.mat(CY,{emissive:0.6}));
+      barP.position.set(-2.0,-2.0+0.6+hP/2,1.5);gChan.add(barP);
+      const barM=new T.Mesh(new T.BoxGeometry(0.6,hM,0.6),api.mat(ROSE,{emissive:0.6}));
+      barM.position.set(-0.8,-2.0+0.6+hM/2,1.5);gChan.add(barM);
+      lbl("m⁺ "+ag.aPlus.toFixed(1),CY,1.05,-2.0,-2.0+0.6+hP+0.45,1.5);
+      lbl("m⁻ "+ag.aMinus.toFixed(1),ROSE,1.05,-0.8,-2.0+0.6+hM+0.45,1.5);
+
+      // GeneB channels: only m+ , m- = 0
+      const hPB=ag.bPlus*0.30;
+      const barPB=new T.Mesh(new T.BoxGeometry(0.6,hPB,0.6),api.mat(CY,{emissive:0.6}));
+      barPB.position.set(2.4,-2.0+0.6+hPB/2,1.5);gChan.add(barPB);
+      lbl("m⁺ "+ag.bPlus.toFixed(1),CY,1.05,2.4,-2.0+0.6+hPB+0.45,1.5);
+      lbl("m⁻ 0",ROSE,1.0,3.6,-1.1,1.5);
+
+      const dA=ag.driveSignedA, dB=ag.driveSignedB;
+      lbl("drive A = "+dA.toFixed(2),"#cfe0f0",1.1,-1.4,-3.4,0);
+      lbl("drive B = "+dB.toFixed(2),"#cfe0f0",1.1,2.4,-3.4,0);
+
+      lbl("Signed: W⁺ adds · W⁻ subtracts","#9fb4cc",1.2,0,3.5,0);
+
+      const signGap=ag.aPlus*wPlus-ag.aMinus*wMinus;
+      const sep=Math.abs(dA-dB);
+      api.setMetric("inflowA",dA.toFixed(2));
+      api.setMetric("inflowB",dB.toFixed(2));
+      api.setMetric("signGap",signGap.toFixed(2));
+      api.setMetric("sepAB",sep.toFixed(2));
+
+      sceneSnap={mode,wPlus,wMinus,wSelf,signConf:+sourceConf.toFixed(2),
+        inflowA:+dA.toFixed(3),inflowB:+dB.toFixed(3),
+        signGap:+signGap.toFixed(3),
+        separationAB:+sep.toFixed(3),signedCorrect:dB>dA};
+
+      return {
+        badge:"Signed · separate W⁺ / W⁻ channels",
+        formula:"h<sub>A</sub> = σ( W⁺·8.0 − W⁻·6.0 + W<sub>self</sub>·3.0 )",
+        insight:"Two channels now carry the activating and repressing inputs separately. The activation channel feeds m⁺=8.0 (TF1) into GeneA; the repression channel feeds m⁻=6.0 (TF2) as a SUBTRACTIVE contribution. GeneB has m⁺=8.0 and m⁻=0 (no repressor), so its drive is purely activating. With W⁺="+wPlus.toFixed(2)+", W⁻="+wMinus.toFixed(2)+" the model reproduces GeneA-low / GeneB-high — exactly what the unsigned mean could not. Raise W⁻ to make the repressor bite harder.",
+        state:"Signed drive: A="+dA.toFixed(2)+", B="+dB.toFixed(2)+". m⁺(A)=8.0, m⁻(A)=6.0, m⁺(B)=8.0, m⁻(B)=0. Separation |A−B| = "+sep.toFixed(2)+".",
+        metrics:{inflowA:dA.toFixed(2),inflowB:dB.toFixed(2),signGap:signGap.toFixed(2),sepAB:sep.toFixed(2)},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: direction  — motif-prior direction + sign-source provenance
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="direction"){
+      drawNodes();
+      api.arrow(P.TF1,P.GeneA,{color:CY,  width:0.06,head:0.36,group:"edges"});
+      api.arrow(P.TF1,P.GeneB,{color:CY,  width:0.06,head:0.36,group:"edges"});
+      api.arrow(P.TF2,P.GeneA,{color:ROSE,width:0.06,head:0.36,group:"edges"});
+
+      // motif-prior plates under the TFs (binders → sources)
+      api.plane([-3.0,1.55,0],{color:VI,w:1.8,h:1.0,opacity:0.22,group:"channels"});
+      api.plane([ 3.0,1.55,0],{color:VI,w:1.8,h:1.0,opacity:0.22,group:"channels"});
+      slbl("motif: binds promoter",VI,0.42,-3.0,1.2,0);
+      slbl("motif: binds promoter",VI,0.42, 3.0,1.2,0);
+
+      // forbidden reverse edge (target -> TF) shown faint/dashed
+      api.edge(P.GeneA,P.TF1,{color:SL,width:0.02,dashed:true,opacity:0.3,group:"channels"});
+      lbl("× no back-edge","#6b7a8d",0.95,-2.4,0.2,0);
+
+      // sign-source provenance: TRRUST ≻ Perturb-seq ≻ expr-corr
+      const srcVals=[0.95,0.80,0.45].map(v=>v*(0.4+0.6*sourceConf));
+      const srcLab=["TRRUST","Perturb-seq","expr-corr"];
+      const srcCol=[VI,CY,AM];
+      srcVals.forEach((v,i)=>{
+        const h=0.2+v*2.4;
+        const bar=new T.Mesh(new T.BoxGeometry(0.55,h,0.55),api.mat(srcCol[i],{emissive:0.55}));
+        bar.position.set(-1.2+i*1.4, -2.0+0.55+h/2, -1.7);gChan.add(bar);
+        api.pick(bar,{src:{name:srcLab[i],reliab:v}});
+        lbl((v*100).toFixed(0)+"%",srcCol[i],0.95,-1.2+i*1.4,-2.0+0.55+h+0.4,-1.7);
+        slbl(srcLab[i],srcCol[i],0.36,-1.2+i*1.4,-1.4,-1.7);
+      });
+      lbl("sign sources (reliability)","#9fb4cc",1.05,0,-2.0+0.55+3.1,-1.7);
+
+      lbl("Direction from motif · sign from provenance",VI,1.2,0,3.5,0);
+
+      const coverage=0.30+0.65*sourceConf; // 0.30 .. 0.95 (note: ~30% TFs lack a PWM)
+      api.setMetric("inflowA",ag.driveSignedA.toFixed(2));
+      api.setMetric("inflowB",ag.driveSignedB.toFixed(2));
+      api.setMetric("signGap",(srcVals[0]*100).toFixed(0)+"%");
+      api.setMetric("sepAB",(coverage*100).toFixed(0)+"%");
+
+      sceneSnap={mode,wPlus,wMinus,wSelf,signConf:+sourceConf.toFixed(2),
+        inflowA:+ag.driveSignedA.toFixed(3),inflowB:+ag.driveSignedB.toFixed(3),
+        topSourceReliab:+srcVals[0].toFixed(3),signCoverage:+coverage.toFixed(3),
+        signedCorrect:true};
+
+      return {
+        badge:"Direction · motif prior · "+(coverage*100).toFixed(0)+"% sign coverage",
+        formula:"dir(TF→gene): TF has motif, gene has site.  s(i,j) ← TRRUST ≻ Perturb-seq ≻ corr",
+        insight:"Direction is FREE from the F14 motif prior: an edge TF→gene exists only because the TF carries a binding domain and the gene carries the site in its promoter — a biological asymmetry, not an inference. The reverse edge (gene→TF, dashed) is forbidden. Sign is then assigned from ranked provenance: curated TRRUST is most reliable, Perturb-seq knockout direction next, expression correlation least (it conflates indirect and feedback effects). At low confidence ~30% of edges (TFs without a PWM) have no trusted sign and need perturbation data.",
+        state:"Top source reliability "+(srcVals[0]*100).toFixed(0)+"% · sign coverage "+(coverage*100).toFixed(0)+"%. Direction is structural (motif); sign is provenance-ranked: TRRUST ≻ Perturb-seq ≻ correlation.",
+        metrics:{inflowA:ag.driveSignedA.toFixed(2),inflowB:ag.driveSignedB.toFixed(2),signGap:(srcVals[0]*100).toFixed(0)+"%",sepAB:(coverage*100).toFixed(0)+"%"},
+        focus:{center:[0,0,0],radius:14}
+      };
+    }
+
+    return {badge:"F15",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f15",
+    kind:"signed-directed-grn",
+    eyebrow:"Block F · GRN Inference",
+    title:"F15 · Signed and directed regulatory graph learning",
+    subtitle:"A 4-node GRN (TF1, TF2, GeneA, GeneB) shows why edge sign and direction matter. Three views: sign-blind mean aggregation, separate W⁺/W⁻ channels, and motif-prior direction with provenance-ranked sign.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge, or sign-source bar.",
+    modes:[
+      {value:"unsigned",  label:"Unsigned (sign-blind mean)"},
+      {value:"signed",    label:"Signed (W⁺ / W⁻ channels)"},
+      {value:"direction", label:"Direction + sign provenance"}
+    ],
+    params:[
+      {key:"wPlus", label:"W⁺ (activation weight)",min:0.2,max:2.0,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2),modes:["signed","direction"]},
+      {key:"wMinus",label:"W⁻ (repression weight)",min:0.2,max:2.0,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2),modes:["signed","direction"]},
+      {key:"wSelf", label:"W_self (own expression)",min:0.0,max:1.5,step:0.05,value:0.5,
+       fmt:v=>v.toFixed(2),modes:["signed","direction"]},
+      {key:"signConf",label:"sign-source confidence",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["direction"]}
+    ],
+    metrics:[
+      {key:"inflowA",label:"Inflow → GeneA",accent:"amber"},
+      {key:"inflowB",label:"Inflow → GeneB",accent:"cyan"},
+      {key:"signGap",label:"Sign gap / top source",accent:"rose"},
+      {key:"sepAB", label:"A↔B separation / coverage",accent:"violet"}
+    ],
+    layers:[
+      {group:"nodes",   label:"Genes / TFs"},
+      {group:"edges",   label:"Regulatory edges"},
+      {group:"channels",label:"Channels / sources"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"Strong repressor (W⁻=2.0)",
+      on:api=>{api.setParam("wMinus",2.0);}
+    },
+    secondary:{
+      label:"Reset weights (1,1,0.5)",
+      on:api=>{api.setParam("wPlus",1.0);api.setParam("wMinus",1.0);api.setParam("wSelf",0.5);}
+    },
+    defaultCam:{theta:-0.35,phi:0.5,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=activation (+1) · <span style="color:#fb7185">rose</span>=repression (−1) · <span style="color:#fbbf24">amber</span>=readout gene · <span style="color:#a78bfa">violet</span>=motif direction / sign source · <span style="color:#54667c">grey</span>=sign-blind / forbidden back-edge.',
+    onParam(api){
+      api.frame([0,0,0], api.state.mode==="direction"?14:13);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node.id+" · "+d.node.role+" · h="+d.node.h.toFixed(1));
+      if(d.src)  api.setSelected("sign source "+d.src.name+" · reliability "+(d.src.reliab*100).toFixed(0)+"%");
+    },
+    build,
+    snapshot(s){
+      const wP=s.wPlus, wM=s.wMinus, wS=s.wSelf, sc=Math.max(0,Math.min(1,s.signConf));
+      const ag=aggregates(wP,wM,wS);
+      let inflowA,inflowB,signGap,sep,signedCorrect,coverage;
+      if(s.mode==="unsigned"){
+        inflowA=ag.unsA; inflowB=ag.unsB; signGap=0;
+        sep=Math.abs(ag.unsA-ag.unsB); signedCorrect=false; coverage=0;
+      } else if(s.mode==="signed"){
+        inflowA=ag.driveSignedA; inflowB=ag.driveSignedB;
+        signGap=ag.aPlus*wP-ag.aMinus*wM;
+        sep=Math.abs(ag.driveSignedA-ag.driveSignedB);
+        signedCorrect=ag.driveSignedB>ag.driveSignedA; coverage=1;
+      } else { // direction
+        inflowA=ag.driveSignedA; inflowB=ag.driveSignedB;
+        signGap=0.95*(0.4+0.6*sc);
+        coverage=0.30+0.65*sc; sep=coverage; signedCorrect=true;
+      }
+      return {
+        mode:s.mode,
+        wPlus:+wP.toFixed(3), wMinus:+wM.toFixed(3), wSelf:+wS.toFixed(3),
+        signConf:+sc.toFixed(3),
+        inflowA:+inflowA.toFixed(3), inflowB:+inflowB.toFixed(3),
+        signGap:+signGap.toFixed(3),
+        separationAB:+sep.toFixed(3),
+        signCoverage:+coverage.toFixed(3),
+        signedCorrect:signedCorrect,
+        repressorBites:(ag.aMinus*wM)>0.5
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

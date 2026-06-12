@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure E07 — Knock out the cause, read every effect: the causal perturbation graph</title>
+<desc id="d">Four-panel captioned figure: Knock out the cause, read every effect: the causal perturbation graph</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE E07 · BLOCK E · SINGLE-CELL &amp; MULTI-OMICS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="19" font-weight="700">Knock out the cause, read every effect: the causal perturbation graph</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Perturb-seq design (K562)</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">targets</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">perturbations</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">2 + NTC</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">readout</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">scRNA-seq</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">evidence</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">causal</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">LFC from counts (sgGATA1)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">LFC = log2( mean_KD / mean_NTC )</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">HBB = log2(180/1500) = -3.06</text>
+<rect x="502" y="178.17" width="12" height="25.83" rx="2" fill="#4dd7ff"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">HBB</text>
+<rect x="534" y="178" width="12" height="26" rx="2" fill="#4dd7ff"/>
+<text x="540" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">GYPA</text>
+<rect x="566" y="197.16" width="12" height="6.84" rx="2" fill="#fbbf24"/>
+<text x="572" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">CD34</text>
+<rect x="598" y="203.66" width="12" height="0.34" rx="2" fill="#a78bfa"/>
+<text x="604" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">MYC</text>
+<line x1="502" y1="199.78" x2="630" y2="199.78" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Knockdown efficiency gate</text>
+<rect x="56" y="292" width="12" height="64" rx="2" fill="#34d399"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">sgGATA1</text>
+<rect x="105" y="326.23" width="12" height="29.77" rx="2" fill="#fb7185"/>
+<text x="111" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">sgGATA2</text>
+<line x1="56" y1="318.79" x2="154" y2="318.79" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393.5" fill="#fbbf24" font-size="11.5" font-weight="700">sgGATA1</text>
+<text x="196" y="393.5" fill="#9fb4cc" font-size="11.5">86% → pass</text>
+<text x="56" y="413.5" fill="#fbbf24" font-size="11.5" font-weight="700">sgGATA2</text>
+<text x="196" y="413.5" fill="#9fb4cc" font-size="11.5">40% → fail</text>
+<text x="56" y="441" fill="#8a99ad" font-size="11">Only perturbations that silenced their own gene earn</text>
+<text x="56" y="461" fill="#8a99ad" font-size="11">high-confidence edges.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Causal beats correlation</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">GATA1→HBB</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">-3.06 causal</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">GATA1→MYC</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">null (g3 0.34)</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">Perturb-seq</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">interventional</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">GENIE3</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">associational</text>
+<text x="502" y="389" fill="#8a99ad" font-size="11">GENIE3 still scores GATA1→MYC; the intervention</text>
+<text x="502" y="409" fill="#8a99ad" font-size="11">rejects it as a false positive.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure E07. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">4-gene </text>
+<text x="216.85" y="538" fill="#c7d2dd" font-size="13">Perturb-seq </text>
+<text x="314.78" y="538" fill="#c7d2dd" font-size="13">in </text>
+<text x="338.96" y="538" fill="#c7d2dd" font-size="13">K562 </text>
+<text x="380.47" y="538" fill="#c7d2dd" font-size="13">erythroid </text>
+<text x="461.07" y="538" fill="#c7d2dd" font-size="13">cells. </text>
+<text x="517.49" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="551.02" y="538" fill="#c7d2dd" font-size="13">2 </text>
+<text x="567.14" y="538" fill="#c7d2dd" font-size="13">perturbations </text>
+<text x="679.98" y="538" fill="#c7d2dd" font-size="13">plus </text>
+<text x="720.28" y="538" fill="#c7d2dd" font-size="13">a </text>
+<text x="736.4" y="538" fill="#c7d2dd" font-size="13">non-targeting</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">control, </text>
+<text x="112.54" y="559" fill="#c7d2dd" font-size="13">read </text>
+<text x="152.84" y="559" fill="#c7d2dd" font-size="13">out </text>
+<text x="185.08" y="559" fill="#c7d2dd" font-size="13">by </text>
+<text x="209.26" y="559" fill="#c7d2dd" font-size="13">scRNA-seq. </text>
+<text x="301.55" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="335.08" y="559" fill="#c7d2dd" font-size="13">LFC </text>
+<text x="370.94" y="559" fill="#c7d2dd" font-size="13">= </text>
+<text x="387.06" y="559" fill="#c7d2dd" font-size="13">log2(mean_KD/mean_NTC): </text>
+<text x="586.55" y="559" fill="#c7d2dd" font-size="13">sgGATA1 </text>
+<text x="655.86" y="559" fill="#c7d2dd" font-size="13">drives </text>
+<text x="712.28" y="559" fill="#c7d2dd" font-size="13">HBB </text>
+<text x="748.15" y="559" fill="#c7d2dd" font-size="13">-3.06, </text>
+<text x="804.57" y="559" fill="#c7d2dd" font-size="13">GYPA</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">-3.08, </text>
+<text x="96.42" y="580" fill="#c7d2dd" font-size="13">CD34 </text>
+<text x="139.14" y="580" fill="#c7d2dd" font-size="13">+0.81; </text>
+<text x="195.56" y="580" fill="#c7d2dd" font-size="13">MYC </text>
+<text x="231.43" y="580" fill="#c7d2dd" font-size="13">(-0.04) </text>
+<text x="295.9" y="580" fill="#c7d2dd" font-size="13">stays </text>
+<text x="344.27" y="580" fill="#c7d2dd" font-size="13">below </text>
+<text x="392.63" y="580" fill="#c7d2dd" font-size="13">0.5. </text>
+<text x="432.93" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="466.45" y="580" fill="#c7d2dd" font-size="13">sgGATA1 </text>
+<text x="535.77" y="580" fill="#c7d2dd" font-size="13">(86% </text>
+<text x="582.52" y="580" fill="#c7d2dd" font-size="13">KD) </text>
+<text x="617.18" y="580" fill="#c7d2dd" font-size="13">passes </text>
+<text x="673.6" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="705.84" y="580" fill="#c7d2dd" font-size="13">50% </text>
+<text x="744.52" y="580" fill="#c7d2dd" font-size="13">gate; </text>
+<text x="792.88" y="580" fill="#c7d2dd" font-size="13">sgGATA2</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">(40%) </text>
+<text x="94.81" y="601" fill="#c7d2dd" font-size="13">fails. </text>
+<text x="151.23" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="184.76" y="601" fill="#c7d2dd" font-size="13">The </text>
+<text x="218.21" y="601" fill="#c7d2dd" font-size="13">intervention </text>
+<text x="322.99" y="601" fill="#c7d2dd" font-size="13">rejects </text>
+<text x="387.47" y="601" fill="#c7d2dd" font-size="13">GATA1→MYC </text>
+<text x="482.98" y="601" fill="#c7d2dd" font-size="13">despite </text>
+<text x="547.46" y="601" fill="#c7d2dd" font-size="13">a </text>
+<text x="563.58" y="601" fill="#c7d2dd" font-size="13">nonzero </text>
+<text x="628.06" y="601" fill="#c7d2dd" font-size="13">GENIE3 </text>
+<text x="690.52" y="601" fill="#c7d2dd" font-size="13">score.</text>
+</svg>

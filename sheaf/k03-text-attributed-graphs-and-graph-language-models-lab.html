@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K03 · Text-attributed graphs and graph-language models</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no RNG, no clock) ──────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── the note's Section-5 worked example: a 5-gene DNA-repair TAG ──────────
+  // Each gene carries a 4-dim BioGPT [CLS] embedding (projected to dim=4).
+  const GENES=["BRCA1","BRCA2","RAD51","PALB2","TP53BP1"];
+  const EMB={                 // e_v from the note
+    BRCA1:[0.82,0.71,0.33,0.19],
+    BRCA2:[0.79,0.68,0.35,0.22],
+    RAD51:[0.61,0.74,0.21,0.08],
+    PALB2:[0.55,0.59,0.48,0.31],
+    TP53BP1:[0.48,0.63,0.19,0.71]
+  };
+  // STRING curated edges (undirected interaction; TP53BP1 is antagonistic).
+  const EDGES=[
+    ["BRCA1","BRCA2"],["BRCA1","PALB2"],["BRCA2","RAD51"],
+    ["BRCA2","PALB2"],["BRCA1","TP53BP1"]
+  ];
+  // BARD1 zero-shot query (new gene, not in the training graph).
+  const BARD1=[0.76,0.66,0.41,0.25];
+  // pretrained-graph cosine sims from the note (Step 3).
+  const NOTE_SIM={BRCA1:0.94,BRCA2:0.89,PALB2:0.81,RAD51:0.72,TP53BP1:0.58};
+
+  // fixed ring layout (deterministic): TP53BP1 antagonist pulled to the side
+  const POS={
+    BRCA1:[ 0.0, 0.0, 0.0],
+    BRCA2:[ 3.0, 0.0, 1.4],
+    RAD51:[ 4.6, 0.0,-1.6],
+    PALB2:[ 1.4, 0.0,-2.8],
+    TP53BP1:[-2.4,0.0, 2.4]
+  };
+
+  // ── linear-algebra helpers ───────────────────────────────────────────────
+  function neighbors(g){const out=[];EDGES.forEach(e=>{if(e[0]===g)out.push(e[1]);else if(e[1]===g)out.push(e[0]);});return out;}
+  function vadd(a,b){return a.map((x,i)=>x+b[i]);}
+  function vscale(a,s){return a.map(x=>x*s);}
+  function dot(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;}
+  function norm(a){return Math.sqrt(dot(a,a));}
+  function cos(a,b){const d=norm(a)*norm(b);return d>1e-9?dot(a,b)/d:0;}
+  function relu(a){return a.map(x=>x<0?0:x);}
+
+  // 1-layer mean-aggregation GNN refine of node g (includes self).
+  // alpha = how much graph context is mixed in (0 = pure text, 1 = pure mean).
+  function gnnRefine(g,alpha){
+    const self=EMB[g];
+    const nb=neighbors(g);
+    let acc=self.slice();
+    nb.forEach(n=>{acc=vadd(acc,EMB[n]);});
+    const mean=vscale(acc,1/(nb.length+1));           // mean over {self}∪N(g)
+    // mix: h = relu((1-alpha)*self + alpha*mean)
+    const mixed=vadd(vscale(self,1-alpha),vscale(mean,alpha));
+    return relu(mixed);
+  }
+
+  // For "graph-enhanced" mode: iterate the refine `rounds` times (topology-aware).
+  function gnnRounds(g,alpha,rounds){
+    // approximate iterative re-encoding: each round pulls a little more toward
+    // the neighbourhood mean of the *current* embeddings.
+    let cur={};GENES.forEach(k=>cur[k]=EMB[k].slice());
+    for(let r=0;r<rounds;r++){
+      const next={};
+      GENES.forEach(k=>{
+        const nb=neighbors(k);let acc=cur[k].slice();
+        nb.forEach(n=>{acc=vadd(acc,cur[n]);});
+        const mean=vscale(acc,1/(nb.length+1));
+        next[k]=relu(vadd(vscale(cur[k],1-alpha),vscale(mean,alpha)));
+      });
+      GENES.forEach(k=>cur[k]=next[k]);
+    }
+    return cur[g];
+  }
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const alpha=s.graphMix;                 // 0..1 graph-context weight
+    const rounds=Math.round(s.rounds);      // iterative re-encoding rounds
+    const tau=s.tau;                         // contrastive temperature
+    const showText=Math.round(s.textOn)===1; // text modality on/off
+
+    const gGraph =api.group("graph");
+    const gEmbed =api.group("embed");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+
+    const CY=new T.Color("#4dd7ff");  // text / LLM modality
+    const GR=new T.Color("#34d399");  // graph / structure modality
+    const AM=new T.Color("#fbbf24");  // fused / refined
+    const VI=new T.Color("#a78bfa");  // query / alignment
+    const RS=new T.Color("#fb7185");  // antagonist / negative
+    const SL=new T.Color("#54667c");
+
+    const geneCol=g=>g==="TP53BP1"?RS:CY;
+
+    // ── draw the shared interaction graph (used in every mode) ──────────────
+    function drawGraph(yLift,refineFn){
+      // edges
+      EDGES.forEach(e=>{
+        const a=POS[e[0]],b=POS[e[1]];
+        const antag=(e[0]==="TP53BP1"||e[1]==="TP53BP1");
+        const pts=[new T.Vector3(a[0],yLift,a[2]),new T.Vector3(b[0],yLift,b[2])];
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),
+          new T.LineBasicMaterial({color:antag?0x5a2330:0x1e3046,transparent:true,opacity:antag?0.8:0.6})));
+      });
+      // nodes (radius encodes how text-rich / how much it moved under refine)
+      GENES.forEach(g=>{
+        const p=POS[g];
+        const base=geneCol(g).clone();
+        const moved=refineFn?norm(refineFn(g).map((x,i)=>x-EMB[g][i])):0;
+        const r=0.34+(showText?0.10:0.0)+moved*0.55;
+        const sph=new T.Mesh(new T.SphereGeometry(r,18,14),
+          new T.MeshStandardMaterial({color:base,emissive:base.clone().multiplyScalar(0.6),emissiveIntensity:0.55,roughness:0.38}));
+        sph.position.set(p[0],yLift,p[2]);
+        gGraph.add(sph);
+        api.pick(sph,{gene:{id:g,emb:EMB[g],nb:neighbors(g)}});
+        addSlbl(g,base.getStyle(),0.34,p[0],yLift+r+0.34,p[2]);
+        // text-attribute tag floating above each node when text modality is on
+        if(showText){
+          const tag=new T.Mesh(new T.PlaneGeometry(0.42,0.42),
+            new T.MeshBasicMaterial({color:CY,transparent:true,opacity:0.5,side:T.DoubleSide}));
+          tag.position.set(p[0],yLift+r+0.95,p[2]);
+          gGraph.add(tag);
+        }
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: feature  — LLM-as-feature-extractor (Architecture 1, sequential)
+    // text embeddings frozen, then 1 GNN layer mixes graph context by graphMix.
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="feature"){
+      const refine=g=>gnnRefine(g,showText?alpha:1.0);  // no text → graph only
+      drawGraph(0,refine);
+
+      // pipeline strip: text e_v  →  concat/GNN  →  h_v, drawn as 4-bar profiles
+      const h=refine("BRCA1");
+      const e=EMB.BRCA1;
+      const baseX=-5.0, dx=0.0;
+      // BRCA1 mean from the note = [0.660,0.6525,0.3375,0.3575]
+      const nb=neighbors("BRCA1");
+      let acc=EMB.BRCA1.slice();nb.forEach(n=>{acc=vadd(acc,EMB[n]);});
+      const mean=vscale(acc,1/(nb.length+1));
+
+      function dimBars(vec,x0,z0,col,ttl){
+        vec.forEach((v,i)=>{
+          const bh=0.1+v*2.6;
+          const bar=new T.Mesh(new T.BoxGeometry(0.34,bh,0.34),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),emissiveIntensity:0.4,roughness:0.4}));
+          bar.position.set(x0+i*0.46,bh/2,z0);
+          gBars.add(bar);
+        });
+        addSlbl(ttl,col.getStyle(),0.32,x0+0.7,-0.5,z0);
+      }
+      dimBars(e,baseX,4.4,CY,"e(BRCA1) text");
+      dimBars(mean,baseX,5.9,GR,"mean neighbours");
+      dimBars(h,baseX,7.4,AM,"h(BRCA1) fused");
+      addLbl("frozen LLM  →  1-layer GNN","#4dd7ff",1.2,baseX+0.9,8.4,5.9);
+
+      // metrics
+      const ctx=showText?alpha:1.0;
+      const drift=norm(h.map((x,i)=>x-e[i]));
+      const txtShare=showText?(1-alpha):0;       // share of text retained
+      sceneSnap={mode,graphMix:+ctx.toFixed(3),rounds:1,tau:+tau.toFixed(2),textOn:showText?1:0,
+        topHit:"BRCA1",topSim:null,
+        refineDrift:+drift.toFixed(3),meanBRCA1_d0:+mean[0].toFixed(3),hBRCA1_d3:+h[3].toFixed(3),
+        coupling:0};
+      api.setMetric("coupling","decoupled");
+      api.setMetric("topSim","—");
+      api.setMetric("refineDrift",drift.toFixed(3));
+      api.setMetric("textShare",(txtShare*100).toFixed(0)+"%");
+
+      return {
+        badge:"Arch 1 · LLM-as-feature-extractor"+(showText?"":" · text OFF"),
+        formula:"x_v = concat(LLM(t_v), X_num);  h_v = GNN(x_v, A)",
+        insight:"The LLM runs once on each gene's annotation, frozen. Those text embeddings (cyan) seed a single mean-aggregation GNN layer that mixes in the neighbour profile (green) to produce the fused h_v (amber). BRCA1's neighbour mean is exactly [0.660, 0.653, 0.338, 0.358] from the note. The LLM never sees the graph — its embedding for a gene is identical in any network.",
+        state:"graphMix="+ctx.toFixed(2)+" → fused-vs-text drift "+drift.toFixed(3)+". "+(showText?"Text modality ON: annotations seed the GNN.":"Text OFF: anonymous vectors, structure only — the central failure the lesson warns about."),
+        metrics:{coupling:"decoupled",topSim:"—",refineDrift:drift.toFixed(3),textShare:(txtShare*100).toFixed(0)+"%"},
+        focus:{center:[-0.5,2.5,1.5],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: enhanced — Graph-enhanced LLM (Architecture 2, iterative)
+    // graph context fed BACK into the LLM over `rounds`; encoding is topology-aware.
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="enhanced"){
+      const refine=g=>gnnRounds(g,alpha,rounds);
+      drawGraph(0,refine);
+
+      // round arrows looping LLM↔GNN above BRCA1
+      const p=POS.BRCA1;
+      for(let r=0;r<rounds;r++){
+        const yy=1.2+r*0.7;
+        const ring=new T.Mesh(new T.TorusGeometry(0.55,0.05,8,24),
+          new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.6,roughness:0.3}));
+        ring.rotation.x=Math.PI/2;
+        ring.position.set(p[0],yy,p[2]);
+        gEmbed.add(ring);
+      }
+      addLbl(rounds+" round"+(rounds===1?"":"s")+" · LLM↔GNN","#a78bfa",1.2,p[0],1.2+rounds*0.7+0.5,p[2]);
+
+      // show TP53BP1 (antagonist) trajectory: text says "repair" but topology
+      // pulls it away — the value of topology-aware encoding.
+      const hAnt=refine("TP53BP1");
+      const e0=EMB.TP53BP1;
+      const drift=norm(hAnt.map((x,i)=>x-e0[i]));
+      const baseX=-5.0;
+      [["e(TP53BP1)",e0,RS,4.4],["h after "+rounds,hAnt,AM,6.0]].forEach(row=>{
+        row[1].forEach((v,i)=>{
+          const bh=0.1+v*2.6;
+          const bar=new T.Mesh(new T.BoxGeometry(0.34,bh,0.34),
+            new T.MeshStandardMaterial({color:row[2],emissive:row[2].clone().multiplyScalar(0.4),emissiveIntensity:0.4,roughness:0.4}));
+          bar.position.set(baseX+i*0.46,bh/2,row[3]);
+          gBars.add(bar);
+        });
+        addSlbl(row[0],row[2].getStyle(),0.3,baseX+0.7,-0.5,row[3]);
+      });
+      addLbl("topology re-encodes the annotation","#fbbf24",1.15,baseX+1.2,7.2,5.0);
+
+      sceneSnap={mode,graphMix:+alpha.toFixed(3),rounds,tau:+tau.toFixed(2),textOn:1,
+        topHit:null,topSim:null,
+        refineDrift:+drift.toFixed(3),antagDrift:+drift.toFixed(3),hAntag_d3:+hAnt[3].toFixed(3),
+        coupling:1};
+      api.setMetric("coupling","iterative");
+      api.setMetric("topSim","—");
+      api.setMetric("refineDrift",drift.toFixed(3));
+      api.setMetric("textShare","topology-aware");
+
+      return {
+        badge:"Arch 2 · Graph-enhanced LLM · "+rounds+" round"+(rounds===1?"":"s"),
+        formula:"h_v^(r) = LLM(t_v, context=g_v),  g_v = GNN(h^(r−1), A)",
+        insight:"Now the graph context g_v is injected back into the LLM each round (violet loops), so encoding becomes topology-aware. TP53BP1's text reads like DNA repair, but it is an antagonist in the DSB pathway-choice; iterating LLM↔GNN drifts its embedding away from the BRCA cluster. More rounds = more topology pressure, at multiplied compute cost.",
+        state:"rounds="+rounds+", graphMix="+alpha.toFixed(2)+" → antagonist drift "+drift.toFixed(3)+". The same text gets different embeddings depending on graph position — the fix Review-Q2 asks for.",
+        metrics:{coupling:"iterative",topSim:"—",refineDrift:drift.toFixed(3),textShare:"topology-aware"},
+        focus:{center:[0.5,2.0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: align — Contrastive text-graph alignment (Architecture 4)
+    // shared space: embed BARD1's text, retrieve nearest pretrained graph node.
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="align"){
+      const refine=g=>gnnRefine(g,alpha);
+      drawGraph(0,refine);
+
+      // BARD1 query sphere floating above the graph
+      const qy=2.6;
+      const q=new T.Mesh(new T.SphereGeometry(0.5,20,16),
+        new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.8,roughness:0.25}));
+      q.position.set(POS.BRCA1[0]+1.0,qy,POS.BRCA1[2]-0.5);
+      gEmbed.add(q);
+      api.pick(q,{query:{id:"BARD1",emb:BARD1}});
+      addLbl("BARD1 query (zero-shot)","#a78bfa",1.25,POS.BRCA1[0]+1.0,qy+0.85,POS.BRCA1[2]-0.5);
+
+      // compute cosine sim of BARD1 text vs each refined graph node, divide by tau
+      // (contrastive softmax temperature). Higher score = closer in shared space.
+      const sims=GENES.map(g=>({g,raw:cos(BARD1,refine(g))}));
+      // softmax over raw/tau → retrieval probability
+      const logits=sims.map(o=>o.raw/Math.max(0.05,tau));
+      const mx=Math.max.apply(null,logits);
+      const exps=logits.map(l=>Math.exp(l-mx));
+      const Z=exps.reduce((a,b)=>a+b,0);
+      sims.forEach((o,i)=>{o.p=exps[i]/Z;});
+      sims.sort((a,b)=>b.raw-a.raw);
+      const top=sims[0];
+
+      // retrieval link from query to each node, brightness ∝ probability
+      sims.forEach(o=>{
+        const p=POS[o.g];
+        const pts=[new T.Vector3(q.position.x,qy,q.position.z),new T.Vector3(p[0],0,p[2])];
+        const op=0.15+o.p*0.8;
+        gEmbed.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),
+          new T.LineBasicMaterial({color:o.g===top.g?VI.getHex():0x39507a,transparent:true,opacity:op})));
+        // sim readout near each node
+        addSlbl("sim "+o.raw.toFixed(2),(o.g===top.g?"#a78bfa":"#7f93a8"),0.3,p[0],0.7,p[2]);
+      });
+
+      // retrieval-probability bars off to the side
+      const baseX=-5.2;
+      sims.forEach((o,i)=>{
+        const bh=0.1+o.p*4.2;
+        const col=o.g===top.g?VI:(o.g==="TP53BP1"?RS:CY);
+        const bar=new T.Mesh(new T.BoxGeometry(0.5,bh,0.5),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+        bar.position.set(baseX+i*0.95,bh/2,4.6);
+        gBars.add(bar);
+        addSlbl(o.g,col.getStyle(),0.28,baseX+i*0.95,-0.45,4.6);
+        addLbl((o.p*100).toFixed(0)+"%",col.getStyle(),1.0,baseX+i*0.95,bh+0.45,4.6);
+      });
+      addLbl("retrieval prob  (softmax sim/τ)","#a78bfa",1.15,baseX+2.0,5.4,4.6);
+
+      sceneSnap={mode,graphMix:+alpha.toFixed(3),rounds:1,tau:+tau.toFixed(2),textOn:1,
+        topHit:top.g,topSim:+top.raw.toFixed(3),topProb:+top.p.toFixed(3),
+        refineDrift:null,noteSimBRCA1:NOTE_SIM.BRCA1,coupling:3};
+      api.setMetric("coupling","aligned");
+      api.setMetric("topSim",top.raw.toFixed(2));
+      api.setMetric("refineDrift",(top.p*100).toFixed(0)+"%");
+      api.setMetric("textShare",top.g);
+
+      return {
+        badge:"Arch 4 · Contrastive alignment · top: "+top.g,
+        formula:"L = −log[ e^(sim(z_v^text,z_v^graph)/τ) / Σ_u e^(sim(z_v^text,z_u^graph)/τ) ]",
+        insight:"Two encoders, one shared space. BARD1's text is embedded and compared by cosine to each pretrained graph node — no graph edges needed for the new gene. As the note reports, BRCA1 ranks highest (note sim≈0.94). Temperature τ sharpens the softmax: small τ makes retrieval winner-take-all, large τ flattens it.",
+        state:"Top hit: "+top.g+" · cosine "+top.raw.toFixed(2)+" · retrieval p "+(top.p*100).toFixed(0)+"% at τ="+tau.toFixed(2)+". Zero-shot: BARD1 was never in the training graph.",
+        metrics:{coupling:"aligned",topSim:top.raw.toFixed(2),refineDrift:(top.p*100).toFixed(0)+"%",textShare:top.g},
+        focus:{center:[-0.3,1.6,1.5],radius:13}
+      };
+    }
+
+    return {badge:"K03",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"k03",
+    kind:"text-attributed-graphs",
+    eyebrow:"Block K · Graph Foundation Models",
+    title:"K03 · Text-attributed graphs and graph-language models",
+    subtitle:"A 5-gene DNA-repair TAG (BRCA1, BRCA2, RAD51, PALB2, TP53BP1) fused three ways: LLM-as-feature-extractor, graph-enhanced LLM, and contrastive text–graph alignment.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene node, the BARD1 query, or a bar.",
+    modes:[
+      {value:"feature",  label:"Arch 1 · LLM-as-feature-extractor"},
+      {value:"enhanced", label:"Arch 2 · Graph-enhanced LLM (iterative)"},
+      {value:"align",    label:"Arch 4 · Contrastive text–graph alignment"}
+    ],
+    params:[
+      {key:"graphMix", label:"graph context mix α",min:0,max:1,step:0.05,value:0.5,
+       fmt:v=>v.toFixed(2)},
+      {key:"rounds",   label:"LLM↔GNN rounds",min:1,max:5,step:1,value:2,
+       fmt:v=>Math.round(v).toString(),modes:["enhanced"]},
+      {key:"tau",      label:"contrastive τ",min:0.05,max:1.0,step:0.05,value:0.3,
+       fmt:v=>v.toFixed(2),modes:["align"]},
+      {key:"textOn",   label:"text modality (0=off 1=on)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===1?"on":"off",modes:["feature"]}
+    ],
+    metrics:[
+      {key:"coupling",   label:"Text–graph coupling",accent:"cyan"},
+      {key:"topSim",     label:"Top cosine (BARD1)",accent:"violet"},
+      {key:"refineDrift",label:"Refine drift / top prob",accent:"amber"},
+      {key:"textShare",  label:"Text retained / hit",accent:"green"}
+    ],
+    layers:[
+      {group:"graph", label:"Interaction graph"},
+      {group:"embed", label:"Query / loops"},
+      {group:"bars",  label:"Embedding bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Pure text (α=0)",
+      on:api=>{api.setParam("graphMix",0);}
+    },
+    secondary:{
+      label:"Pure graph (α=1)",
+      on:api=>{api.setParam("graphMix",1);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=text/LLM · <span style="color:#34d399">green</span>=graph mean · <span style="color:#fbbf24">amber</span>=fused h_v · <span style="color:#a78bfa">violet</span>=query / alignment · <span style="color:#fb7185">rose</span>=TP53BP1 antagonist.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="feature") api.frame([-0.5,2.5,1.5],13);
+      else if(s.mode==="enhanced") api.frame([0.5,2.0,0],13);
+      else api.frame([-0.3,1.6,1.5],13);
+    },
+    onSelect(api,d){
+      if(d.gene)  api.setSelected(d.gene.id+" · e=["+d.gene.emb.map(x=>x.toFixed(2)).join(", ")+"] · neighbours: "+(d.gene.nb.join(", ")||"none"));
+      if(d.query) api.setSelected(d.query.id+" zero-shot query · e=["+d.query.emb.map(x=>x.toFixed(2)).join(", ")+"]");
+    },
+    build,
+    snapshot(s){
+      const alpha=+s.graphMix;
+      const rounds=Math.round(s.rounds);
+      const tau=+s.tau;
+      const textOn=Math.round(s.textOn);
+      // recompute the headline retrieval number deterministically for verifiers
+      const refine=g=>gnnRefine(g,alpha);
+      const sims=GENES.map(g=>({g,raw:cos(BARD1,refine(g))}));
+      sims.sort((a,b)=>b.raw-a.raw);
+      const top=sims[0];
+      return {
+        mode:s.mode,
+        graphMix:+alpha.toFixed(3),
+        rounds:rounds,
+        tau:+tau.toFixed(3),
+        textOn:textOn,
+        topHit:top.g,
+        topCosine:+top.raw.toFixed(3),
+        nGenes:GENES.length,
+        nEdges:EDGES.length,
+        couplingLevel:({feature:0,enhanced:1,align:3})[s.mode],
+        zeroShotTopIsBRCA1:top.g==="BRCA1"
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

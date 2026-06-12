@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K06 · Single-cell foundation models and biological knowledge graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; fully reproducible) ──────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  FACTS — the note's Section-3 encoders + Section-6 hepatocyte GRN.
+  // ════════════════════════════════════════════════════════════════════════
+  // Section 6 worked example: 500 hepatocytes, 5 TFs × 5 targets = 25 candidates.
+  const TFS      =["HNF4A","FOXA1","CEBPA","NR1H4","ONECUT1"];
+  const TARGETS  =["ALB","APOB","CYP7A1","TTR","SERPINA1"];
+  // 8 predicted edge scores after fine-tuning on ChIP-seq-validated edges.
+  // src index, dst index, score, isTrueRegulatory (from the ChIP-seq prior).
+  const PRED=[
+    {s:0,t:0,sc:0.91,tp:true },  // HNF4A   -- ALB
+    {s:0,t:1,sc:0.87,tp:true },  // HNF4A   -- APOB
+    {s:0,t:2,sc:0.85,tp:true },  // HNF4A   -- CYP7A1
+    {s:1,t:0,sc:0.78,tp:true },  // FOXA1   -- ALB
+    {s:2,t:4,sc:0.82,tp:true },  // CEBPA   -- SERPINA1
+    {s:4,t:2,sc:0.64,tp:null },  // ONECUT1 -- CYP7A1 (uncertain)
+    {s:3,t:0,sc:0.31,tp:false},  // NR1H4   -- ALB (likely FP)
+    {s:2,t:3,sc:0.27,tp:false}   // CEBPA   -- TTR (likely FP)
+  ];
+  // Section 3 encoders the lab contrasts (rank / value-bin / read-depth).
+  // Geneformer top-ranked genes for one representative hepatocyte (Section 6).
+  const RANKED=["ALB","APOB","TTR","FGB","FGG","FGA","SERPINA1","AMBP","HP","PLG"];
+  // synthetic-but-fixed raw expression for the same genes (illustrative).
+  const RAWEXP=[8.7,6.4,5.9,4.8,4.1,3.7,3.2,2.6,2.0,1.5];
+  // scGPT value-binning: K=51 bins, 0..max. bin = round(expr/max*50).
+  const SCGPT_BINS=RAWEXP.map(e=>Math.round(e/RAWEXP[0]*50));
+  // Section 5 zero-shot annotation: query hepatocyte vs cell-type centroids.
+  // cosine similarity of the query [CLS] embedding to each type centroid.
+  const CELLTYPES=["hepatocyte","cholangiocyte","T cell","endothelial","stellate"];
+  const ZS_SIM  =[0.93,0.71,0.34,0.52,0.61];   // hepatocyte wins
+  // model corpus sizes (millions of cells) — Section 11 summary table.
+  const CORPUS={geneformer:30,scgpt:33,scfoundation:50};
+
+  let sceneSnap={};
+
+  // ── helpers ───────────────────────────────────────────────────────────────
+  function classify(sc,thr){ return sc>=thr; }
+
+  // ── build ──────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const encoder=Math.round(s.encoder);   // 0 rank / 1 value-bin / 2 read-depth
+    const thr=s.threshold;                  // GRN decision threshold 0.05..0.95
+    const depth=s.readDepth;                // library size 0..1 (low..high)
+    const topK=Math.round(s.topK);          // # ranked tokens shown 4..10
+
+    const gMain  =api.group("main");
+    const gAux   =api.group("aux");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // cyan  — Geneformer / hepatocyte / signal
+    const GR=new T.Color("#34d399");   // green — true positive / validated edge
+    const AM=new T.Color("#fbbf24");   // amber — scGPT value / threshold / uncertain
+    const VI=new T.Color("#a78bfa");   // violet— scFoundation read-depth / centroid
+    const RO=new T.Color("#fb7185");   // rose  — false positive / depth confound
+    const SL=new T.Color("#54667c");   // slate — masked / inactive
+
+    const encNames=["Geneformer (rank-order)","scGPT (value-binning)","scFoundation (read-depth)"];
+    const encCols =[CY,AM,VI];
+    const encCorp =[CORPUS.geneformer,CORPUS.scgpt,CORPUS.scfoundation];
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 1: encode — gene token vocabulary + expression encoding of ONE cell.
+    //   Geneformer ranks genes (position = rank);
+    //   scGPT bins absolute value (height = bin/51);
+    //   scFoundation conditions on read depth (height shrinks at low depth).
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="encode"){
+      const k=Math.max(4,Math.min(10,topK));
+      const x0=-4.2, dx=0.95;
+      const eCol=encCols[encoder];
+
+      // baseline rail
+      gAux.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(x0-0.5,0,0),new T.Vector3(x0+k*dx,0,0)]),
+        new T.LineBasicMaterial({color:0x223247})));
+
+      let usableInfo=0;
+      for(let i=0;i<k;i++){
+        const x=x0+i*dx;
+        let h, lbl, col;
+        if(encoder===0){
+          // rank order: bar height encodes inverse rank (rank 1 tallest); value lost
+          h=0.5+(k-i)/k*3.4;
+          col=eCol.clone();
+          lbl="r"+(i+1);
+          usableInfo+=1; // rank robust to depth
+        }else if(encoder===1){
+          // value binning: height = bin/51, depth-independent of rank
+          const bin=SCGPT_BINS[i];
+          h=0.3+bin/51*3.6;
+          col=AM.clone();
+          lbl="b"+bin;
+          usableInfo+=bin/51;
+        }else{
+          // read-depth aware: raw value scaled by sequencing depth, then
+          // re-normalised — at low depth tokens drop below detection (greyed).
+          const raw=RAWEXP[i];
+          const detected=(raw*(0.35+0.65*depth))>1.0;
+          h=detected?(0.3+raw/RAWEXP[0]*3.4):0.12;
+          col=detected?eCol.clone():SL.clone();
+          lbl=detected?"d"+i:"·";
+          if(detected)usableInfo+=1;
+        }
+        const isMasked=(prand(i*9+5)>0.78);   // masked-gene-prediction targets
+        const finalCol=isMasked?SL.clone():col;
+        const bar=new T.Mesh(new T.BoxGeometry(0.6,h,0.6),
+          new T.MeshStandardMaterial({color:finalCol,emissive:finalCol.clone().multiplyScalar(isMasked?0.18:0.6),emissiveIntensity:isMasked?0.2:0.62,roughness:0.4}));
+        bar.position.set(x,h/2,0);
+        gMain.add(bar);
+        api.pick(bar,{token:{gene:RANKED[i],rank:i+1,bin:SCGPT_BINS[i],raw:RAWEXP[i],masked:isMasked}});
+
+        addSlbl(RANKED[i],(isMasked?"#54667c":finalCol.getStyle()),0.30,x,h+0.30,0);
+        addSlbl(lbl,"#7d8ea3",0.26,x,-0.34,0);
+
+        if(isMasked){
+          const cone=new T.Mesh(new T.ConeGeometry(0.12,0.4,8),new T.MeshBasicMaterial({color:RO}));
+          cone.rotation.z=Math.PI; cone.position.set(x,h+0.75,0); gMain.add(cone);
+        }
+      }
+      usableInfo=usableInfo/k;
+
+      addLbl("[CLS] cell token","#4dd7ff",1.4,x0+k*dx*0.5,4.5,0);
+      addLbl(encNames[encoder],eCol.getStyle(),1.3,x0+k*dx*0.5,-1.3,0);
+      addLbl("rose cone = masked-gene-prediction target","#fb7185",1.0,x0+k*dx*0.5,-2.05,0);
+
+      const corp=encCorp[encoder];
+      sceneSnap={mode,encoder,readDepth:+depth.toFixed(2),topK:k,threshold:+thr.toFixed(2),
+        usableInfo:+usableInfo.toFixed(3),corpusM:corp,topHitSim:null,truePos:null,falsePos:null,
+        rankRobust:encoder===0?1:0};
+
+      const desc=[
+        "Rank-order (Geneformer): position encodes relative level; absolute value is discarded, so the encoding is robust to library size and protocol — but two genes with very different raw counts can share a rank.",
+        "Value-binning (scGPT): each gene token is summed with a value-embedding of its expression bin (K=51). This keeps absolute level (bin 45 ≠ bin 25 ≠ 0) but needs bins calibrated across datasets.",
+        "Read-depth aware (scFoundation): the objective conditions on total library size. Drag read depth down and low-count tokens fall below detection (grey) — the model still corrects for depth, the visual just shows what raw values would do."
+      ];
+      return {
+        badge:"Encode · "+encNames[encoder]+" · "+corp+"M cells",
+        formula: encoder===0 ? "h_g⁽⁰⁾ = gene_emb(g)  ·  rank(g) = position in sorted expression"
+               : encoder===1 ? "h_g⁽⁰⁾ = gene_emb(g) + value_emb(bin(expr_g)),  bin∈0..50"
+               : "predict expr | masked genes, total_reads(unmasked)",
+        insight:desc[encoder],
+        state:"Encoder: "+encNames[encoder]+". Usable-info "+(usableInfo*100).toFixed(0)+"% of "+k+" tokens. Pretraining corpus "+corp+"M cells. "+(encoder===2?("Read depth "+(depth*100).toFixed(0)+"%."):"Rank/bin is depth-independent."),
+        metrics:{truePos:"—",falsePos:"—",topHitSim:"—",usableInfo:(usableInfo*100).toFixed(0)+"%"},
+        focus:{center:[0,1.5,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 2: grn — Geneformer embeddings as node features in a hepatocyte GRN.
+    //   5 TFs (top) → 5 targets (bottom). 8 predicted candidate edges colour by
+    //   classification at the threshold; count TP / FP vs the ChIP-seq labels.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="grn"){
+      const tfX=[-4,-2,0,2,4], tgX=[-4,-2,0,2,4];
+      const tfY=2.6, tgY=-2.6;
+      const tfPos={}, tgPos={};
+
+      // TF nodes (top row, cyan = master regulators)
+      TFS.forEach((g,i)=>{
+        const p=new T.Vector3(tfX[i],tfY,0); tfPos[i]=p;
+        const m=new T.Mesh(new T.SphereGeometry(0.40,24,18),
+          new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.35}));
+        m.position.copy(p); gMain.add(m);
+        api.pick(m,{node:{gene:g,role:"TF"}});
+        addSlbl(g,"#4dd7ff",0.34,p.x,p.y+0.6,0);
+      });
+      // target nodes (bottom row, green)
+      TARGETS.forEach((g,i)=>{
+        const p=new T.Vector3(tgX[i],tgY,0); tgPos[i]=p;
+        const m=new T.Mesh(new T.SphereGeometry(0.40,24,18),
+          new T.MeshStandardMaterial({color:GR,emissive:GR.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.35}));
+        m.position.copy(p); gMain.add(m);
+        api.pick(m,{node:{gene:g,role:"target"}});
+        addSlbl(g,"#34d399",0.34,p.x,p.y-0.7,0);
+      });
+
+      // candidate edges, coloured by accept/reject at threshold
+      let tp=0,fp=0,accepted=0,trueEdges=0;
+      PRED.forEach(e=>{
+        if(e.tp===true)trueEdges++;
+        const accept=classify(e.sc,thr);
+        if(accept)accepted++;
+        // correctness vs ChIP-seq label (uncertain edges don't count either way)
+        let col;
+        if(accept && e.tp===true){col=GR; tp++;}
+        else if(accept && e.tp===false){col=RO; fp++;}
+        else if(!accept && e.tp===false){col=SL;}     // correctly rejected FP
+        else if(!accept && e.tp===true){col=AM;}       // missed true edge
+        else col=accept?VI:SL;                          // uncertain edge
+        const a=tfPos[e.s], b=tgPos[e.t];
+        const w=accept?(0.04+e.sc*0.10):0.025;
+        const op=accept?0.95:0.30;
+        const cyl=(()=>{
+          const len=a.distanceTo(b);
+          const g=new T.Mesh(new T.CylinderGeometry(w,w,len,10,1,true),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.3),roughness:0.5,transparent:true,opacity:op}));
+          g.position.copy(a).add(b).multiplyScalar(0.5);
+          const up=new T.Vector3(0,1,0), dir=b.clone().sub(a).normalize();
+          g.quaternion.setFromUnitVectors(up,dir);
+          return g;
+        })();
+        gMain.add(cyl);
+        api.pick(cyl,{edge:{src:TFS[e.s],dst:TARGETS[e.t],score:e.sc,tp:e.tp,accept:accept}});
+        // score label at edge midpoint
+        const mid=a.clone().add(b).multiplyScalar(0.5);
+        addSlbl(e.sc.toFixed(2),(accept?col.getStyle():"#54667c"),0.26,mid.x+0.18,mid.y,0.05);
+      });
+
+      // threshold plane (amber) sweeping the score axis — visual decision line
+      addLbl("5 TF master regulators","#4dd7ff",1.2,0,tfY+1.35,0);
+      addLbl("5 hepatocyte targets","#34d399",1.2,0,tgY-1.4,0);
+      addLbl("threshold τ = "+thr.toFixed(2),"#fbbf24",1.25,0,0,0);
+
+      const precision=accepted>0?tp/accepted:0;
+      const recall=trueEdges>0?tp/trueEdges:0;
+      sceneSnap={mode,encoder,threshold:+thr.toFixed(2),readDepth:+depth.toFixed(2),topK,
+        truePos:tp,falsePos:fp,accepted,precision:+precision.toFixed(3),recall:+recall.toFixed(3),
+        topHitSim:null,usableInfo:null};
+
+      return {
+        badge:"GRN · τ="+thr.toFixed(2)+" · TP "+tp+" / FP "+fp,
+        formula:"score(TF→tgt) = σ( edge_pred[ GAT(h_gene) ] ),  accept iff score ≥ τ",
+        insight:"Geneformer gene embeddings give each node a hepatocyte-context feature; a 2-layer GAT propagates over the 5 ChIP-seq-validated edges and scores all 25 TF–target candidates. HNF4A→ALB (0.91) and the four other validated edges score high; NR1H4→ALB (0.31) and CEBPA→TTR (0.27) stay low — co-expression is not causation, so the indirect pairs are correctly demoted. Slide τ to trade recall against false positives.",
+        state:"At τ="+thr.toFixed(2)+": accepted "+accepted+" edges → "+tp+" true positive, "+fp+" false positive. Precision "+(precision*100).toFixed(0)+"%, recall "+(recall*100).toFixed(0)+"% over "+trueEdges+" validated edges.",
+        metrics:{truePos:""+tp,falsePos:""+fp,topHitSim:(precision*100).toFixed(0)+"%",usableInfo:(recall*100).toFixed(0)+"%"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 3: zeroshot — zero-shot cell-type annotation.
+    //   Query hepatocyte [CLS] vs 5 cell-type centroids; cosine-sim NN; argmax
+    //   is the predicted label, max sim is the confidence. Read depth shifts
+    //   the query (batch effect) and can break the assignment.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="zeroshot"){
+      const R=3.4;
+      // depth-induced batch shift: low depth drags the query toward "T cell"
+      // (fewer detected genes), denting the hepatocyte similarity.
+      const shift=(1-depth)*0.45;
+      const sims=ZS_SIM.map((v,i)=>{
+        if(i===0) return Math.max(0.05,v-shift);          // hepatocyte loses
+        if(i===2) return Math.min(0.97,v+shift*0.9);      // T cell gains
+        return v;
+      });
+      // centroids on a ring; query at centre, links coloured by similarity
+      let bestI=0,bestV=-1,secondV=-1;
+      sims.forEach((v,i)=>{ if(v>bestV){secondV=bestV;bestV=v;bestI=i;} else if(v>secondV){secondV=v;} });
+
+      sims.forEach((v,i)=>{
+        const ang=i/CELLTYPES.length*Math.PI*2 - Math.PI/2;
+        const p=new T.Vector3(Math.cos(ang)*R, Math.sin(ang)*R*0.62 + 0.4, Math.sin(ang)*0.6);
+        const isBest=(i===bestI);
+        const col=isBest?CY.clone():VI.clone();
+        const m=new T.Mesh(new T.SphereGeometry(0.30+v*0.22,22,16),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(isBest?0.85:0.35),emissiveIntensity:isBest?0.7:0.32,roughness:0.4}));
+        m.position.copy(p); gMain.add(m);
+        api.pick(m,{centroid:{type:CELLTYPES[i],sim:v,best:isBest}});
+        addSlbl(CELLTYPES[i],(isBest?"#4dd7ff":"#a78bfa"),0.30,p.x,p.y+0.55,p.z);
+        addSlbl(v.toFixed(2),(isBest?"#4dd7ff":"#7d8ea3"),0.27,p.x,p.y-0.5,p.z);
+
+        // link query→centroid, thickness ∝ similarity
+        const a=new T.Vector3(0,0.4,0), b=p;
+        const len=a.distanceTo(b);
+        const w=0.02+v*0.09;
+        const lc=isBest?CY:SL;
+        const cyl=new T.Mesh(new T.CylinderGeometry(w,w,len,8,1,true),
+          new T.MeshStandardMaterial({color:lc,emissive:lc.clone().multiplyScalar(0.3),roughness:0.5,transparent:true,opacity:isBest?0.95:0.4}));
+        cyl.position.copy(a).add(b).multiplyScalar(0.5);
+        cyl.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),b.clone().sub(a).normalize());
+        gMain.add(cyl);
+      });
+
+      // query cell at centre
+      const q=new T.Mesh(new T.SphereGeometry(0.5,26,20),
+        new T.MeshStandardMaterial({color:GR,emissive:GR.clone().multiplyScalar(0.7),emissiveIntensity:0.65,roughness:0.3}));
+      q.position.set(0,0.4,0); gMain.add(q);
+      api.pick(q,{query:{label:CELLTYPES[bestI],confidence:bestV}});
+      addLbl("query cell  h_c","#34d399",1.3,0,-1.3,0);
+
+      const margin=bestV-secondV;
+      const ambiguous=(margin<0.12);
+      addLbl("argmax → "+CELLTYPES[bestI],(ambiguous?"#fb7185":"#4dd7ff"),1.35,0,R*0.62+1.7,0);
+
+      sceneSnap={mode,encoder,readDepth:+depth.toFixed(2),topK,threshold:+thr.toFixed(2),
+        topHitSim:+bestV.toFixed(3),margin:+margin.toFixed(3),predicted:bestI,ambiguous:ambiguous?1:0,
+        truePos:null,falsePos:null,usableInfo:null};
+
+      return {
+        badge:"Zero-shot · "+CELLTYPES[bestI]+" · sim "+bestV.toFixed(2)+(ambiguous?" · AMBIGUOUS":""),
+        formula:"pred(c) = argmax_t cos(h_c, c̄_t);   conf(c) = max_t cos(h_c, c̄_t)",
+        insight:"Each cell type stores a centroid = mean [CLS] embedding over its training cells. A new unlabelled query is annotated by nearest centroid in cosine space — no retraining. The assumption: type identity is conserved across datasets. Drag read depth low to inject a batch effect: the query slides toward the T-cell centroid, the hepatocyte margin collapses, and the call becomes ambiguous — exactly the failure mode scFoundation's depth-aware pretraining is built to prevent.",
+        state:"Predicted "+CELLTYPES[bestI]+" at confidence "+bestV.toFixed(2)+". Margin over 2nd ("+secondV.toFixed(2)+") = "+margin.toFixed(2)+(ambiguous?" → AMBIGUOUS / novel-state risk.":" → confident call."),
+        metrics:{truePos:"—",falsePos:"—",topHitSim:bestV.toFixed(2),usableInfo:(margin*100).toFixed(0)+"pp"},
+        focus:{center:[0,1.5,0],radius:12}
+      };
+    }
+
+    return {badge:"K06",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"k06",
+    kind:"single-cell-foundation-models",
+    eyebrow:"Block K · Graph Foundation Models",
+    title:"K06 · Single-cell foundation models & biological knowledge graphs",
+    subtitle:"One hepatocyte, three encoders, one GRN. Watch how gene-token encoding, edge thresholding, and zero-shot annotation each turn millions of pretraining cells into regulatory and cell-type calls.",
+    selectedLabel:"Element",
+    selectedHint:"Click a token, gene node, edge, or centroid.",
+    modes:[
+      {value:"encode",   label:"Encode (rank · value-bin · read-depth)"},
+      {value:"grn",      label:"Hepatocyte GRN (Geneformer → GAT)"},
+      {value:"zeroshot", label:"Zero-shot cell-type annotation"}
+    ],
+    params:[
+      {key:"encoder",  label:"encoder (0 Geneformer · 1 scGPT · 2 scFoundation)",min:0,max:2,step:1,value:0,
+       fmt:v=>["Geneformer","scGPT","scFoundation"][Math.round(v)],modes:["encode"]},
+      {key:"topK",     label:"# ranked tokens shown",min:4,max:10,step:1,value:8,
+       fmt:v=>Math.round(v).toString(),modes:["encode"]},
+      {key:"threshold",label:"GRN edge threshold τ",min:0.05,max:0.95,step:0.01,value:0.50,
+       fmt:v=>v.toFixed(2),modes:["grn"]},
+      {key:"readDepth",label:"read depth (library size)",min:0,max:1,step:0.01,value:0.85,
+       fmt:v=>v<0.34?"low":v<0.67?"mid":"high",modes:["encode","zeroshot"]}
+    ],
+    metrics:[
+      {key:"truePos",   label:"True-positive edges",accent:"green"},
+      {key:"falsePos",  label:"False-positive edges",accent:"rose"},
+      {key:"topHitSim", label:"Top match / precision",accent:"cyan"},
+      {key:"usableInfo",label:"Usable info / recall",accent:"amber"}
+    ],
+    layers:[
+      {group:"main",   label:"Primary scene"},
+      {group:"aux",    label:"Axes / rails"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Strict τ (0.80)",
+      on:api=>{ if(api.state.mode==="grn") api.setParam("threshold",0.80); else api.setParam("readDepth",0.15); }
+    },
+    secondary:{
+      label:"Loose τ (0.30)",
+      on:api=>{ if(api.state.mode==="grn") api.setParam("threshold",0.30); else api.setParam("readDepth",1.0); }
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=Geneformer/TF/best-match · <span style="color:#34d399">green</span>=validated edge/target/query · <span style="color:#fbbf24">amber</span>=scGPT/threshold/missed · <span style="color:#a78bfa">violet</span>=scFoundation/centroid · <span style="color:#fb7185">rose</span>=false positive / masked target / depth confound.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="grn") api.frame([0,0,0],13);
+      else api.frame([0,1.5,0],12);
+    },
+    onSelect(api,d){
+      if(d.token)    api.setSelected(d.token.gene+" · rank "+d.token.rank+" · bin "+d.token.bin+" · raw "+d.token.raw.toFixed(1)+(d.token.masked?" · MASKED":""));
+      if(d.node)     api.setSelected(d.node.gene+" · "+d.node.role);
+      if(d.edge)     api.setSelected(d.edge.src+" → "+d.edge.dst+" · score "+d.edge.score.toFixed(2)+" · "+(d.edge.tp===true?"validated":d.edge.tp===false?"likely FP":"uncertain")+" · "+(d.edge.accept?"ACCEPTED":"rejected"));
+      if(d.centroid) api.setSelected(d.centroid.type+" centroid · cos "+d.centroid.sim.toFixed(2)+(d.centroid.best?" · NEAREST":""));
+      if(d.query)    api.setSelected("query → "+d.query.label+" · conf "+d.query.confidence.toFixed(2));
+    },
+    build,
+    snapshot(s){
+      const enc=Math.round(s.encoder);
+      const thr=+s.threshold.toFixed(2);
+      const depth=+s.readDepth.toFixed(2);
+      const k=Math.round(s.topK);
+      // recompute GRN tp/fp deterministically so the snapshot tracks τ even
+      // when the active mode is not "grn".
+      let tp=0,fp=0,accepted=0,trueEdges=0;
+      PRED.forEach(e=>{
+        if(e.tp===true)trueEdges++;
+        const accept=e.sc>=thr;
+        if(accept){accepted++; if(e.tp===true)tp++; else if(e.tp===false)fp++;}
+      });
+      const precision=accepted>0?+(tp/accepted).toFixed(3):0;
+      const recall=trueEdges>0?+(tp/trueEdges).toFixed(3):0;
+      // zero-shot best similarity deterministically
+      const shift=(1-depth)*0.45;
+      const sims=ZS_SIM.map((v,i)=> i===0?Math.max(0.05,v-shift): i===2?Math.min(0.97,v+shift*0.9): v);
+      const topHitSim=+Math.max.apply(null,sims).toFixed(3);
+      return {
+        mode:s.mode,
+        encoder:enc,
+        encoderName:["Geneformer","scGPT","scFoundation"][enc],
+        topK:k,
+        threshold:thr,
+        readDepth:depth,
+        truePos:tp,
+        falsePos:fp,
+        acceptedEdges:accepted,
+        precision:precision,
+        recall:recall,
+        topHitSim:topHitSim,
+        corpusM:[CORPUS.geneformer,CORPUS.scgpt,CORPUS.scfoundation][enc],
+        rankRobust:enc===0
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

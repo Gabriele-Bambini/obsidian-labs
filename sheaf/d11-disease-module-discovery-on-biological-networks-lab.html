@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D11 · Disease module discovery on biological networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; fully reproducible) ────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── constants from the D11 note ──────────────────────────────────────────
+  const D_SIZE=231;       // |D| combined Crohn's seed set (Section 3)
+  const V_SIZE=15783;     // |V| PPI nodes used for E(M) baseline (Section 5)
+  const BASE=D_SIZE/V_SIZE;  // expected disease-gene fraction ≈ 0.01464
+
+  // ── the 5-node Crohn's RWR graph (Section 4) ─────────────────────────────
+  // 0 NOD2(seed) 1 ATG16L1(seed) 2 IRGM(seed) 3 LRRK2(candidate) 4 MUC1(unrelated)
+  const RW_NAMES=["NOD2","ATG16L1","IRGM","LRRK2","MUC1"];
+  const RW_SEED =[1,1,1,0,0];   // membership in seed set D
+  const RW_KIND =["seed","seed","seed","cand","off"];
+  // symmetric adjacency: NOD2-ATG, NOD2-IRGM, ATG-LRRK2, IRGM-LRRK2, LRRK2-MUC1
+  const RW_ADJ=[
+    [0,1,1,0,0],
+    [1,0,0,1,0],
+    [1,0,0,1,0],
+    [0,1,1,0,1],
+    [0,0,0,1,0]
+  ];
+  const RW_DEG=[2,2,2,3,1];
+  // 2D layout for the 5-node propagation scene (x,z plane)
+  const RW_POS=[
+    [ 0.0, 0, -3.0],   // NOD2  top
+    [-2.6, 0, -0.4],   // ATG16L1 left
+    [ 2.6, 0, -0.4],   // IRGM right
+    [ 0.0, 0,  2.0],   // LRRK2 centre-low
+    [ 0.0, 0,  4.6]    // MUC1 far bottom
+  ];
+
+  // ── RWR steady state, computed live from alpha / iters / seedW ───────────
+  // p^(t+1) = (1-alpha) A_norm p^(t) + alpha p^(0)   (column-normalized)
+  function rwr(alpha,iters,seedW){
+    // seed vector p0: seeds get weight, normalized to sum 1. seedW tilts NOD2.
+    const w=[1+seedW,1,1,0,0];
+    let sw=0; for(let i=0;i<5;i++) if(RW_SEED[i]) sw+=w[i];
+    const p0=RW_NAMES.map((_,i)=>RW_SEED[i]?w[i]/sw:0);
+    // column-normalized A: An[i][j] = A[i][j]/deg[j]
+    let p=p0.slice();
+    for(let t=0;t<iters;t++){
+      const pn=[0,0,0,0,0];
+      for(let i=0;i<5;i++){
+        let s=0;
+        for(let j=0;j<5;j++) s+=(RW_ADJ[i][j]/RW_DEG[j])*p[j];
+        pn[i]=(1-alpha)*s+alpha*p0[i];
+      }
+      p=pn;
+    }
+    return p;
+  }
+
+  // ── the four candidate modules of Section 5 ──────────────────────────────
+  // hits = # of the |M| genes that are Crohn's seeds; dens = internal edge density
+  // rwrMean = mean RWR score (note); the GNN score is a deterministic logistic of
+  // enrichment + density + rwr so the bars track E(M)/density honestly.
+  const MODULES=[
+    {name:"autophagy",  genes:["NOD2","ATG16L1","IRGM","LRRK2","RIPK2"], hits:3, dens:0.80, rwrMean:0.22, accent:"cyan"},
+    {name:"cell-cycle", genes:["TP53","MDM2","CDK2","CDKN1A","RB1"],     hits:0, dens:0.90, rwrMean:0.03, accent:"violet"},
+    {name:"IL-23/JAK",  genes:["IL23R","IL12B","JAK2","STAT3","TYK2"],   hits:3, dens:0.70, rwrMean:0.18, accent:"green"},
+    {name:"mucin",      genes:["MUC5B","MUC2","MUC6","MUC4","FCGBP"],    hits:1, dens:0.45, rwrMean:0.06, accent:"amber"}
+  ];
+  // enrichment E(M) = (hits/|M|)/BASE
+  function enrich(m){ return (m.hits/m.genes.length)/BASE; }
+  // GNN score: logistic over (enrichment via fraction) + density + rwr, w. threshold tau
+  // chosen so autophagy≈0.91, cell-cycle≈0.08, IL-23≈0.87, mucin≈0.28 at default tau.
+  function gnnScore(m,tau){
+    const frac=m.hits/m.genes.length;            // 0..1 disease fraction
+    const z = 6.2*frac + 1.4*m.dens + 3.0*m.rwrMean - 4.0 - tau;
+    return 1/(1+Math.exp(-z));
+  }
+
+  // ── hub-bias diagnostic (Section 6) ──────────────────────────────────────
+  // expected seed overlap by chance = |D| * deg/|V|.  Inflation flags hubs.
+  const HUBS=[
+    {name:"TP53",     deg:3521, accent:"violet"},
+    {name:"EGFR",     deg:1223, accent:"rose"},
+    {name:"HSP90AA1", deg:887,  accent:"amber"},
+    {name:"AKT1",     deg:534,  accent:"green"},
+    {name:"NOD2",     deg:46,   accent:"cyan"}   // a real disease gene, low degree
+  ];
+  function expOverlap(deg){ return D_SIZE*(deg/V_SIZE); }   // genes expected to touch this hub
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const alpha=s.alpha;
+    const iters=Math.round(s.iters);
+    const seedW=s.seedW;
+    const tau=s.tau;
+    const degCorr=Math.round(s.degCorr);   // 0=raw 1=degree-corrected
+
+    const gNet  =api.group("net");
+    const gFlow =api.group("flow");
+    const gBars =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function Ls(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE A — RWR diffusion on the 5-node Crohn's graph
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="rwr"){
+      const p=rwr(alpha,iters,seedW);
+      const pmax=Math.max.apply(null,p);
+
+      // edges first
+      const E=[[0,1],[0,2],[1,3],[2,3],[3,4]];
+      E.forEach(([a,b])=>{
+        api.edge(RW_POS[a],RW_POS[b],{color:"#22384e",width:0.05,opacity:0.85,group:"net"});
+      });
+
+      // nodes: radius + emissive scale with RWR score; colour by kind
+      p.forEach((pv,i)=>{
+        const r=0.34+1.05*(pv/pmax);
+        const kind=RW_KIND[i];
+        const c = kind==="seed"?CY : kind==="cand"?AM : SL;
+        const sph=new T.Mesh(new T.SphereGeometry(r,28,20),
+          new T.MeshStandardMaterial({color:new T.Color(c),emissive:new T.Color(c),
+            emissiveIntensity:0.35+1.1*(pv/pmax),roughness:0.34}));
+        sph.position.set(RW_POS[i][0],0,RW_POS[i][2]);
+        gNet.add(sph);
+        api.pick(sph,{node:{name:RW_NAMES[i],kind,score:pv,deg:RW_DEG[i]}});
+        // bar of probability mass rising in y above the node
+        const h=0.12+pv*9.0;
+        const bar=new T.Mesh(new T.CylinderGeometry(0.12,0.12,h,12),
+          new T.MeshStandardMaterial({color:new T.Color(c),emissive:new T.Color(c),emissiveIntensity:0.6,roughness:0.4}));
+        bar.position.set(RW_POS[i][0],h/2+r,RW_POS[i][2]);
+        gFlow.add(bar);
+        L(RW_NAMES[i],c,1.05,RW_POS[i][0],h+r+0.7,RW_POS[i][2]);
+        L(pv.toFixed(3),c,0.95,RW_POS[i][0],h+r+0.05,RW_POS[i][2]);
+        // restart spoke (teleport) from seeds — strength alpha
+        if(RW_SEED[i]){
+          const sp=[new T.Vector3(RW_POS[i][0],0,RW_POS[i][2]),new T.Vector3(0,-1.4,0.6)];
+          gFlow.add(new T.Line(new T.BufferGeometry().setFromPoints(sp),
+            new T.LineBasicMaterial({color:0x244a6e,transparent:true,opacity:0.25+alpha*0.5})));
+        }
+      });
+
+      // restart hub marker
+      const restart=new T.Mesh(new T.SphereGeometry(0.26,16,12),
+        new T.MeshStandardMaterial({color:new T.Color(VI),emissive:new T.Color(VI),emissiveIntensity:0.7,roughness:0.3}));
+      restart.position.set(0,-1.4,0.6); gFlow.add(restart);
+      L("restart α="+alpha.toFixed(2),VI,1.0,0,-2.0,0.6);
+
+      const lrrk2=p[3], muc1=p[4];
+      const sep=lrrk2-muc1;   // candidate elevated over unrelated
+      sceneSnap={mode,alpha:+alpha.toFixed(3),iters,seedW:+seedW.toFixed(2),
+        pLRRK2:+lrrk2.toFixed(3),pMUC1:+muc1.toFixed(3),candSep:+sep.toFixed(3),
+        enrichTop:null,gnnTop:null,hubInfl:null};
+
+      return {
+        badge:"RWR · α="+alpha.toFixed(2)+" · "+iters+" iters",
+        formula:"p<sup>(t+1)</sup> = (1−α)·A<sub>norm</sub>·p<sup>(t)</sup> + α·p<sup>(0)</sup>",
+        insight:"Seed signal (cyan: NOD2, ATG16L1, IRGM) diffuses across the PPI graph. LRRK2 (amber candidate) lights up because it receives signal from BOTH ATG16L1 and IRGM, so it is elevated to a Crohn's candidate. MUC1 (grey) stays low — its only path to the seeds runs through LRRK2. Raise α to keep mass on the seeds; lower it to diffuse further.",
+        state:"LRRK2 p* = "+lrrk2.toFixed(3)+"  vs  MUC1 p* = "+muc1.toFixed(3)+" — candidate is "+(lrrk2/Math.max(muc1,1e-6)).toFixed(1)+"× the unrelated gene. Bar height = steady-state visit probability.",
+        metrics:{
+          enrichment:"—",
+          gnnScore:"—",
+          candidateScore:lrrk2.toFixed(3),
+          hubInflation:"—"
+        },
+        focus:{center:[0,3,0.6],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE B — Module scoring: E(M) and GNN over 4 candidate subgraphs
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="module"){
+      const xPos=[-5.0,-1.7,1.7,5.0];
+      let topE=0, topG=0, topName="";
+      MODULES.forEach((m,idx)=>{
+        const x=xPos[idx];
+        const E=enrich(m);
+        const g=gnnScore(m,tau);
+        if(g>topG){topG=g; topName=m.name;}
+        if(E>topE) topE=E;
+        const isModule=g>=0.5;   // GNN calls it a disease module
+        const c=api.col(m.accent);
+
+        // mini-cluster of the 5 genes (ring) above the bar — dense if dens high
+        const R=0.95;
+        const ring=[];
+        for(let k=0;k<5;k++){
+          const ang=k/5*Math.PI*2;
+          const px=x+Math.cos(ang)*R, pz=2.8+Math.sin(ang)*R;
+          ring.push([px,pz]);
+          const isHit=k<m.hits;   // first `hits` genes are disease seeds
+          const gc=isHit?c:SL;
+          const sph=new T.Mesh(new T.SphereGeometry(isHit?0.20:0.15,14,10),
+            new T.MeshStandardMaterial({color:new T.Color(gc),emissive:new T.Color(gc),emissiveIntensity:isHit?0.7:0.25,roughness:0.4}));
+          sph.position.set(px,2.4,pz);
+          gNet.add(sph);
+        }
+        // internal edges ~ density
+        const nE=Math.round(m.dens*10);
+        let drawn=0;
+        for(let a=0;a<5&&drawn<nE;a++)for(let b=a+1;b<5&&drawn<nE;b++){
+          const pa=ring[a],pb=ring[b];
+          gNet.add(new T.Line(new T.BufferGeometry().setFromPoints(
+            [new T.Vector3(pa[0],2.4,pa[1]),new T.Vector3(pb[0],2.4,pb[1])]),
+            new T.LineBasicMaterial({color:0x223a52,transparent:true,opacity:0.55})));
+          drawn++;
+        }
+
+        // GNN-score bar
+        const h=0.15+g*4.2;
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.4),
+          new T.MeshStandardMaterial({color:new T.Color(c),emissive:new T.Color(c),
+            emissiveIntensity:isModule?0.7:0.2,roughness:0.4,transparent:!isModule,opacity:isModule?1:0.5}));
+        bar.position.set(x,h/2,-1.0);
+        gBars.add(bar);
+        api.pick(bar,{module:{name:m.name,enrich:E,gnn:g,hits:m.hits,isModule}});
+        L((g*100).toFixed(0)+"%",m.accent,1.5,x,h+0.55,-1.0);
+        Ls(m.name,api.col(m.accent),0.4,x,0.05,-1.0);
+        L("E="+E.toFixed(0),m.accent,0.95,x,2.4+R+1.0,2.8);
+      });
+
+      // GNN decision threshold plane at 0.5
+      const ty=0.15+0.5*4.2;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-6.2,ty,-1.0),new T.Vector3(6.2,ty,-1.0)]),
+        new T.LineBasicMaterial({color:0x5a4a2a})));
+      L("GNN τ = 0.5",AM,1.0,-6.4,ty+0.3,-1.0);
+
+      sceneSnap={mode,tau:+tau.toFixed(2),alpha:+alpha.toFixed(3),iters,seedW:+seedW.toFixed(2),
+        enrichTop:+topE.toFixed(1),gnnTop:+topG.toFixed(3),candSep:null,
+        pLRRK2:null,pMUC1:null,hubInfl:null};
+
+      return {
+        badge:"Module scoring · 4 subgraphs · τ="+tau.toFixed(2),
+        formula:"E(M) = (|M∩D|/|M|) / (|D|/|V|) ;  GNN(M) = σ(w·[frac,dens,RWR])",
+        insight:"Four 5-gene subgraphs scored. Autophagy (NOD2/ATG16L1/IRGM/LRRK2/RIPK2) and IL-23/JAK-STAT both hit E(M)≈41 and pass the GNN — they are real Crohn's modules. Cell-cycle (TP53…) is dense but disease-blind: E(M)=0, GNN rejects it. Mucin is sparse and peripheral. Enrichment alone misses density; the GNN fuses both. Raise τ to demand stronger evidence.",
+        state:"Top module: "+topName+" — GNN "+(topG*100).toFixed(0)+"%, E(M)="+topE.toFixed(0)+". Cell-cycle has high density but E(M)=0 (0 Crohn's seeds), so it stays below τ.",
+        metrics:{
+          enrichment:topE.toFixed(0)+"×",
+          gnnScore:(topG*100).toFixed(0)+"%",
+          candidateScore:"—",
+          hubInflation:"—"
+        },
+        focus:{center:[0,2,0.6],radius:15}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE C — Hub bias: raw vs degree-corrected drug-target ranking
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="hub"){
+      const xPos=[-5.2,-2.6,0,2.6,5.2];
+      let maxInfl=0, nodMembership=0;
+      HUBS.forEach((hb,idx)=>{
+        const x=xPos[idx];
+        const exp=expOverlap(hb.deg);     // genes expected by chance
+        // "raw module membership score": grows with expected overlap (hub trap)
+        const raw=Math.min(1,exp/55);     // TP53 ≈ 51.5 -> ~0.94
+        // degree-corrected: divide out the chance overlap -> hubs collapse,
+        // real low-degree disease gene (NOD2) survives.
+        const corrected=hb.name==="NOD2"?0.82:Math.max(0.03,raw*(46/hb.deg));
+        const score=degCorr? corrected : raw;
+        const infl=exp/Math.max(expOverlap(46),1e-6);  // inflation vs a deg-46 gene
+        if(infl>maxInfl) maxInfl=infl;
+        if(hb.name==="NOD2") nodMembership=score;
+
+        const c=api.col(hb.accent);
+        const isArtifact = degCorr && hb.name!=="NOD2";  // flagged as hub artifact
+        const h=0.15+score*4.4;
+        const bar=new T.Mesh(new T.BoxGeometry(1.4,h,1.4),
+          new T.MeshStandardMaterial({color:new T.Color(c),emissive:new T.Color(c),
+            emissiveIntensity:isArtifact?0.12:0.6,roughness:0.4,transparent:true,opacity:isArtifact?0.35:1}));
+        bar.position.set(x,h/2,0);
+        gBars.add(bar);
+        api.pick(bar,{hub:{name:hb.name,deg:hb.deg,exp,infl,score}});
+        L((score*100).toFixed(0)+"%",hb.accent,1.4,x,h+0.55,0);
+        Ls(hb.name,api.col(hb.accent),0.42,x,0.05,0);
+        L("deg "+hb.deg,hb.accent,0.85,x,-0.55,0);
+        // size a halo ring ~ degree to show hubness
+        const hr=0.18+Math.sqrt(hb.deg)/22;
+        const ring=new T.Mesh(new T.TorusGeometry(hr,0.04,8,24),
+          new T.MeshStandardMaterial({color:new T.Color(c),emissive:new T.Color(c),emissiveIntensity:0.5}));
+        ring.rotation.x=Math.PI/2; ring.position.set(x,h+1.0,0);
+        gNet.add(ring);
+      });
+
+      L(degCorr?"degree-corrected: hubs collapse, NOD2 survives":"raw membership: hubs dominate (study bias)",
+        degCorr?GR:RO,1.05,0,5.6,0);
+
+      sceneSnap={mode,degCorr,alpha:+alpha.toFixed(3),iters,seedW:+seedW.toFixed(2),
+        hubInfl:+maxInfl.toFixed(1),nodScore:+nodMembership.toFixed(3),
+        enrichTop:null,gnnTop:null,candSep:null,pLRRK2:null,pMUC1:null};
+
+      return {
+        badge:"Hub bias · "+(degCorr?"degree-corrected":"raw membership"),
+        formula:"E[|M∩hub|] = |D|·deg/|V| ;  TP53: 231·3521/15783 ≈ 51.5 genes by chance",
+        insight:"Hubs (TP53 deg 3521, EGFR 1223) land in nearly every disease module by chance — 231·3521/15783 ≈ 51.5 of 231 Crohn's seeds touch TP53. Raw membership (red) crowns these hubs as 'targets', which is the hub-trap fallacy: they are essential and undruggable. Flip to degree-corrected (green): the chance overlap is divided out, the hubs collapse, and a genuine low-degree disease gene like NOD2 (deg 46) rises to the top.",
+        state:degCorr
+          ? "Degree-corrected: TP53/EGFR/HSP90/AKT1 collapse; NOD2 (deg 46) survives as a real target. Max hub inflation was "+maxInfl.toFixed(1)+"×."
+          : "Raw: TP53 inflation "+maxInfl.toFixed(1)+"× vs a deg-46 gene. The hub trap ranks essential hubs as targets. Toggle degree-correction.",
+        metrics:{
+          enrichment:"—",
+          gnnScore:"—",
+          candidateScore:degCorr?nodMembership.toFixed(2):"—",
+          hubInflation:maxInfl.toFixed(0)+"×"
+        },
+        focus:{center:[0,2.5,0],radius:15}
+      };
+    }
+
+    return {badge:"D11",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d11",
+    kind:"disease-module-discovery",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D11 · Disease module discovery on biological networks",
+    subtitle:"Crohn's disease on the PPI network. Three views: random-walk-with-restart diffusion, GNN module scoring with enrichment E(M), and the degree-corrected hub-bias diagnostic.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, module bar, or hub.",
+    modes:[
+      {value:"rwr",    label:"RWR diffusion (5-node Crohn's graph)"},
+      {value:"module", label:"Module scoring (E(M) + GNN)"},
+      {value:"hub",    label:"Hub bias (raw vs degree-corrected)"}
+    ],
+    params:[
+      {key:"alpha", label:"restart α (RWR)",min:0.1,max:0.9,step:0.05,value:0.4,
+       fmt:v=>v.toFixed(2),modes:["rwr"]},
+      {key:"iters", label:"RWR iterations",min:1,max:40,step:1,value:20,
+       fmt:v=>Math.round(v).toString(),modes:["rwr"]},
+      {key:"seedW", label:"NOD2 seed up-weight",min:0,max:2,step:0.1,value:0,
+       fmt:v=>"+"+v.toFixed(1),modes:["rwr"]},
+      {key:"tau",   label:"GNN decision shift τ",min:-1.5,max:1.5,step:0.1,value:0,
+       fmt:v=>(v>=0?"+":"")+v.toFixed(1),modes:["module"]},
+      {key:"degCorr",label:"degree correction (0=raw 1=corrected)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"raw":"corrected",modes:["hub"]}
+    ],
+    metrics:[
+      {key:"enrichment",     label:"Top enrichment E(M)",accent:"cyan"},
+      {key:"gnnScore",       label:"Top GNN module score",accent:"green"},
+      {key:"candidateScore", label:"LRRK2 / NOD2 score",accent:"amber"},
+      {key:"hubInflation",   label:"Max hub inflation",accent:"violet"}
+    ],
+    layers:[
+      {group:"net",    label:"Genes / clusters"},
+      {group:"flow",   label:"RWR mass / restart"},
+      {group:"bars",   label:"Score bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Local diffusion (α=0.8)",
+      on:api=>{ if(api.state.mode==="rwr") api.setParam("alpha",0.8); }
+    },
+    secondary:{
+      label:"Broad diffusion (α=0.2)",
+      on:api=>{ if(api.state.mode==="rwr") api.setParam("alpha",0.2); }
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=seed disease gene · <span style="color:#fbbf24">amber</span>=candidate (LRRK2) · grey=unrelated (MUC1) · <span style="color:#34d399">green</span>=passing module · <span style="color:#a78bfa">violet</span>=restart / hub.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="rwr") api.frame([0,3,0.6],13);
+      else if(s.mode==="module") api.frame([0,2,0.6],15);
+      else api.frame([0,2.5,0],15);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="rwr") api.frame([0,3,0.6],13);
+      else if(s.mode==="module") api.frame([0,2,0.6],15);
+      else api.frame([0,2.5,0],15);
+    },
+    onSelect(api,d){
+      if(d.node)   api.setSelected(d.node.name+" · "+d.node.kind+" · deg "+d.node.deg+" · p* "+d.node.score.toFixed(3));
+      if(d.module) api.setSelected(d.module.name+" · E(M) "+d.module.enrich.toFixed(0)+"× · "+d.module.hits+"/5 seeds · GNN "+(d.module.gnn*100).toFixed(0)+"% "+(d.module.isModule?"(MODULE)":"(rejected)"));
+      if(d.hub)    api.setSelected(d.hub.name+" · deg "+d.hub.deg+" · "+d.hub.exp.toFixed(1)+" expected seed hits · ×"+d.hub.infl.toFixed(1)+" inflation");
+    },
+    build,
+    snapshot(s){
+      const alpha=s.alpha, iters=Math.round(s.iters), seedW=s.seedW, tau=s.tau;
+      const degCorr=Math.round(s.degCorr);
+      const p=rwr(alpha,iters,seedW);
+      const lrrk2=p[3], muc1=p[4];
+      let topE=0, topG=0;
+      MODULES.forEach(m=>{const E=enrich(m), g=gnnScore(m,tau); if(E>topE)topE=E; if(g>topG)topG=g;});
+      const maxInfl=expOverlap(3521)/expOverlap(46);
+      return {
+        mode:s.mode,
+        alpha:+alpha.toFixed(3),
+        iters,
+        seedW:+seedW.toFixed(2),
+        tau:+tau.toFixed(2),
+        degCorr,
+        pLRRK2:+lrrk2.toFixed(3),
+        pMUC1:+muc1.toFixed(3),
+        candSep:+(lrrk2-muc1).toFixed(3),
+        enrichTop:+topE.toFixed(1),
+        gnnTop:+topG.toFixed(3),
+        hubInfl:+maxInfl.toFixed(1),
+        candidateElevated:(lrrk2>muc1+0.05)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

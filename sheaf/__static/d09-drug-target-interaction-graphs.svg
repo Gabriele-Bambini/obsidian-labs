@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure D09 — Aspirin's DTI graph — bind, transfer, evaluate honestly</title>
+<desc id="d">Four-panel captioned figure: Aspirin's DTI graph — bind, transfer, evaluate honestly</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE D09 · BLOCK D · BIOLOGY GRAPHS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="23" font-weight="700">Aspirin's DTI graph — bind, transfer, evaluate honestly</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Bipartite DTI graph</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">drug</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">aspirin (CID 2244)</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">COX-1</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">pIC50 5.80</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">COX-2</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">pIC50 3.56</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">CDK2/AMPK</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">untested (OWA)</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Bilinear ranking &amp; OWA</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">score(d,p) = h_d·W·h_p</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">COX-1 ≫ COX-2 ≫ 0</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">COX-1 pIC50</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">5.80</text>
+<text x="502" y="207.5" fill="#fbbf24" font-size="11.5" font-weight="700">COX-2 pIC50</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">3.56</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Tanimoto transfer</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">e(dᵢ,dⱼ) ⟺ Tanimoto ≥ τ</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">aspirin ← diflunisal ← COX-2</text>
+<rect x="56" y="347.68" width="12" height="56.32" rx="2" fill="#fbbf24"/>
+<text x="62" y="416" fill="#8a99ad" font-size="9" text-anchor="middle">bipart</text>
+<rect x="96" y="340" width="12" height="64" rx="2" fill="#4dd7ff"/>
+<text x="102" y="416" fill="#8a99ad" font-size="9" text-anchor="middle">aug</text>
+<rect x="136" y="347.04" width="12" height="56.96" rx="2" fill="#34d399"/>
+<text x="142" y="416" fill="#8a99ad" font-size="9" text-anchor="middle">true</text>
+<line x1="56" y1="347.04" x2="176" y2="347.04" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="441" fill="#8a99ad" font-size="11">Aspirin↔diflunisal Tanimoto 0.51 ≥ τ=0.40 lifts COX-2</text>
+<text x="56" y="461" fill="#8a99ad" font-size="11">from 3.52 to 4.00.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Split honesty</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">random AUROC</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">0.90</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">scaffold AUROC</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.79</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">gap (memorize)</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">+0.11</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">report</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">scaffold split</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure D09. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Aspirin's </text>
+<text x="224.91" y="538" fill="#c7d2dd" font-size="13">drug-target </text>
+<text x="321.63" y="538" fill="#c7d2dd" font-size="13">interaction </text>
+<text x="418.35" y="538" fill="#c7d2dd" font-size="13">graph, </text>
+<text x="474.77" y="538" fill="#c7d2dd" font-size="13">worked </text>
+<text x="531.19" y="538" fill="#c7d2dd" font-size="13">end-to-end. </text>
+<text x="627.91" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="661.44" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="678.77" y="538" fill="#c7d2dd" font-size="13">bipartite </text>
+<text x="759.37" y="538" fill="#c7d2dd" font-size="13">graph </text>
+<text x="807.73" y="538" fill="#c7d2dd" font-size="13">links</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">aspirin </text>
+<text x="104.48" y="559" fill="#c7d2dd" font-size="13">to </text>
+<text x="128.66" y="559" fill="#c7d2dd" font-size="13">proteins </text>
+<text x="201.2" y="559" fill="#c7d2dd" font-size="13">by </text>
+<text x="225.38" y="559" fill="#c7d2dd" font-size="13">confirmed </text>
+<text x="305.98" y="559" fill="#c7d2dd" font-size="13">binding; </text>
+<text x="378.52" y="559" fill="#c7d2dd" font-size="13">CDK2/AMPK </text>
+<text x="467.58" y="559" fill="#c7d2dd" font-size="13">are </text>
+<text x="499.82" y="559" fill="#c7d2dd" font-size="13">untested, </text>
+<text x="580.42" y="559" fill="#c7d2dd" font-size="13">so </text>
+<text x="604.6" y="559" fill="#c7d2dd" font-size="13">under </text>
+<text x="652.96" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="685.2" y="559" fill="#c7d2dd" font-size="13">OWA </text>
+<text x="721.07" y="559" fill="#c7d2dd" font-size="13">their </text>
+<text x="769.43" y="559" fill="#c7d2dd" font-size="13">absent </text>
+<text x="825.85" y="559" fill="#c7d2dd" font-size="13">edges</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">are </text>
+<text x="72.24" y="580" fill="#c7d2dd" font-size="13">not </text>
+<text x="104.48" y="580" fill="#c7d2dd" font-size="13">negatives. </text>
+<text x="193.14" y="580" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="226.67" y="580" fill="#c7d2dd" font-size="13">Bilinear </text>
+<text x="300.42" y="580" fill="#c7d2dd" font-size="13">scoring </text>
+<text x="364.9" y="580" fill="#c7d2dd" font-size="13">ranks </text>
+<text x="413.26" y="580" fill="#c7d2dd" font-size="13">COX-1 </text>
+<text x="465.25" y="580" fill="#c7d2dd" font-size="13">(5.80) </text>
+<text x="521.67" y="580" fill="#c7d2dd" font-size="13">above </text>
+<text x="570.03" y="580" fill="#c7d2dd" font-size="13">COX-2 </text>
+<text x="622.01" y="580" fill="#c7d2dd" font-size="13">(3.56); </text>
+<text x="686.49" y="580" fill="#c7d2dd" font-size="13">both </text>
+<text x="726.79" y="580" fill="#c7d2dd" font-size="13">fall </text>
+<text x="767.09" y="580" fill="#c7d2dd" font-size="13">below </text>
+<text x="815.45" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="847.69" y="580" fill="#c7d2dd" font-size="13">6.0</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">threshold. </text>
+<text x="128.66" y="601" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="162.19" y="601" fill="#c7d2dd" font-size="13">A </text>
+<text x="179.52" y="601" fill="#c7d2dd" font-size="13">Tanimoto </text>
+<text x="253.27" y="601" fill="#c7d2dd" font-size="13">edge </text>
+<text x="293.57" y="601" fill="#c7d2dd" font-size="13">(0.51 </text>
+<text x="341.93" y="601" fill="#c7d2dd" font-size="13">≥ </text>
+<text x="364.5" y="601" fill="#c7d2dd" font-size="13">0.40) </text>
+<text x="412.86" y="601" fill="#c7d2dd" font-size="13">transfers </text>
+<text x="493.46" y="601" fill="#c7d2dd" font-size="13">diflunisal's </text>
+<text x="598.24" y="601" fill="#c7d2dd" font-size="13">signal, </text>
+<text x="662.72" y="601" fill="#c7d2dd" font-size="13">lifting </text>
+<text x="727.2" y="601" fill="#c7d2dd" font-size="13">COX-2 </text>
+<text x="779.18" y="601" fill="#c7d2dd" font-size="13">3.52 </text>
+<text x="819.48" y="601" fill="#c7d2dd" font-size="13">→ </text>
+<text x="842.05" y="601" fill="#c7d2dd" font-size="13">4.00.</text>
+<text x="40" y="622" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="73.53" y="622" fill="#c7d2dd" font-size="13">Random </text>
+<text x="131.16" y="622" fill="#c7d2dd" font-size="13">flatters </text>
+<text x="203.7" y="622" fill="#c7d2dd" font-size="13">by </text>
+<text x="227.88" y="622" fill="#c7d2dd" font-size="13">+0.11 </text>
+<text x="276.24" y="622" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="330.64" y="622" fill="#c7d2dd" font-size="13">(0.90 </text>
+<text x="379" y="622" fill="#c7d2dd" font-size="13">vs </text>
+<text x="403.18" y="622" fill="#c7d2dd" font-size="13">scaffold </text>
+<text x="475.72" y="622" fill="#c7d2dd" font-size="13">0.79); </text>
+<text x="532.14" y="622" fill="#c7d2dd" font-size="13">report </text>
+<text x="588.56" y="622" fill="#c7d2dd" font-size="13">scaffold </text>
+<text x="661.1" y="622" fill="#c7d2dd" font-size="13">split.</text>
+</svg>

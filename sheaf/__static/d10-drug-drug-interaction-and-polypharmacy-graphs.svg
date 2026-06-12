@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure D10 — One drug pair, several side-effect edges</title>
+<desc id="d">Four-panel captioned figure: One drug pair, several side-effect edges</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE D10 · BLOCK D · BIOLOGY GRAPHS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">One drug pair, several side-effect edges</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">DDI multigraph</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">drugs</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edge types</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">3</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">multi-edge</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">warf×amio</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">RGCN + basis decomp</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">hᵢ = σ(W₀hᵢ + Σᵣ Σⱼ Wᵣhⱼ)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">Wᵣ = Σ_b a_rb V_b</text>
+<text x="502" y="187.5" fill="#fb7185" font-size="11.5" font-weight="700">full Wᵣ</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">988K</text>
+<text x="502" y="207.5" fill="#34d399" font-size="11.5" font-weight="700">basis</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">64K</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">New drug (rivaroxaban)</text>
+<text x="56" y="301.5" fill="#fb7185" font-size="11.5" font-weight="700">riva+asp → r1</text>
+<text x="196" y="301.5" fill="#9fb4cc" font-size="11.5">0.91</text>
+<text x="56" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">riva+amio → r2</text>
+<text x="196" y="321.5" fill="#9fb4cc" font-size="11.5">0.34</text>
+<text x="56" y="341.5" fill="#fbbf24" font-size="11.5" font-weight="700">warf+amio → r2</text>
+<text x="196" y="341.5" fill="#9fb4cc" font-size="11.5">0.89</text>
+<text x="56" y="369" fill="#8a99ad" font-size="11">Zero DDI edges: features alone. Xa not CYP2C9, so</text>
+<text x="56" y="389" fill="#8a99ad" font-size="11">amiodarone's QT path stays low.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Scale &amp; evaluation</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">triples</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">400M</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">observed</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">1.15%</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">AUROC</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">0.87</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">AP@50</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">0.40</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure D10. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">4-drug </text>
+<text x="216.85" y="538" fill="#c7d2dd" font-size="13">DDI </text>
+<text x="252.72" y="538" fill="#c7d2dd" font-size="13">multigraph </text>
+<text x="341.38" y="538" fill="#c7d2dd" font-size="13">over </text>
+<text x="381.68" y="538" fill="#c7d2dd" font-size="13">3 </text>
+<text x="397.8" y="538" fill="#c7d2dd" font-size="13">side-effect </text>
+<text x="494.52" y="538" fill="#c7d2dd" font-size="13">edge </text>
+<text x="534.82" y="538" fill="#c7d2dd" font-size="13">types. </text>
+<text x="591.24" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="624.77" y="538" fill="#c7d2dd" font-size="13">Warfarin–amiodarone </text>
+<text x="793.63" y="538" fill="#c7d2dd" font-size="13">carries </text>
+<text x="858.11" y="538" fill="#c7d2dd" font-size="13">two</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">edges </text>
+<text x="88.36" y="559" fill="#c7d2dd" font-size="13">(r2 </text>
+<text x="120.6" y="559" fill="#c7d2dd" font-size="13">QT </text>
+<text x="147.2" y="559" fill="#c7d2dd" font-size="13">+ </text>
+<text x="163.32" y="559" fill="#c7d2dd" font-size="13">r3 </text>
+<text x="187.5" y="559" fill="#c7d2dd" font-size="13">hepatotoxic); </text>
+<text x="300.34" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="316.46" y="559" fill="#c7d2dd" font-size="13">binary </text>
+<text x="372.88" y="559" fill="#c7d2dd" font-size="13">graph </text>
+<text x="421.24" y="559" fill="#c7d2dd" font-size="13">merges </text>
+<text x="477.66" y="559" fill="#c7d2dd" font-size="13">them. </text>
+<text x="526.02" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="559.55" y="559" fill="#c7d2dd" font-size="13">RGCN </text>
+<text x="604.68" y="559" fill="#c7d2dd" font-size="13">gives </text>
+<text x="653.04" y="559" fill="#c7d2dd" font-size="13">each </text>
+<text x="693.34" y="559" fill="#c7d2dd" font-size="13">relation </text>
+<text x="765.88" y="559" fill="#c7d2dd" font-size="13">its </text>
+<text x="798.12" y="559" fill="#c7d2dd" font-size="13">own </text>
+<text x="830.36" y="559" fill="#c7d2dd" font-size="13">Wᵣ;</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">basis </text>
+<text x="88.36" y="580" fill="#c7d2dd" font-size="13">decomposition </text>
+<text x="201.2" y="580" fill="#c7d2dd" font-size="13">cuts </text>
+<text x="241.5" y="580" fill="#c7d2dd" font-size="13">988K </text>
+<text x="283.01" y="580" fill="#c7d2dd" font-size="13">to </text>
+<text x="307.19" y="580" fill="#c7d2dd" font-size="13">64K </text>
+<text x="340.64" y="580" fill="#c7d2dd" font-size="13">params </text>
+<text x="397.06" y="580" fill="#c7d2dd" font-size="13">(~16×). </text>
+<text x="467.99" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="501.52" y="580" fill="#c7d2dd" font-size="13">Rivaroxaban </text>
+<text x="599.44" y="580" fill="#c7d2dd" font-size="13">has </text>
+<text x="631.68" y="580" fill="#c7d2dd" font-size="13">no </text>
+<text x="655.86" y="580" fill="#c7d2dd" font-size="13">DDI </text>
+<text x="691.73" y="580" fill="#c7d2dd" font-size="13">edges:</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">P(riva+asp→r1)=0.91 </text>
+<text x="208.86" y="601" fill="#c7d2dd" font-size="13">fires, </text>
+<text x="265.28" y="601" fill="#c7d2dd" font-size="13">but </text>
+<text x="297.52" y="601" fill="#c7d2dd" font-size="13">P(riva+amio→r2)=0.34 </text>
+<text x="474.43" y="601" fill="#c7d2dd" font-size="13">stays </text>
+<text x="522.79" y="601" fill="#c7d2dd" font-size="13">below </text>
+<text x="571.15" y="601" fill="#c7d2dd" font-size="13">warfarin's </text>
+<text x="659.81" y="601" fill="#c7d2dd" font-size="13">0.89 </text>
+<text x="700.11" y="601" fill="#c7d2dd" font-size="13">(Factor-Xa, </text>
+<text x="799.25" y="601" fill="#c7d2dd" font-size="13">not</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">CYP2C9). </text>
+<text x="117.38" y="622" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="150.91" y="622" fill="#c7d2dd" font-size="13">Only </text>
+<text x="192.41" y="622" fill="#c7d2dd" font-size="13">~1.15% </text>
+<text x="255.28" y="622" fill="#c7d2dd" font-size="13">of </text>
+<text x="279.46" y="622" fill="#c7d2dd" font-size="13">~400M </text>
+<text x="329.03" y="622" fill="#c7d2dd" font-size="13">triples </text>
+<text x="393.51" y="622" fill="#c7d2dd" font-size="13">are </text>
+<text x="425.75" y="622" fill="#c7d2dd" font-size="13">observed; </text>
+<text x="506.35" y="622" fill="#c7d2dd" font-size="13">Decagon </text>
+<text x="572.04" y="622" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="626.45" y="622" fill="#c7d2dd" font-size="13">0.87, </text>
+<text x="674.81" y="622" fill="#c7d2dd" font-size="13">AP@50 </text>
+<text x="732.03" y="622" fill="#c7d2dd" font-size="13">0.40.</text>
+</svg>

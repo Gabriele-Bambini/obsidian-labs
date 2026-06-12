@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J05 · Counterfactual explanations on graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no entropy sources) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // FACTS — Patient 7 TME graph, from note §5 (worked example)
+  //   Model: f(G) classifies TME as immune-excluded (0) / immune-inflamed (1).
+  //   f(G) = immune-excluded, confidence 0.81.
+  // ═════════════════════════════════════════════════════════════════════════
+  // 6 cells (nodes). pos laid out on a ring; type drives colour.
+  // idx: 0 T_cell_1, 1 T_cell_2, 2 Macrophage, 3 Cancer_1, 4 Cancer_2, 5 Fibroblast
+  const CELLS=[
+    {id:"T_cell_1", short:"T1",  type:"Tcell",  note:"CD8+ exhausted · PD1_high · GZMA_low"},
+    {id:"T_cell_2", short:"T2",  type:"Tcell",  note:"CD8+ exhausted"},
+    {id:"Macroph.", short:"Mac", type:"Myeloid",note:"M2 polarized · IL10_high"},
+    {id:"Cancer_1", short:"C1",  type:"Cancer", note:"PD-L1_high · MHC_low"},
+    {id:"Cancer_2", short:"C2",  type:"Cancer", note:"tumour cell"},
+    {id:"Fibrobl.", short:"Fib", type:"Stroma", note:"CAF · CXCL12_high · FAP_high"}
+  ];
+  // ring positions (x,z); T1 placed at centre-ish hub since it receives most edges
+  const POS=[
+    [ 0.0,0,-0.6],   // T1 hub
+    [ 3.4,0, 2.6],   // T2
+    [-3.6,0,-2.4],   // Mac
+    [-3.4,0, 2.6],   // C1
+    [ 3.6,0,-2.4],   // C2
+    [ 0.0,0, 3.9]    // Fib
+  ];
+  // 5 ligand-receptor edges; immunosuppressive weight w (higher = pushes toward excluded).
+  // cfMask = CF-GNNExplainer learned removal mask (note §5). 0 = none.
+  const EDGES=[
+    {a:0,b:3, lig:"PD1-PDL1",  kind:"checkpoint",   w:0.34, cfMask:0.91, undirected:true },
+    {a:1,b:4, lig:"PD1-PDL1",  kind:"checkpoint",   w:0.27, cfMask:0.87, undirected:true },
+    {a:2,b:0, lig:"IL10-IL10R",kind:"cytokine",     w:0.18, cfMask:0.73, undirected:false},
+    {a:5,b:0, lig:"CXCL12-CXCR4",kind:"chemokine",  w:0.30, cfMask:0.41, undirected:false},
+    {a:3,b:0, lig:"TGFb-TGFbR",kind:"cytokine",     w:0.32, cfMask:0.38, undirected:false}
+  ];
+  // factual logit components: bias + sum of suppressive edge weights drives "excluded".
+  // calibrated so confidence(excluded) = 0.81 at factual graph.
+  const F={
+    confExcl:0.81,        // f(G) = class 0, conf 0.81
+    confInflCF1:0.76,     // CF1 flips to class 1, conf 0.76
+    gzmaLow:0.1, gzmaHigh:0.6,  // T1 granzyme A feature change
+    edgesTotal:5,
+    cf1EdgesRemoved:3,    // PD1-PDL1 x2 + IL10-IL10R
+    cf1FeatChanged:1,     // GZMA on T1
+    lamA:1.0, lamX:0.6    // dist weights (topology vs feature)
+  };
+  // Diverse counterfactuals (DiCE), note §5
+  // CF1 = CF-GNNExplainer; CF2/CF3 from DiCE.
+  // remEdges = topology edits; featNodes = feature edits; bonus = extra suppressive-load
+  // relief from the named biological mechanism (stromal release / antigen presentation)
+  // calibrated so each diverse CF crosses the flip threshold, matching note §5.
+  const DICE={
+    cf2:{label:"CF2 · anti-TGFb + anti-CXCL12", remEdges:[3,4], featNodes:[],  conf:0.71, bonus:0.55, strategy:"stromal block"},
+    cf3:{label:"CF3 · upregulate MHC on C1",     remEdges:[],     featNodes:[3], conf:0.69, bonus:1.10, strategy:"antigen presentation"}
+  };
+
+  // distance dist(G,G') = lamA*|EΔE'|/|E| + lamX*||X-X'|| /(|V|*d)  (note §3)
+  function cfDistance(nRemEdges,featNodes){
+    const top=F.lamA*(nRemEdges/F.edgesTotal);
+    // feature term: GZMA change magnitude 0.5 normalised by |V|*d (6 cells * ~4 feat)
+    const featMag=featNodes.reduce((acc,n)=>{ return acc + (n===0?(F.gzmaHigh-F.gzmaLow):0.5); },0);
+    const feat=F.lamX*(featMag/(CELLS.length*4));
+    return top+feat;
+  }
+
+  // logit margin toward inflamed once a set of edges is removed (deterministic).
+  // base suppressive load = Σ w; removing edges lowers it; flip when load < threshold.
+  const SUPP_THRESH=0.55;
+  function suppLoad(removedSet,gzmaBoost,bonus){
+    let load=0.10; // baseline bias toward excluded
+    EDGES.forEach((e,i)=>{ if(!removedSet.has(i)) load+=e.w; });
+    load-=gzmaBoost*0.40;   // raising T1 GZMA reinvigorates cytotoxicity
+    load-=(bonus||0);        // named-mechanism relief (DiCE CF2/CF3)
+    return load;
+  }
+  // map suppressive load -> confidence(immune-inflamed) via logistic on (thresh - load)
+  function inflamedConf(load){ const z=(SUPP_THRESH-load)*6.0; return 1/(1+Math.exp(-z)); }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const budget=s.budget;          // edge-removal budget 1..5
+    const featGzma=s.featGzma;      // 0..1 : T1 GZMA raised fraction (cf-gnn)
+    const diceK=Math.round(s.diceK);// 1=CF2  2=CF3  (dice mode)
+    const lamX=s.lamX;              // feature-cost weight in quality view
+
+    const gGraph =api.group("graph");
+    const gEdges =api.group("edges");
+    const gCf    =api.group("cf");
+    const gLabels=api.group("labels");
+    const gBars  =api.group("bars");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");  // T cells / pretrained-good
+    const GR=new T.Color("#34d399");  // flipped / inflamed / removed-good
+    const AM=new T.Color("#fbbf24");   // cancer / warning
+    const VI=new T.Color("#a78bfa");   // counterfactual change
+    const RO=new T.Color("#fb7185");   // suppressive / repression
+    const SL=new T.Color("#54667c");
+    const typeCol={Tcell:CY, Myeloid:AM, Cancer:RO, Stroma:VI};
+
+    // pick the active removed-edge set + feature change for the current mode
+    let removed=new Set();
+    let gzmaBoost=0;       // 0..1 fraction toward GZMA_high
+    let cfTitle="factual graph";
+    let featNodes=[];
+
+    let cfBonus=0;
+    if(mode==="original"){
+      removed=new Set();
+      gzmaBoost=0;
+      cfTitle="factual G";
+    } else if(mode==="cf-gnn"){
+      // remove the top-`budget` highest-cfMask edges (the learned ranking)
+      const ranked=EDGES.map((e,i)=>({i,m:e.cfMask})).sort((p,q)=>q.m-p.m);
+      const b=Math.max(1,Math.min(F.edgesTotal,Math.round(budget)));
+      for(let k=0;k<b;k++){ removed.add(ranked[k].i); }
+      gzmaBoost=featGzma;
+      if(gzmaBoost>0.05) featNodes=[0];
+      cfTitle="CF-GNNExplainer";
+    } else if(mode==="dice"){
+      const cf=(diceK===1)?DICE.cf2:DICE.cf3;
+      cf.remEdges.forEach(i=>removed.add(i));
+      featNodes=cf.featNodes.slice();
+      gzmaBoost=0; // CF2/CF3 do not touch GZMA
+      cfBonus=cf.bonus;
+      cfTitle=cf.label;
+    } else if(mode==="quality"){
+      // quality view re-uses the CF1 solution as the reference counterfactual
+      const ranked=EDGES.map((e,i)=>({i,m:e.cfMask})).sort((p,q)=>q.m-p.m);
+      for(let k=0;k<3;k++) removed.add(ranked[k].i);
+      gzmaBoost=1; featNodes=[0];
+      cfTitle="CF1 (evaluated)";
+    }
+
+    // ── draw the cells (shared across graph-bearing modes) ──────────────────
+    const drawGraph=(mode!=="quality");
+    if(drawGraph){
+      CELLS.forEach((c,i)=>{
+        const p=POS[i];
+        const baseCol=typeCol[c.type].clone();
+        // T1 changes colour green when GZMA is raised (reinvigorated)
+        const isFeat=(i===0 && gzmaBoost>0.05);
+        const col=isFeat?GR.clone():baseCol;
+        const sphere=new T.Mesh(
+          new T.SphereGeometry(i===0?0.46:0.36,20,16),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.55),emissiveIntensity:isFeat?0.85:0.55,roughness:0.4})
+        );
+        sphere.position.set(p[0],0,p[2]);
+        gGraph.add(sphere);
+        api.pick(sphere,{cell:{id:c.id,type:c.type,note:c.note,feat:isFeat}});
+        addSlbl(c.short,col.getStyle(),0.42,p[0],0.62,p[2]);
+
+        // feature-change marker above T1 when GZMA raised
+        if(isFeat){
+          const cone=new T.Mesh(new T.ConeGeometry(0.12,0.42,10),new T.MeshBasicMaterial({color:GR}));
+          cone.position.set(p[0],1.18,p[2]);
+          gGraph.add(cone);
+          addLbl("GZMA "+F.gzmaLow.toFixed(1)+"→"+(F.gzmaLow+gzmaBoost*(F.gzmaHigh-F.gzmaLow)).toFixed(2),"#34d399",1.0,p[0],1.78,p[2]);
+        }
+      });
+
+      // ── draw the edges ────────────────────────────────────────────────────
+      EDGES.forEach((e,i)=>{
+        const pa=POS[e.a], pb=POS[e.b];
+        const A=new T.Vector3(pa[0],0,pa[2]), B=new T.Vector3(pb[0],0,pb[2]);
+        const isRemoved=removed.has(i);
+        if(isRemoved){
+          // removed edge: faint dashed-feel grey line + violet X marker at midpoint
+          gEdges.add(new T.Line(new T.BufferGeometry().setFromPoints([A,B]),new T.LineBasicMaterial({color:0x223247,transparent:true,opacity:0.30})));
+          const mid=A.clone().add(B).multiplyScalar(0.5); mid.y=0.05;
+          const xm=new T.Mesh(new T.SphereGeometry(0.16,12,10),new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.9,roughness:0.3}));
+          xm.position.copy(mid); gCf.add(xm); api.pick(xm,{edge:{lig:e.lig,kind:e.kind,removed:true,mask:e.cfMask}});
+          addLbl("✕ "+e.lig,"#a78bfa",0.92,mid.x,0.55,mid.z);
+        } else {
+          // active suppressive edge: rose, thickness ~ suppressive weight
+          const tubeW=0.04+e.w*0.18;
+          const dir=B.clone().sub(A); const len=dir.length();
+          const cyl=new T.Mesh(new T.CylinderGeometry(tubeW,tubeW,len,10),new T.MeshStandardMaterial({color:RO,emissive:RO,emissiveIntensity:0.45,roughness:0.45}));
+          cyl.position.copy(A.clone().add(B).multiplyScalar(0.5));
+          cyl.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+          gEdges.add(cyl);
+          api.pick(cyl,{edge:{lig:e.lig,kind:e.kind,removed:false,mask:e.cfMask,w:e.w}});
+          // directed arrow head for directed suppressive edges
+          if(!e.undirected){
+            const head=new T.Mesh(new T.ConeGeometry(0.13,0.32,10),new T.MeshBasicMaterial({color:RO}));
+            const hp=A.clone().add(dir.clone().multiplyScalar(0.78)); hp.y=0;
+            head.position.copy(hp);
+            head.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+            gEdges.add(head);
+          }
+        }
+      });
+      addLbl("Patient 7 · TME graph","#7f93a8",1.15,0,0.0,-4.4);
+    }
+
+    // suppressive load + flip status for current scene
+    const load=suppLoad(removed,gzmaBoost,cfBonus);
+    const inflConf=inflamedConf(load);
+    const flipped=inflConf>=0.5;
+    const nRem=removed.size;
+    const dist=cfDistance(nRem,featNodes);
+
+    // ── MODE: original ──────────────────────────────────────────────────────
+    if(mode==="original"){
+      // decision-boundary plane behind the graph + class label
+      const plane=new T.Mesh(new T.PlaneGeometry(7,3.2),new T.MeshBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.10,side:T.DoubleSide}));
+      plane.position.set(0,2.4,-5.0); gCf.add(plane);
+      addLbl("f(G) = immune-EXCLUDED","#fb7185",1.5,0,3.4,-4.95);
+      addLbl("confidence "+F.confExcl.toFixed(2),"#fb7185",1.2,0,2.5,-4.95);
+
+      sceneSnap={mode,suppressiveLoad:+load.toFixed(3),inflamedConf:+inflConf.toFixed(3),flipped:false,edgesRemoved:0,cfDistance:0,validity:0};
+      return {
+        badge:"Factual · immune-excluded · conf "+F.confExcl.toFixed(2),
+        formula:"f(G) = y = immune-excluded   (conf "+F.confExcl.toFixed(2)+")",
+        insight:"Patient 7's tumour micro-environment. Rose tubes are immunosuppressive cell-cell signals (PD1-PDL1 checkpoint, IL10, CXCL12, TGFβ). Thicker tube = stronger suppression. The GNN reads this network and predicts immune-EXCLUDED with confidence "+F.confExcl.toFixed(2)+". The clinical question: what minimal change would make it immune-inflamed?",
+        state:"Suppressive load "+load.toFixed(2)+" (threshold "+SUPP_THRESH.toFixed(2)+"). Inflamed-confidence "+(inflConf*100).toFixed(0)+"% — below 50%, so the model stays on class 0. No edges removed yet.",
+        metrics:{predClass:"excluded",flipConf:(inflConf*100).toFixed(0)+"%",edgesRemoved:"0 / "+F.edgesTotal,cfDistance:"0.00"},
+        focus:{center:[0,1.2,-1],radius:13}
+      };
+    }
+
+    // ── MODE: cf-gnn (CF-GNNExplainer single minimal counterfactual) ────────
+    if(mode==="cf-gnn"){
+      // boundary plane flips colour with prediction
+      const cls=flipped?GR:RO;
+      const plane=new T.Mesh(new T.PlaneGeometry(7,3.2),new T.MeshBasicMaterial({color:cls.getHex(),transparent:true,opacity:0.12,side:T.DoubleSide}));
+      plane.position.set(0,2.4,-5.0); gCf.add(plane);
+      addLbl(flipped?"f(G') = immune-INFLAMED":"f(G') = still excluded",cls.getStyle(),1.45,0,3.4,-4.95);
+      addLbl((flipped?"inflamed conf ":"inflamed conf ")+(inflConf*100).toFixed(0)+"%",cls.getStyle(),1.15,0,2.5,-4.95);
+
+      // ranked edge-mask mini-bars (learned removal scores)
+      const ranked=EDGES.map((e,i)=>({i,e,m:e.cfMask})).sort((p,q)=>q.m-p.m);
+      ranked.forEach((r,k)=>{
+        const x=-4.4+k*1.0; const h=0.08+r.m*2.4;
+        const inSet=removed.has(r.i);
+        const col=inSet?VI:SL;
+        const bar=new T.Mesh(new T.BoxGeometry(0.6,h,0.5),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(inSet?0.8:0.2),emissiveIntensity:inSet?0.7:0.18,roughness:0.4,transparent:!inSet,opacity:inSet?1:0.5}));
+        bar.position.set(x,h/2,5.4); gBars.add(bar);
+        addLbl(r.m.toFixed(2),col.getStyle(),0.92,x,h+0.4,5.4);
+      });
+      addLbl("learned edge-removal mask P̂","#a78bfa",1.05,-2.0,2.6,5.4);
+
+      const distRound=+dist.toFixed(3);
+      sceneSnap={mode,suppressiveLoad:+load.toFixed(3),inflamedConf:+inflConf.toFixed(3),flipped,edgesRemoved:nRem,cfDistance:distRound,validity:flipped?1:0};
+      return {
+        badge:"CF-GNNExplainer · "+nRem+" edge(s)"+(gzmaBoost>0.05?" + GZMA":"")+(flipped?" · FLIPPED":" · not yet"),
+        formula:"min  λᴀ·|EΔE'|/|E| + λˣ·||X−X'|| + μ·L_cf(f(G'),y')",
+        insight:"CF-GNNExplainer learns an edge-removal mask P̂ (violet bars). It removes the highest-scoring edges first — PD1-PDL1 (0.91, 0.87) then IL10-IL10R (0.73). Raising T-cell GZMA (granzyme A, the feature change) reinvigorates cytotoxicity. The note's minimal counterfactual = remove "+F.cf1EdgesRemoved+" edges + raise GZMA "+F.gzmaLow.toFixed(1)+"→"+F.gzmaHigh.toFixed(1)+", flipping to inflamed (conf "+F.confInflCF1.toFixed(2)+").",
+        state:(flipped?"FLIPPED to immune-inflamed":"Not flipped yet")+". Removed "+nRem+"/"+F.edgesTotal+" edges, GZMA boost "+(gzmaBoost*100).toFixed(0)+"%. Suppressive load "+load.toFixed(2)+" vs threshold "+SUPP_THRESH.toFixed(2)+". dist(G,G') = "+dist.toFixed(2)+".",
+        metrics:{predClass:flipped?"inflamed":"excluded",flipConf:(inflConf*100).toFixed(0)+"%",edgesRemoved:nRem+" / "+F.edgesTotal,cfDistance:dist.toFixed(2)},
+        focus:{center:[0,1.4,0],radius:14}
+      };
+    }
+
+    // ── MODE: dice (diverse counterfactuals CF2 / CF3) ──────────────────────
+    if(mode==="dice"){
+      const cls=flipped?GR:AM;
+      const plane=new T.Mesh(new T.PlaneGeometry(7,3.2),new T.MeshBasicMaterial({color:cls.getHex(),transparent:true,opacity:0.11,side:T.DoubleSide}));
+      plane.position.set(0,2.4,-5.0); gCf.add(plane);
+      const cf=(diceK===1)?DICE.cf2:DICE.cf3;
+      addLbl(cf.label,"#a78bfa",1.25,0,3.4,-4.95);
+      addLbl("strategy: "+cf.strategy+" · conf "+cf.conf.toFixed(2),cls.getStyle(),1.05,0,2.5,-4.95);
+
+      // CF3 (idx2) changes Cancer_1 from PD-L1_high to MHC_high (feature, not edge)
+      if(diceK===2){
+        const p=POS[3];
+        const cone=new T.Mesh(new T.ConeGeometry(0.13,0.45,10),new T.MeshBasicMaterial({color:GR}));
+        cone.position.set(p[0],1.2,p[2]); gCf.add(cone);
+        addLbl("PD-L1→MHC","#34d399",1.0,p[0],1.8,p[2]);
+      }
+
+      sceneSnap={mode,suppressiveLoad:+load.toFixed(3),inflamedConf:+inflConf.toFixed(3),flipped,edgesRemoved:nRem,cfDistance:+dist.toFixed(3),diceK,validity:flipped?1:0};
+      return {
+        badge:"DiCE · "+cf.label.split(" · ")[0]+(flipped?" · valid":" · partial"),
+        formula:"diversify:  loss += λ_div · cos(mask_k, mask_<k)",
+        insight:"DiCE generates DIVERSE counterfactuals, not one. Beyond CF1 it finds CF2 (remove CXCL12 + TGFβ — a stromal-block strategy) and CF3 (upregulate MHC on Cancer_1 — antigen presentation). The three counterfactuals point to three independent therapeutic angles: checkpoint blockade, anti-stroma, and antigen presentation. Toggle CF2/CF3 to compare.",
+        state:cf.label+". Removed edges: "+(cf.remEdges.length?cf.remEdges.length:"0")+", feature nodes: "+(cf.featNodes.length?"Cancer_1":"none")+". Suppressive load "+load.toFixed(2)+", inflamed conf "+(inflConf*100).toFixed(0)+"%. dist(G,G') = "+dist.toFixed(2)+".",
+        metrics:{predClass:flipped?"inflamed":"borderline",flipConf:(inflConf*100).toFixed(0)+"%",edgesRemoved:nRem+" / "+F.edgesTotal,cfDistance:dist.toFixed(2)},
+        focus:{center:[0,1.4,-1],radius:14}
+      };
+    }
+
+    // ── MODE: quality (the 4 evaluation metrics) ────────────────────────────
+    if(mode==="quality"){
+      // four metric bars: validity, proximity (1-dist), feasibility, diversity
+      const validity = flipped?1:0;                       // f(G')=y' ?
+      const proximity= Math.max(0,1-dist);                // closer is better
+      // feasibility: penalised when feature change exceeds budget weighted by lamX
+      const featCost = lamX*(F.gzmaHigh-F.gzmaLow);
+      const feasibility= Math.max(0,1-featCost-0.10);     // GZMA & checkpoint are druggable
+      const diversity = 0.74;                             // 3 distinct CFs (CF1/CF2/CF3)
+      const items=[
+        {lbl:"validity",   v:validity,    col:GR},
+        {lbl:"proximity",  v:proximity,   col:CY},
+        {lbl:"feasibility",v:feasibility, col:AM},
+        {lbl:"diversity",  v:diversity,   col:VI}
+      ];
+      const xPos=[-4.2,-1.4,1.4,4.2];
+      items.forEach((it,k)=>{
+        const x=xPos[k]; const h=0.12+it.v*4.0;
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.3),new T.MeshStandardMaterial({color:it.col,emissive:it.col.clone().multiplyScalar(0.6),emissiveIntensity:0.55,roughness:0.4}));
+        bar.position.set(x,h/2,0); gBars.add(bar);
+        api.pick(bar,{metric:{name:it.lbl,value:it.v}});
+        addLbl((it.v*100).toFixed(0)+"%",it.col.getStyle(),1.5,x,h+0.5,0);
+        addSlbl(it.lbl,it.col.getStyle(),0.4,x,0.05,0);
+      });
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5.6,0,0),new T.Vector3(5.6,0,0)]),new T.LineBasicMaterial({color:0x1e3046})));
+      addLbl("counterfactual quality (CF1)","#7f93a8",1.2,0,4.7,0);
+
+      sceneSnap={mode,suppressiveLoad:+load.toFixed(3),inflamedConf:+inflConf.toFixed(3),flipped,edgesRemoved:nRem,cfDistance:+dist.toFixed(3),validity,proximity:+proximity.toFixed(3),feasibility:+feasibility.toFixed(3),diversity};
+      return {
+        badge:"Quality · valid "+(validity?"✓":"✗")+" · prox "+(proximity*100).toFixed(0)+"% · feas "+(feasibility*100).toFixed(0)+"%",
+        formula:"score = {validity, proximity, feasibility, diversity}",
+        insight:"A counterfactual is judged on four axes (note §6). VALIDITY: does f(G')=y'? PROXIMITY: how close is G' to G (small dist)? FEASIBILITY: is each change biologically achievable — checkpoint blockade & GZMA are druggable, raising lamX (feature cost) lowers it. DIVERSITY: do the CFs cover distinct strategies? CF1 is valid, close, feasible, and part of a diverse set.",
+        state:"validity "+(validity*100).toFixed(0)+"% · proximity "+(proximity*100).toFixed(0)+"% · feasibility "+(feasibility*100).toFixed(0)+"% · diversity "+(diversity*100).toFixed(0)+"%. dist(G,G')="+dist.toFixed(2)+", feature-cost weight λˣ="+lamX.toFixed(2)+".",
+        metrics:{predClass:validity?"valid":"invalid",flipConf:(proximity*100).toFixed(0)+"%",edgesRemoved:nRem+" / "+F.edgesTotal,cfDistance:dist.toFixed(2)},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    return {badge:"J05",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"j05",
+    kind:"counterfactual-explanations",
+    eyebrow:"Block J · Advanced GNN Theory",
+    title:"J05 · Counterfactual explanations on graphs",
+    subtitle:"What is the minimal change to Patient 7's tumour micro-environment that flips the GNN from immune-excluded to immune-inflamed? Four views: the factual graph, CF-GNNExplainer's minimal edit, DiCE's diverse alternatives, and the quality scorecard.",
+    selectedLabel:"Element",
+    selectedHint:"Click a cell, edge, or bar.",
+    modes:[
+      {value:"original", label:"Factual graph (immune-excluded, 0.81)"},
+      {value:"cf-gnn",   label:"CF-GNNExplainer (minimal edit)"},
+      {value:"dice",     label:"DiCE (diverse counterfactuals)"},
+      {value:"quality",  label:"Quality scorecard (4 metrics)"}
+    ],
+    params:[
+      {key:"budget",  label:"edge-removal budget",min:1,max:5,step:1,value:3,
+       fmt:v=>Math.round(v)+" edges",modes:["cf-gnn"]},
+      {key:"featGzma",label:"raise T1 GZMA (feature change)",min:0,max:1,step:0.05,value:1,
+       fmt:v=>(F.gzmaLow+v*(F.gzmaHigh-F.gzmaLow)).toFixed(2),modes:["cf-gnn"]},
+      {key:"diceK",   label:"DiCE solution (1=CF2 2=CF3)",min:1,max:2,step:1,value:1,
+       fmt:v=>Math.round(v)===1?"CF2":"CF3",modes:["dice"]},
+      {key:"lamX",    label:"feature-cost weight λˣ",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["quality"]}
+    ],
+    metrics:[
+      {key:"predClass",   label:"Predicted class",accent:"cyan"},
+      {key:"flipConf",    label:"Inflamed confidence",accent:"green"},
+      {key:"edgesRemoved",label:"Edges removed",accent:"violet"},
+      {key:"cfDistance",  label:"dist(G, G')",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph",  label:"Cells"},
+      {group:"edges",  label:"Suppressive edges"},
+      {group:"cf",     label:"Counterfactual marks"},
+      {group:"bars",   label:"Bars / scores"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Apply CF1 (3 edges + GZMA)",
+      on:api=>{api.setParam("budget",3);api.setParam("featGzma",1);}
+    },
+    secondary:{
+      label:"Revert (0 edges)",
+      on:api=>{api.setParam("budget",1);api.setParam("featGzma",0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:14},
+    hint:'<span style="color:#fb7185">rose</span>=immunosuppressive edge · <span style="color:#a78bfa">violet</span>=removed edge / counterfactual edit · <span style="color:#34d399">green</span>=flipped / reinvigorated · <span style="color:#4dd7ff">cyan</span>=T cell · <span style="color:#fbbf24">amber</span>=cancer/myeloid.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="quality") api.frame([0,2,0],13);
+      else if(s.mode==="cf-gnn") api.frame([0,1.4,0],14);
+      else api.frame([0,1.3,-1],13);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="quality") api.frame([0,2,0],13);
+      else if(s.mode==="cf-gnn") api.frame([0,1.4,0],14);
+      else api.frame([0,1.3,-1],13);
+    },
+    onSelect(api,d){
+      if(d.cell)   api.setSelected(d.cell.id+" · "+d.cell.type+(d.cell.feat?" · GZMA RAISED":"")+" · "+d.cell.note);
+      if(d.edge)   api.setSelected(d.edge.lig+" ("+d.edge.kind+")"+(d.edge.removed?" · REMOVED (mask "+d.edge.mask.toFixed(2)+")":" · active suppressive"));
+      if(d.metric) api.setSelected(d.metric.name+" = "+(d.metric.value*100).toFixed(0)+"%");
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const budget=Math.max(1,Math.min(5,Math.round(s.budget)));
+      const featGzma=s.featGzma;
+      const diceK=Math.round(s.diceK);
+      // recompute removed set + boost exactly as build() does
+      let removed=new Set(); let gzmaBoost=0; let featNodes=[]; let cfBonus=0;
+      if(mode==="cf-gnn"){
+        const ranked=EDGES.map((e,i)=>({i,m:e.cfMask})).sort((p,q)=>q.m-p.m);
+        for(let k=0;k<budget;k++){ removed.add(ranked[k].i); }
+        gzmaBoost=featGzma; if(gzmaBoost>0.05) featNodes=[0];
+      } else if(mode==="dice"){
+        const cf=(diceK===1)?DICE.cf2:DICE.cf3;
+        cf.remEdges.forEach(i=>removed.add(i)); featNodes=cf.featNodes.slice(); cfBonus=cf.bonus;
+      } else if(mode==="quality"){
+        const ranked=EDGES.map((e,i)=>({i,m:e.cfMask})).sort((p,q)=>q.m-p.m);
+        for(let k=0;k<3;k++) removed.add(ranked[k].i);
+        gzmaBoost=1; featNodes=[0];
+      }
+      const load=suppLoad(removed,gzmaBoost,cfBonus);
+      const inflConf=inflamedConf(load);
+      const flipped=inflConf>=0.5;
+      const dist=cfDistance(removed.size,featNodes);
+      return {
+        mode,
+        budget,
+        featGzma:+featGzma.toFixed(3),
+        diceK,
+        edgesRemoved:removed.size,
+        suppressiveLoad:+load.toFixed(3),
+        inflamedConf:+inflConf.toFixed(3),
+        flipped,
+        cfDistance:+dist.toFixed(3),
+        validity:flipped?1:0,
+        flipsToInflamed:flipped
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

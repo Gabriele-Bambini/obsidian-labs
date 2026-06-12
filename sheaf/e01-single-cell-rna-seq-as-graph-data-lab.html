@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E01 · Single-cell RNA-seq as graph data</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (seeded hash only; no entropy sources) ───
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the note's Section-5 worked example (4 cells × 5 genes).
+  // Two erythroid cells (C1,C2 = RBC) + two T cells (C3,C4). Five marker genes.
+  // ════════════════════════════════════════════════════════════════════════
+  const CELLS=["C1","C2","C3","C4"];
+  const CELLTYPE=["RBC","RBC","T","T"];           // erythroid vs T cell
+  const GENES=["GATA1","KLF1","HBB","CD3E","CD8A"];
+  // raw UMI counts (cells × genes), note §5
+  const COUNT=[
+    [8,6,7,0,0],   // C1 RBC  total 21
+    [7,5,6,0,1],   // C2 RBC  total 19
+    [0,0,0,9,8],   // C3 T    total 17
+    [0,1,0,8,7]    // C4 T    total 16
+  ];
+  // log1p( normalize_total(1e4) ) values, note §5 (rounded as printed)
+  const XLOG=[
+    [8.25,8.00,8.11,0.00,0.00], // C1
+    [8.21,7.88,8.06,0.00,6.26], // C2
+    [0.00,0.00,0.00,8.57,8.46], // C3
+    [0.00,6.44,0.00,8.52,8.38]  // C4
+  ];
+  // one-step GCN aggregation (k=1 mutual kNN), note §5
+  const HGCN=[
+    [8.23,7.94,8.09,0.00,3.13], // h_C1 = .5 hC1 + .5 hC2
+    [8.23,7.94,8.09,0.00,3.13], // h_C2 = same average
+    [0.00,3.22,0.00,8.55,8.42], // h_C3 = .5 hC3 + .5 hC4
+    [0.00,3.22,0.00,8.55,8.42]  // h_C4 = same average
+  ];
+  // cell-cell kNN (k=1 mutual): only C1-C2 and C3-C4
+  const CELL_EDGES=[[0,1],[2,3]];
+  // gene–gene co-expression Pearson r across the 4 cells, note §5
+  const GENE_R=[
+    {a:0,b:1,r:+0.74},  // GATA1-KLF1
+    {a:0,b:2,r:+0.998}, // GATA1-HBB  (strong)
+    {a:1,b:2,r:+0.72},  // KLF1-HBB
+    {a:3,b:4,r:+0.995}, // CD3E-CD8A  (strong)
+    {a:0,b:3,r:-0.98}   // GATA1-CD3E (anti-correlated marker programs)
+  ];
+  // TF→target regulatory edges (directed, signed importance) — note §5/§9.
+  // GATA1 & KLF1 are the erythroid TFs; CD3E-program driven in T cells.
+  const REG_EDGES=[
+    {tf:0,tg:2,w:+0.92}, // GATA1 → HBB   (activation)
+    {tf:0,tg:1,w:+0.58}, // GATA1 → KLF1  (activation)
+    {tf:1,tg:2,w:+0.61}, // KLF1  → HBB   (activation)
+    {tf:3,tg:4,w:+0.74}  // CD3E  → CD8A  (T-program co-activation)
+  ];
+
+  // counts that scale to slider thresholds (kept exact to the note)
+  const N_CELL_EDGES=CELL_EDGES.length;     // 2
+  const N_GENE_STRONG=GENE_R.length;        // 5 (incl. 1 negative)
+  const N_GENE_NEG=GENE_R.filter(e=>e.r<0).length; // 1
+  const N_REG_EDGES=REG_EDGES.length;       // 4 directed
+
+  // Pearson over the raw counts (for the threshold slider in gene mode)
+  function pearson(va,vb){
+    const n=va.length; let ma=0,mb=0;
+    for(let i=0;i<n;i++){ma+=va[i];mb+=vb[i];}
+    ma/=n;mb/=n;
+    let num=0,da=0,db=0;
+    for(let i=0;i<n;i++){const xa=va[i]-ma,xb=vb[i]-mb;num+=xa*xb;da+=xa*xa;db+=xb*xb;}
+    const den=Math.sqrt(da*db);
+    return den>1e-9?num/den:0;
+  }
+  function col(j){return COUNT.map(r=>r[j]);}
+  // all 10 gene pairs with live Pearson r (used by gene-graph threshold)
+  const ALL_PAIRS=(function(){
+    const out=[];
+    for(let i=0;i<GENES.length;i++)for(let j=i+1;j<GENES.length;j++)
+      out.push({a:i,b:j,r:pearson(col(i),col(j))});
+    return out;
+  })();
+
+  let sceneSnap={};
+
+  // ── geometry helpers ─────────────────────────────────────────────────────
+  // 2D PCA-like layout of the 4 cells: PC1 separates RBC|T, PC2 splits within.
+  const CELL_XY=[
+    [-3.4, 1.1],  // C1
+    [-3.4,-1.1],  // C2
+    [ 3.4, 1.1],  // C3
+    [ 3.4,-1.1]   // C4
+  ];
+  // pentagon layout of the 5 genes
+  const GENE_XY=(function(){
+    const R=3.1, out=[];
+    for(let i=0;i<5;i++){const a=-Math.PI/2 + i/5*Math.PI*2; out.push([Math.cos(a)*R, Math.sin(a)*R]);}
+    return out;
+  })();
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const kNeighbors=Math.round(s.kNeighbors);     // cell mode
+    const corrTau=s.corrTau;                       // gene mode threshold
+    const impLambda=s.impLambda;                    // reg mode threshold
+    const dropout=Math.round(s.dropout);            // 0..3 extra zeroed genes (shared)
+
+    const gNodes =api.group("nodes");
+    const gEdges =api.group("edges");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // cells / similarity
+    const GR=new T.Color("#34d399");   // activation / positive
+    const AM=new T.Color("#fbbf24");   // genes
+    const VI=new T.Color("#a78bfa");   // regulatory / TF
+    const RO=new T.Color("#fb7185");   // repression / negative
+    const SL=new T.Color("#54667c");
+
+    function mkLine(p1,p2,hex,op){
+      return new T.Line(
+        new T.BufferGeometry().setFromPoints([p1,p2]),
+        new T.LineBasicMaterial({color:hex,transparent:op<1,opacity:op})
+      );
+    }
+    function mkArrow(from,to,c){
+      gEdges.add(mkLine(from,to,c.getHex(),0.9));
+      const dir=to.clone().sub(from); const len=dir.length(); dir.normalize();
+      const head=new T.Mesh(new T.ConeGeometry(0.13,0.34,10),new T.MeshBasicMaterial({color:c}));
+      head.position.copy(from.clone().add(dir.clone().multiplyScalar(len-0.34)));
+      const up=new T.Vector3(0,1,0);
+      head.quaternion.setFromUnitVectors(up,dir);
+      gEdges.add(head);
+    }
+
+    // how many marker genes survive dropout (drop the weakest non-zero genes)
+    const keptGenes=Math.max(2,5-dropout);
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 1: cell  — cell-cell kNN similarity graph (the Scanpy graph)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="cell"){
+      // 4 cell nodes in PCA-like plane
+      const meshes=[];
+      for(let i=0;i<4;i++){
+        const [x,z]=CELL_XY[i];
+        const c=CELLTYPE[i]==="RBC"?CY:VI;
+        const m=new T.Mesh(new T.SphereGeometry(0.42,20,16),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.35}));
+        m.position.set(x,0,z);
+        gNodes.add(m); meshes.push(m);
+        api.pick(m,{cell:{id:CELLS[i],type:CELLTYPE[i],total:COUNT[i].reduce((a,b)=>a+b,0)}});
+        lbl(CELLS[i]+" · "+CELLTYPE[i],c.getStyle(),1.25,x,1.0,z);
+      }
+      // PC axes hint
+      gEdges.add(mkLine(new T.Vector3(-5.2,-0.02,0),new T.Vector3(5.2,-0.02,0),0x223247,0.7));
+      slbl("PC1 (RBC ↔ T)","#54667c",0.34,4.4,-0.02,0.55);
+
+      // edges: with k=1 only mutual nearest stay (C1-C2, C3-C4).
+      // larger k starts to (incorrectly) bridge the two programs.
+      let nEdges=0;
+      CELL_EDGES.forEach(([a,b])=>{
+        const pa=new T.Vector3(CELL_XY[a][0],0,CELL_XY[a][1]);
+        const pb=new T.Vector3(CELL_XY[b][0],0,CELL_XY[b][1]);
+        gEdges.add(mkLine(pa,pb,CY.getHex(),0.95)); nEdges++;
+      });
+      // k>=3 adds cross-program edges (the over-smoothing failure of large k)
+      const cross=[[0,2],[1,3],[0,3],[1,2]];
+      const extra=Math.max(0,kNeighbors-2); // k=1->0, k=2->0, k=3->1 ...
+      for(let e=0;e<Math.min(extra,cross.length);e++){
+        const [a,b]=cross[e];
+        const pa=new T.Vector3(CELL_XY[a][0],0,CELL_XY[a][1]);
+        const pb=new T.Vector3(CELL_XY[b][0],0,CELL_XY[b][1]);
+        gEdges.add(mkLine(pa,pb,RO.getHex(),0.5)); nEdges++;
+      }
+
+      // raw vs aggregated feature bars for C1 and C3 (one GCN step)
+      const showG=Math.min(keptGenes,5);
+      function featBars(ox,vec,c,tag){
+        for(let g=0;g<showG;g++){
+          const h=0.06+vec[g]/8.6*2.2;
+          const bar=new T.Mesh(new T.BoxGeometry(0.30,h,0.30),
+            new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+          bar.position.set(ox+g*0.42,h/2,-4.4);
+          gBars.add(bar);
+        }
+        slbl(tag,c.getStyle(),0.32,ox+0.84,-0.2,-4.4);
+      }
+      featBars(-4.5,XLOG[0],CY,"C1 raw");
+      featBars(-2.1,HGCN[0],GR,"C1 +GCN");
+      featBars( 1.6,XLOG[2],VI,"C3 raw");
+      featBars( 3.9,HGCN[2],RO,"C3 +GCN");
+      lbl("one GCN step: hᵢ ← ½hᵢ + ½h(nbr)","#8a99ad",1.0,0,2.9,-4.4);
+
+      const crossEdges=Math.max(0,Math.min(extra,cross.length));
+      const purity = nEdges>0 ? (N_CELL_EDGES)/nEdges : 0; // fraction of within-type edges
+      sceneSnap={mode,kNeighbors,dropout,
+        cellEdges:nEdges, crossTypeEdges:crossEdges, edgePurity:+purity.toFixed(3),
+        geneEdges:null, regEdges:null};
+
+      return {
+        badge:"Cell-cell kNN · k="+kNeighbors+" · "+nEdges+" edges",
+        formula:"A_ij = 1  if  j ∈ kNN(i)  in PCA space   →   hᵢ⁽¹⁾ = ½hᵢ + ½ Σ_{j∈N} hⱼ",
+        insight:"The Scanpy graph connects cells with similar expression in PCA space. With k=1 the two erythroid cells (C1,C2) and the two T cells (C3,C4) form two clean within-type edges. One GCN step averages each pair, so C1≈C2 and C3≈C4 converge — clustering with no labels. Push k up and rose cross-program edges appear: large k over-smooths distinct cell types together.",
+        state:"k="+kNeighbors+" → "+nEdges+" edges ("+crossEdges+" cross-type). Edge purity "+(purity*100).toFixed(0)+"%. This graph claims similarity only — never regulation.",
+        metrics:{cellEdges:""+nEdges, geneEdges:"—", regEdges:"—", edgePurity:(purity*100).toFixed(0)+"%"},
+        focus:{center:[0,0,-1],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 2: gene  — gene-gene co-expression graph (signed, undirected)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="gene"){
+      const meshes=[];
+      for(let i=0;i<5;i++){
+        const [x,z]=GENE_XY[i];
+        const erythroid=(i<3);
+        const c=erythroid?AM:CY;
+        const dimmed=(i>=keptGenes && i!==0); // dropout removes weakest extra genes
+        const m=new T.Mesh(new T.SphereGeometry(0.40,20,16),
+          new T.MeshStandardMaterial({color:dimmed?SL:c,emissive:(dimmed?SL:c).clone().multiplyScalar(0.5),emissiveIntensity:dimmed?0.2:0.6,roughness:0.4,transparent:dimmed,opacity:dimmed?0.4:1}));
+        m.position.set(x,0,z);
+        gNodes.add(m); meshes.push(m);
+        api.pick(m,{gene:{name:GENES[i],program:erythroid?"erythroid":"T-cell"}});
+        lbl(GENES[i],(dimmed?"#54667c":c.getStyle()),1.15,x,0.95,z);
+      }
+      // edges where |r| >= tau ; color by sign
+      let pos=0,neg=0,shown=0;
+      ALL_PAIRS.forEach(p=>{
+        if(Math.abs(p.r)>=corrTau){
+          const pa=new T.Vector3(GENE_XY[p.a][0],0,GENE_XY[p.a][1]);
+          const pb=new T.Vector3(GENE_XY[p.b][0],0,GENE_XY[p.b][1]);
+          const c=p.r>=0?GR:RO;
+          gEdges.add(mkLine(pa,pb,c.getHex(),0.85));
+          // midpoint r label
+          const mid=pa.clone().add(pb).multiplyScalar(0.5).add(new T.Vector3(0,0.0,0));
+          slbl((p.r>=0?"+":"")+p.r.toFixed(2),c.getStyle(),0.30,mid.x,0.25,mid.z);
+          shown++; if(p.r>=0)pos++; else neg++;
+        }
+      });
+
+      // signed-correlation bar strip for the 5 canonical note pairs
+      const labels=["GA·KL","GA·HB","KL·HB","C3·C8","GA·C3"];
+      GENE_R.forEach((e,idx)=>{
+        const h=Math.abs(e.r)*2.2;
+        const c=e.r>=0?GR:RO;
+        const bar=new T.Mesh(new T.BoxGeometry(0.5,h+0.04,0.5),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.4}));
+        const x=-2.0+idx*1.0;
+        bar.position.set(x,(e.r>=0?h/2:-h/2),-4.6);
+        gBars.add(bar);
+        slbl(labels[idx],"#8a99ad",0.30,x,(e.r>=0?-0.35:h+0.25),-4.6);
+      });
+      gEdges.add(mkLine(new T.Vector3(-2.6,0,-4.6),new T.Vector3(3.2,0,-4.6),0x223247,0.7));
+      lbl("signed r (green=+ , rose=−)","#8a99ad",1.0,0.3,2.9,-4.6);
+
+      sceneSnap={mode,corrTau:+corrTau.toFixed(2),dropout,
+        geneEdges:shown, posEdges:pos, negEdges:neg,
+        cellEdges:null, regEdges:null, edgePurity:null};
+
+      return {
+        badge:"Gene co-expression · |ρ|≥"+corrTau.toFixed(2)+" · "+shown+" edges",
+        formula:"edge(g,h)  ⇔  |ρ(g,h)| ≥ τ ,   sign = sign(ρ) ∈ {+,−}",
+        insight:"From the SAME 4-cell matrix, correlate genes (not cells). At τ="+corrTau.toFixed(2)+" you recover the note's signed network: GATA1–HBB (+0.998) and CD3E–CD8A (+0.995) are the strong co-expression edges, while GATA1–CD3E (−0.98) is a NEGATIVE edge between the erythroid and T-cell programs. Cell graphs are positive-only; gene graphs are SIGNED — a different claim entirely.",
+        state:"τ="+corrTau.toFixed(2)+" → "+shown+" edges ("+pos+" activation-like +, "+neg+" anti-correlation −). The negative edge cannot exist in a kNN cell graph.",
+        metrics:{cellEdges:"—", geneEdges:""+shown, regEdges:"—", edgePurity:neg+" signed −"},
+        focus:{center:[0,0,-1.5],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 3: regulatory — TF→gene directed graph (SCENIC / GENIE3)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="regulatory"){
+      // place 5 genes; GATA1, KLF1, CD3E act as TFs (have outgoing edges)
+      const isTF=[true,true,false,true,false]; // GATA1, KLF1 TFs; CD3E driver
+      const meshes=[];
+      for(let i=0;i<5;i++){
+        const [x,z]=GENE_XY[i];
+        const c=isTF[i]?VI:AM;
+        const m=new T.Mesh(new T.SphereGeometry(isTF[i]?0.46:0.38,20,16),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.35}));
+        m.position.set(x,0,z);
+        gNodes.add(m); meshes.push(m);
+        api.pick(m,{reg:{name:GENES[i],role:isTF[i]?"TF":"target"}});
+        lbl(GENES[i]+(isTF[i]?" (TF)":""),c.getStyle(),1.1,x,0.95,z);
+      }
+      // directed edges above threshold
+      let shown=0; let kept=[];
+      REG_EDGES.forEach(e=>{
+        if(e.w>=impLambda){
+          const pa=new T.Vector3(GENE_XY[e.tf][0],0,GENE_XY[e.tf][1]);
+          const pb=new T.Vector3(GENE_XY[e.tg][0],0,GENE_XY[e.tg][1]);
+          mkArrow(pa,pb,GR);
+          const mid=pa.clone().add(pb).multiplyScalar(0.5);
+          slbl("+"+e.w.toFixed(2),"#34d399",0.30,mid.x,0.3,mid.z);
+          shown++; kept.push(e);
+        }
+      });
+
+      // importance bars (directed importance is non-negative)
+      const labs=["GA→HB","GA→KL","KL→HB","C3→C8"];
+      REG_EDGES.forEach((e,idx)=>{
+        const active=e.w>=impLambda;
+        const h=e.w*2.4;
+        const c=active?GR:SL;
+        const bar=new T.Mesh(new T.BoxGeometry(0.55,h+0.04,0.55),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(active?0.6:0.2),emissiveIntensity:active?0.6:0.18,roughness:0.4,transparent:!active,opacity:active?1:0.45}));
+        const x=-1.7+idx*1.1;
+        bar.position.set(x,h/2,-4.6);
+        gBars.add(bar);
+        slbl(labs[idx],(active?"#34d399":"#54667c"),0.30,x,-0.32,-4.6);
+      });
+      // threshold marker line
+      const tY=impLambda*2.4;
+      gBars.add(mkLine(new T.Vector3(-2.4,tY,-4.6),new T.Vector3(2.6,tY,-4.6),RO.getHex(),0.8));
+      slbl("λ="+impLambda.toFixed(2),"#fb7185",0.32,2.9,tY,-4.6);
+      lbl("directed importance (TF→target)","#8a99ad",1.0,0.2,2.9,-4.6);
+
+      sceneSnap={mode,impLambda:+impLambda.toFixed(2),dropout,
+        regEdges:shown, cellEdges:null, geneEdges:null, edgePurity:null};
+
+      return {
+        badge:"TF→gene regulatory · λ≥"+impLambda.toFixed(2)+" · "+shown+" edges",
+        formula:"TF → g  ⇔  importance(TF, g) ≥ λ ,   w ∈ ℝ₊  (directed)",
+        insight:"The regulatory graph uses entirely different evidence: GENIE3/SCENIC importance of TF expression for each target. Edges are DIRECTED and non-negative (GATA1→HBB, GATA1→KLF1, KLF1→HBB drive the erythroid program; CD3E→CD8A the T-program). This is NOT the cell graph and NOT the symmetric co-expression graph — using one for the other is a category error, the central misconception of the lesson.",
+        state:"λ="+impLambda.toFixed(2)+" → "+shown+" directed TF→target edges kept. Lower λ admits weaker (noisier) regulatory hypotheses.",
+        metrics:{cellEdges:"—", geneEdges:"—", regEdges:""+shown, edgePurity:"directed"},
+        focus:{center:[0,0,-1.5],radius:13}
+      };
+    }
+
+    return {badge:"E01",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e01",
+    kind:"scrnaseq-graph-data",
+    eyebrow:"Block E · Single-Cell and Multi-Omics",
+    title:"E01 · Single-cell RNA-seq as graph data",
+    subtitle:"One 4-cell × 5-gene count matrix, three incompatible graphs. Cell-cell kNN (similarity), gene co-expression (signed), and TF→gene regulatory (directed). Same data, different scientific claims.",
+    selectedLabel:"Element",
+    selectedHint:"Click a cell, gene, TF, or bar.",
+    modes:[
+      {value:"cell",       label:"Cell-cell kNN (similarity)"},
+      {value:"gene",       label:"Gene co-expression (signed)"},
+      {value:"regulatory", label:"TF→gene regulatory (directed)"}
+    ],
+    params:[
+      {key:"kNeighbors",label:"k (cell neighbours)",min:1,max:5,step:1,value:1,
+       fmt:v=>"k="+Math.round(v),modes:["cell"]},
+      {key:"corrTau",  label:"co-expr threshold |ρ|≥τ",min:0.30,max:0.99,step:0.01,value:0.70,
+       fmt:v=>v.toFixed(2),modes:["gene"]},
+      {key:"impLambda",label:"regulatory importance λ",min:0.30,max:0.95,step:0.01,value:0.50,
+       fmt:v=>v.toFixed(2),modes:["regulatory"]},
+      {key:"dropout",  label:"dropout (genes zeroed)",min:0,max:3,step:1,value:0,
+       fmt:v=>Math.round(v)+" zeroed"}
+    ],
+    metrics:[
+      {key:"cellEdges", label:"Cell-cell edges",accent:"cyan"},
+      {key:"geneEdges", label:"Gene co-expr edges",accent:"amber"},
+      {key:"regEdges",  label:"TF→gene edges",accent:"violet"},
+      {key:"edgePurity",label:"Edge property",accent:"green"}
+    ],
+    layers:[
+      {group:"nodes", label:"Nodes (cells/genes)"},
+      {group:"edges", label:"Edges / arrows"},
+      {group:"bars",  label:"Bars (features / r / importance)"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Reset thresholds",
+      on:api=>{api.setParam("kNeighbors",1);api.setParam("corrTau",0.70);api.setParam("impLambda",0.50);api.setParam("dropout",0);}
+    },
+    secondary:{
+      label:"Loosen gates",
+      on:api=>{api.setParam("corrTau",0.50);api.setParam("impLambda",0.40);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=cells / similarity · <span style="color:#fbbf24">amber</span>=genes · <span style="color:#a78bfa">violet</span>=TF / regulatory · <span style="color:#34d399">green</span>=activation (+) · <span style="color:#fb7185">rose</span>=repression (−) / cross-type.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="cell") api.frame([0,0,-1],13);
+      else api.frame([0,0,-1.5],13);
+    },
+    onSelect(api,d){
+      if(d.cell) api.setSelected("Cell "+d.cell.id+" · "+d.cell.type+" · total UMI "+d.cell.total);
+      if(d.gene) api.setSelected("Gene "+d.gene.name+" · "+d.gene.program+" program");
+      if(d.reg)  api.setSelected(d.reg.name+" · role: "+d.reg.role);
+    },
+    build,
+    snapshot(s){
+      const k=Math.round(s.kNeighbors);
+      const tau=s.corrTau;
+      const lam=s.impLambda;
+      const drop=Math.round(s.dropout);
+      // re-derive the three edge counts so snapshot tracks every control
+      const extra=Math.max(0,k-2);
+      const crossE=Math.min(extra,4);
+      const cellE=N_CELL_EDGES+crossE;
+      let geneE=0,neg=0;
+      ALL_PAIRS.forEach(p=>{ if(Math.abs(p.r)>=tau){geneE++; if(p.r<0)neg++;} });
+      let regE=0;
+      REG_EDGES.forEach(e=>{ if(e.w>=lam) regE++; });
+      return {
+        mode:s.mode,
+        kNeighbors:k, corrTau:+tau.toFixed(2), impLambda:+lam.toFixed(2), dropout:drop,
+        cellEdges:cellE, crossTypeEdges:crossE,
+        geneEdges:geneE, negEdges:neg,
+        regEdges:regE,
+        cellGraphPositiveOnly:true,
+        geneGraphHasNegativeEdge:neg>0,
+        regGraphDirected:true
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

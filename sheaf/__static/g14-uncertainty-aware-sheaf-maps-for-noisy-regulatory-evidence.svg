@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure G14 — Restriction-map uncertainty separates reliable edges from hypotheses</title>
+<desc id="d">Four-panel captioned figure: Restriction-map uncertainty separates reliable edges from hypotheses</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE G14 · BLOCK G · SHEAF GNN FOR BIOLOGY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="19" font-weight="700">Restriction-map uncertainty separates reliable edges from hypotheses</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Three-gene noisy GRN</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">3</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e1</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">TF1 → GeneA</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e2</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">TF1 → GeneB</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e3</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">TF2 → GeneA</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">MC-dropout: mean &amp; σ_e</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">R̂ = mean_t R^{(t)}</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">σ_e = std_t R^{(t)}</text>
+<text x="502" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">σ(e1)</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.020</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">σ(e3)</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">0.054</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Bayesian MAP posterior</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">The Laplace posterior variance shrinks with TF expression</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">and prior strength γ, and grows with label noise σ_n.</text>
+<text x="56" y="349.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">Var = σ_n² / (Σx_TF² + γσ_n²)</text>
+<text x="56" y="377.5" fill="#4dd7ff" font-size="11.5" font-weight="700">x_TF1</text>
+<text x="196" y="377.5" fill="#9fb4cc" font-size="11.5">0.8</text>
+<text x="56" y="397.5" fill="#fb7185" font-size="11.5" font-weight="700">x_TF2</text>
+<text x="196" y="397.5" fill="#9fb4cc" font-size="11.5">0.3</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Pareto frontier &amp; calibration</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">P(e1)</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">0.91</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">top-10%</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.82</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">top-50%</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">0.58</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">all</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">0.44</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure G14. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Section-5 </text>
+<text x="224.91" y="538" fill="#c7d2dd" font-size="13">three-gene </text>
+<text x="313.57" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="349.44" y="538" fill="#c7d2dd" font-size="13">with </text>
+<text x="389.74" y="538" fill="#c7d2dd" font-size="13">MC-dropout </text>
+<text x="480.82" y="538" fill="#c7d2dd" font-size="13">(T=5) </text>
+<text x="530.39" y="538" fill="#c7d2dd" font-size="13">on </text>
+<text x="554.57" y="538" fill="#c7d2dd" font-size="13">the </text>
+<text x="586.81" y="538" fill="#c7d2dd" font-size="13">restriction-map </text>
+<text x="715.77" y="538" fill="#c7d2dd" font-size="13">MLP. </text>
+<text x="759.69" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="793.22" y="538" fill="#c7d2dd" font-size="13">Each</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">restriction </text>
+<text x="136.72" y="559" fill="#c7d2dd" font-size="13">map </text>
+<text x="168.96" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="193.14" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="209.26" y="559" fill="#c7d2dd" font-size="13">distribution; </text>
+<text x="322.1" y="559" fill="#c7d2dd" font-size="13">σ_e </text>
+<text x="354.34" y="559" fill="#c7d2dd" font-size="13">scores </text>
+<text x="410.76" y="559" fill="#c7d2dd" font-size="13">edge </text>
+<text x="451.06" y="559" fill="#c7d2dd" font-size="13">confidence. </text>
+<text x="547.78" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="581.31" y="559" fill="#c7d2dd" font-size="13">Sample </text>
+<text x="638.94" y="559" fill="#c7d2dd" font-size="13">std </text>
+<text x="671.18" y="559" fill="#c7d2dd" font-size="13">separates </text>
+<text x="751.78" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="767.9" y="559" fill="#c7d2dd" font-size="13">confident </text>
+<text x="848.5" y="559" fill="#c7d2dd" font-size="13">edge</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">(σ(e1)=0.020) </text>
+<text x="152.84" y="580" fill="#c7d2dd" font-size="13">from </text>
+<text x="193.14" y="580" fill="#c7d2dd" font-size="13">an </text>
+<text x="217.32" y="580" fill="#c7d2dd" font-size="13">uncertain </text>
+<text x="297.92" y="580" fill="#c7d2dd" font-size="13">one </text>
+<text x="330.16" y="580" fill="#c7d2dd" font-size="13">(σ(e3)=0.054). </text>
+<text x="451.06" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="484.59" y="580" fill="#c7d2dd" font-size="13">The </text>
+<text x="518.04" y="580" fill="#c7d2dd" font-size="13">MAP </text>
+<text x="553.91" y="580" fill="#c7d2dd" font-size="13">posterior </text>
+<text x="634.51" y="580" fill="#c7d2dd" font-size="13">variance </text>
+<text x="707.05" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="731.23" y="580" fill="#c7d2dd" font-size="13">small </text>
+<text x="779.59" y="580" fill="#c7d2dd" font-size="13">for</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">highly-expressed </text>
+<text x="177.02" y="601" fill="#c7d2dd" font-size="13">TF1 </text>
+<text x="211.68" y="601" fill="#c7d2dd" font-size="13">(x=0.8), </text>
+<text x="284.22" y="601" fill="#c7d2dd" font-size="13">large </text>
+<text x="332.58" y="601" fill="#c7d2dd" font-size="13">for </text>
+<text x="364.82" y="601" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="399.48" y="601" fill="#c7d2dd" font-size="13">(x=0.3). </text>
+<text x="472.02" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="505.55" y="601" fill="#c7d2dd" font-size="13">σ_e </text>
+<text x="537.79" y="601" fill="#c7d2dd" font-size="13">calibration </text>
+<text x="634.51" y="601" fill="#c7d2dd" font-size="13">is </text>
+<text x="658.69" y="601" fill="#c7d2dd" font-size="13">monotonic </text>
+<text x="739.29" y="601" fill="#c7d2dd" font-size="13">(0.82→0.44); </text>
+<text x="850.51" y="601" fill="#c7d2dd" font-size="13">the</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">(P_e, </text>
+<text x="89.57" y="622" fill="#c7d2dd" font-size="13">σ_e) </text>
+<text x="129.87" y="622" fill="#c7d2dd" font-size="13">frontier </text>
+<text x="202.41" y="622" fill="#c7d2dd" font-size="13">ranks </text>
+<text x="250.77" y="622" fill="#c7d2dd" font-size="13">edges </text>
+<text x="299.13" y="622" fill="#c7d2dd" font-size="13">for </text>
+<text x="331.37" y="622" fill="#c7d2dd" font-size="13">validation.</text>
+</svg>

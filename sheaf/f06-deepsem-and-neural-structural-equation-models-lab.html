@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F06 · DeepSEM and neural structural equation models</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no rng / clock) ────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — note Section 5 worked example: cascade GATA1 → KLF1 → HBB
+  //   gene index: GATA1=0, KLF1=1, HBB=2
+  // ════════════════════════════════════════════════════════════════════════
+  const GENES=["GATA1","KLF1","HBB"];
+  const D=3;
+  // Initial small-random W (row=source, col=target)
+  const W_INIT=[[0,0.10,0.30],[0.20,0,0.10],[0.10,0.20,0]];
+  // Converged W after augmented-Lagrangian training (note)
+  const W_LEARN=[[0,0.92,0.05],[0.08,0,0.83],[0.02,0.03,0]];
+  const THRESH_DEF=0.30;           // |W| threshold for binary GRN
+  // GENIE3 importances on the SAME cascade for target HBB (note Section 5)
+  const GENIE_GATA1_HBB=0.35;      // moderate — indirect co-variation, FALSE POSITIVE
+  const GENIE_KLF1_HBB =0.65;      // strong — direct regulator
+  // DeepSEM W for target HBB
+  const DEEP_GATA1_HBB =0.05;      // -> 0 after threshold (correctly removed)
+  const DEEP_KLF1_HBB  =0.83;      // -> 1 after threshold (retained)
+
+  // matrix exp via Taylor series (deterministic, d=3 small so converges fast)
+  function matExp(M){
+    const n=M.length;
+    // identity
+    let acc=[]; for(let i=0;i<n;i++){acc.push([]);for(let j=0;j<n;j++)acc[i].push(i===j?1:0);}
+    let term=acc.map(r=>r.slice());      // term_0 = I
+    for(let k=1;k<=18;k++){
+      // term = term * M / k
+      const nt=[];
+      for(let i=0;i<n;i++){nt.push([]);for(let j=0;j<n;j++){
+        let s=0; for(let p=0;p<n;p++) s+=term[i][p]*M[p][j];
+        nt[i].push(s/k);
+      }}
+      term=nt;
+      for(let i=0;i<n;i++)for(let j=0;j<n;j++)acc[i][j]+=term[i][j];
+    }
+    return acc;
+  }
+  // h(W) = tr(exp(W∘W)) - d   (elementwise square inside)
+  function hOfW(W){
+    const Wsq=W.map(r=>r.map(v=>v*v));
+    const E=matExp(Wsq);
+    let tr=0; for(let i=0;i<W.length;i++) tr+=E[i][i];
+    return tr-W.length;
+  }
+
+  // Interpolate W along the training trajectory: p=0 -> W_INIT, p=1 -> W_LEARN
+  function trajW(p){
+    const W=[]; for(let i=0;i<D;i++){W.push([]);for(let j=0;j<D;j++){
+      W[i].push(W_INIT[i][j]+(W_LEARN[i][j]-W_INIT[i][j])*p);
+    }}
+    return W;
+  }
+
+  let sceneSnap={};
+
+  // node world positions for the 3-gene cascade (a vertical-ish chain in x)
+  const NODEPOS=[[-3.4,0,0],[0,0,0],[3.4,0,0]]; // GATA1, KLF1, HBB
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const drive   = s.drive;          // training progress 0..1 (modes: structure/dag/train)
+    const thresh  = s.thresh;         // |W| threshold 0.05..0.6
+    const wBack   = s.wBack;          // back-edge weight KLF1->GATA1 (cycle injector) 0..0.9
+    const lambda  = s.lambda;         // L1 sparsity strength 0..0.15
+
+    const gNet  =api.group("network");
+    const gMat  =api.group("matrix");
+    const gBars =api.group("bars");
+    const gLbl  =api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // structure / direct
+    const BR=new T.Color("#c8852b");   // 3b1b brown — indirect / removed
+    const GR=new T.Color("#34d399");   // retained / activation
+    const RS=new T.Color("#f4709a");   // repression / cycle / false positive
+    const VI=new T.Color("#a78bfa");   // DAG penalty / Hadamard
+    const SL=new T.Color("#54667c");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+
+    // helper: draw a directed edge with a cone head from gene a to gene b
+    function drawEdge(ai,bi,col,opacity,radius,grp){
+      const pa=new T.Vector3(...NODEPOS[ai]), pb=new T.Vector3(...NODEPOS[bi]);
+      const dir=pb.clone().sub(pa); const len=dir.length(); dir.normalize();
+      const gap=0.55;
+      const a2=pa.clone().add(dir.clone().multiplyScalar(gap));
+      const b2=pb.clone().sub(dir.clone().multiplyScalar(gap+0.28));
+      const seg=b2.clone().sub(a2); const slen=seg.length();
+      const cyl=new T.Mesh(new T.CylinderGeometry(radius,radius,slen,10,1,true),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.3),roughness:0.5,transparent:true,opacity:opacity}));
+      const mid=a2.clone().add(b2).multiplyScalar(0.5); cyl.position.copy(mid);
+      const up=new T.Vector3(0,1,0); const q=new T.Quaternion().setFromUnitVectors(up,seg.clone().normalize());
+      cyl.quaternion.copy(q); grp.add(cyl);
+      const cone=new T.Mesh(new T.ConeGeometry(radius*3.0,0.34,12),
+        new T.MeshBasicMaterial({color:col,transparent:true,opacity:opacity}));
+      cone.position.copy(b2); cone.quaternion.copy(q); grp.add(cone);
+      return mid;
+    }
+
+    // helper: draw the three gene nodes
+    function drawNodes(maskMap){
+      GENES.forEach((g,i)=>{
+        const masked=maskMap&&maskMap[i];
+        const col=masked?new T.Color("#1e2d45"):CY.clone();
+        const sph=new T.Mesh(new T.SphereGeometry(masked?0.30:0.42,20,16),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(masked?0.2:0.65),emissiveIntensity:masked?0.25:0.7,roughness:0.35}));
+        sph.position.set(...NODEPOS[i]); gNet.add(sph);
+        api.pick(sph,{gene:{id:i,name:g,masked:!!masked}});
+        addLbl(g,masked?"#7d8ea3":"#dff0ff",1.5,NODEPOS[i][0],1.05,NODEPOS[i][2]);
+      });
+    }
+
+    // helper: render the d×d W matrix as a grid of colored cells at a screen-fixed plane
+    function drawMatrix(W,ox,oy,oz,cellThresh){
+      const cs=0.62, gap=0.10;
+      addLbl("W (src→tgt)","#8a99ad",1.05,ox+cs*1.0,oy+cs*1.9,oz);
+      // column headers
+      for(let j=0;j<D;j++) addSlbl(GENES[j],"#6b7a8d",0.30,ox+(j+1)*(cs+gap),oy+cs*1.1,oz);
+      for(let i=0;i<D;i++){
+        addSlbl(GENES[i],"#6b7a8d",0.30,ox-0.05,oy-i*(cs+gap),oz);
+        for(let j=0;j<D;j++){
+          const v=W[i][j];
+          const a=Math.abs(v);
+          const isDiag=(i===j);
+          let col;
+          if(isDiag) col=SL.clone();
+          else if(cellThresh!=null && a<cellThresh) col=BR.clone();        // below threshold -> removed
+          else col=a>0.001?GR.clone():new T.Color("#10202f");
+          const cell=new T.Mesh(new T.BoxGeometry(cs,cs,0.08),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.45),emissiveIntensity:0.5,roughness:0.5,
+              transparent:true,opacity:isDiag?0.30:(a>0.001?0.92:0.18)}));
+          cell.position.set(ox+(j+1)*(cs+gap),oy-i*(cs+gap),oz);
+          gMat.add(cell);
+          api.pick(cell,{wcell:{i,j,val:v,src:GENES[i],tgt:GENES[j]}});
+          if(a>0.001 && !isDiag) addLbl(v.toFixed(2),"#0a1620",0.95,ox+(j+1)*(cs+gap),oy-i*(cs+gap),oz+0.06);
+        }
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: structure — the SEM, Hadamard gating W[:,j]∘x
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="structure"){
+      const W=trajW(drive);
+      drawNodes(null);
+      // direct cascade edges colored by current weight strength
+      const wAK=W[0][1], wKH=W[1][2], wAH=W[0][2];
+      drawEdge(0,1,wAK>0.3?GR.clone():BR.clone(),0.95,0.06+wAK*0.06,gNet);
+      drawEdge(1,2,wKH>0.3?GR.clone():BR.clone(),0.95,0.06+wKH*0.06,gNet);
+      // the indirect chord GATA1->HBB drawn as a brown bowed line (small weight)
+      {
+        const pa=new T.Vector3(...NODEPOS[0]), pb=new T.Vector3(...NODEPOS[2]);
+        const ctrl=new T.Vector3(0,-2.0,0);
+        const curve=new T.QuadraticBezierCurve3(pa,ctrl,pb);
+        const pts=curve.getPoints(28);
+        const lm=new T.LineDashedMaterial({color:BR.getHex(),dashSize:0.22,gapSize:0.16,transparent:true,opacity:0.7});
+        const ln=new T.Line(new T.BufferGeometry().setFromPoints(pts),lm); ln.computeLineDistances();
+        gNet.add(ln);
+        addLbl("indirect chord W[GATA1,HBB]="+wAH.toFixed(2),"#c8852b",1.05,0,-2.55,0);
+      }
+      // weight labels on the active edges
+      addLbl(wAK.toFixed(2),GR.getStyle(),1.2,-1.7,0.5,0);
+      addLbl(wKH.toFixed(2),GR.getStyle(),1.2, 1.7,0.5,0);
+
+      // Hadamard gating panel for target HBB: W[:,HBB] ∘ x
+      const ox=-3.6, oy=3.2;
+      addLbl("Hadamard gate for HBB:  W[:,HBB] ∘ x","#a78bfa",1.1,0,3.4,0);
+      for(let i=0;i<D;i++){
+        const w=W[i][2];
+        const on=Math.abs(w)>0.3;
+        const cell=new T.Mesh(new T.BoxGeometry(0.9,0.5,0.08),
+          new T.MeshStandardMaterial({color:on?VI.clone():BR.clone(),emissive:(on?VI:BR).clone().multiplyScalar(0.4),emissiveIntensity:0.5,roughness:0.5,transparent:true,opacity:on?0.9:0.4}));
+        cell.position.set(-2.8+i*1.6,2.55,0); gMat.add(cell);
+        addLbl(GENES[i]+":"+w.toFixed(2),on?"#dfd6ff":"#c8852b",0.95,-2.8+i*1.6,2.55,0.06);
+      }
+
+      // W matrix grid (right side)
+      drawMatrix(W,4.6,2.0,0,null);
+
+      const hv=hOfW(W);
+      sceneSnap={mode,drive:+drive.toFixed(3),thresh:+thresh.toFixed(3),wBack:0,lambda:+lambda.toFixed(3),
+        h_of_W:+hv.toFixed(4),w_GATA1_KLF1:+wAK.toFixed(3),w_KLF1_HBB:+wKH.toFixed(3),w_GATA1_HBB:+wAH.toFixed(3),
+        edges_retained:(wAK>0.3?1:0)+(wKH>0.3?1:0)+(wAH>0.3?1:0),genie_fp:null,deepsem_fp:null};
+
+      return {
+        badge:"SEM structure · drive "+(drive*100).toFixed(0)+"% · h(W)="+hv.toFixed(3),
+        formula:"x<sub>j</sub> = MLP<sub>j</sub>( W[:,j] &#8728; x ) + &epsilon;<sub>j</sub>",
+        insight:"Each gene's expression is generated from its regulators gated by the column of W (Hadamard product). The violet gate shows which inputs reach HBB's MLP: when |W[i,HBB]|>0.3 the input passes (violet), otherwise it is masked (brown). The brown dashed chord GATA1→HBB is the spurious indirect edge the model must suppress. Drag <b>training drive</b> to move W from small-random init toward the converged solution.",
+        state:"W[GATA1,KLF1]="+wAK.toFixed(2)+", W[KLF1,HBB]="+wKH.toFixed(2)+", W[GATA1,HBB]="+wAH.toFixed(2)+". h(W)="+hv.toFixed(3)+".",
+        metrics:{hOfW:hv.toFixed(3),wDirect:wKH.toFixed(2),wIndirect:wAH.toFixed(2),dagOk:hv<1e-2?"yes":"no"},
+        focus:{center:[0.5,0.5,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: dag — NOTEARS acyclicity h(W)=tr(exp(W∘W))−d; inject a cycle
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="dag"){
+      // base 2-node-relevant view: GATA1<->KLF1; wBack injects the reverse edge
+      const wFwd=0.9; // forward GATA1->KLF1 fixed strong
+      // build a W that has forward GATA1->KLF1 and a reverse KLF1->GATA1 = wBack
+      const W=[[0,wFwd,0],[wBack,0,0.83],[0,0,0]];
+      drawNodes(null);
+      drawEdge(0,1,GR.clone(),0.95,0.10,gNet);      // forward
+      drawEdge(1,2,GR.clone(),0.9,0.09,gNet);       // KLF1->HBB downstream
+      // reverse edge KLF1->GATA1 (cycle) appears as red curved arrow when wBack>0
+      if(wBack>0.001){
+        const pa=new T.Vector3(...NODEPOS[1]), pb=new T.Vector3(...NODEPOS[0]);
+        const ctrl=new T.Vector3(-1.7,1.9,0);
+        const curve=new T.QuadraticBezierCurve3(pa,ctrl,pb);
+        const pts=curve.getPoints(26);
+        const lm=new T.LineBasicMaterial({color:RS.getHex(),transparent:true,opacity:0.95});
+        const ln=new T.Line(new T.BufferGeometry().setFromPoints(pts),lm); gNet.add(ln);
+        const cone=new T.Mesh(new T.ConeGeometry(0.16,0.36,12),new T.MeshBasicMaterial({color:RS.getHex()}));
+        const tip=pts[pts.length-2], tip2=pb;
+        cone.position.copy(tip2);
+        const dir=tip2.clone().sub(tip).normalize();
+        cone.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+        gNet.add(cone);
+        addLbl("back-edge W[KLF1,GATA1]="+wBack.toFixed(2),"#f4709a",1.1,-1.7,2.6,0);
+      }
+
+      // h(W) value + cosh closed form for the 2x2 sub-block (note)
+      const hv=hOfW(W);
+      const wv=wFwd*wBack;                 // product of the cycle weights
+      const hClosed=2*Math.cosh(wv*wv? Math.sqrt(wv*wv):wv)-2; // 2cosh(wf*wb)-2 from note (uses squared inside exp)
+      // note's 2x2: tr(exp)=2cosh(wv) with wv = product of squared off-diagonals' sqrt -> use elementwise-square form
+      const wvSq=(wFwd*wFwd)*(wBack*wBack);
+      const hClosed2=2*Math.cosh(Math.sqrt(wvSq))-2;
+
+      // h(W) gauge bar
+      const gx=4.6;
+      const barH=Math.min(4.2,0.05+hv*1.6);
+      const isCycle=hv>1e-3;
+      const bar=new T.Mesh(new T.BoxGeometry(0.9,barH,0.9),
+        new T.MeshStandardMaterial({color:(isCycle?RS:GR).clone(),emissive:(isCycle?RS:GR).clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.4}));
+      bar.position.set(gx,barH/2-2,0); gBars.add(bar);
+      addLbl("h(W)="+hv.toFixed(3),(isCycle?RS:GR).getStyle(),1.5,gx,barH-1.4,0);
+      addSlbl("h=0 ⇔ DAG","#6b7a8d",0.34,gx,-2.4,0);
+      // h=0 reference line
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(gx-1.5,-2,0),new T.Vector3(gx+1.5,-2,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+
+      sceneSnap={mode,drive:0,thresh:+thresh.toFixed(3),wBack:+wBack.toFixed(3),lambda:0,
+        h_of_W:+hv.toFixed(4),h_closed_2x2:+hClosed2.toFixed(4),is_dag:hv<1e-3?1:0,cycle_product:+wvSq.toFixed(4),
+        w_GATA1_KLF1:wFwd,w_KLF1_HBB:0.83,w_GATA1_HBB:0,edges_retained:null,genie_fp:null,deepsem_fp:null};
+
+      return {
+        badge:(isCycle?"CYCLE":"DAG")+" · h(W)="+hv.toFixed(3),
+        formula:"h(W) = tr( exp(W&#8728;W) ) &minus; d ;&nbsp; h=0 &hArr; DAG",
+        insight:"NOTEARS turns the combinatorial 'is it a DAG?' test into one smooth number. With only forward GATA1→KLF1, h(W)=0 (green, valid DAG). Drag the <b>back-edge</b> to add KLF1→GATA1: a cycle appears (red) and h(W)=2·cosh(w<sub>f</sub>·w<sub>b</sub>)−2 grows above zero. The augmented Lagrangian penalizes exactly this number until it returns to 0.",
+        state:"back-edge="+wBack.toFixed(2)+" → cycle product (wf·wb)²="+wvSq.toFixed(3)+", h(W)="+hv.toFixed(3)+(isCycle?" (cycle present)":" (acyclic)")+".",
+        metrics:{hOfW:hv.toFixed(3),wDirect:"0.90",wIndirect:wBack.toFixed(2),dagOk:isCycle?"no":"yes"},
+        focus:{center:[1.2,0.4,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: train — augmented Lagrangian: drive + threshold remove edge
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="train"){
+      const W=trajW(drive);
+      drawNodes(null);
+      const wAK=W[0][1], wKH=W[1][2], wAH=W[0][2];
+      // edges colored by retained (>=thresh) green vs removed (<thresh) brown
+      const keepAK=Math.abs(wAK)>=thresh, keepKH=Math.abs(wKH)>=thresh, keepAH=Math.abs(wAH)>=thresh;
+      drawEdge(0,1,keepAK?GR.clone():BR.clone(),keepAK?0.95:0.4,0.06+Math.abs(wAK)*0.06,gNet);
+      drawEdge(1,2,keepKH?GR.clone():BR.clone(),keepKH?0.95:0.4,0.06+Math.abs(wKH)*0.06,gNet);
+      // indirect chord
+      {
+        const pa=new T.Vector3(...NODEPOS[0]), pb=new T.Vector3(...NODEPOS[2]);
+        const ctrl=new T.Vector3(0,-2.0,0);
+        const curve=new T.QuadraticBezierCurve3(pa,ctrl,pb);
+        const pts=curve.getPoints(28);
+        const col=keepAH?RS:BR;
+        const lm=new T.LineDashedMaterial({color:col.getHex(),dashSize:0.22,gapSize:0.16,transparent:true,opacity:keepAH?0.9:0.5});
+        const ln=new T.Line(new T.BufferGeometry().setFromPoints(pts),lm); ln.computeLineDistances();
+        gNet.add(ln);
+        addLbl("W[GATA1,HBB]="+wAH.toFixed(2)+(keepAH?" KEPT":" removed"),keepAH?"#f4709a":"#c8852b",1.05,0,-2.55,0);
+      }
+
+      // augmented-Lagrangian readout
+      const hv=hOfW(W);
+      // L1 = sum |W off-diagonal|, scaled by lambda
+      let L1=0; for(let i=0;i<D;i++)for(let j=0;j<D;j++) if(i!==j) L1+=Math.abs(W[i][j]);
+      const L1pen=lambda*L1;
+      // recon improves with drive (note: schematic monotone)
+      const recon=0.42*(1-drive)+0.04;
+
+      // W matrix grid with threshold coloring
+      drawMatrix(W,4.4,2.4,0,thresh);
+
+      // threshold gauge line under matrix
+      addLbl("threshold |W|>"+thresh.toFixed(2),"#8a99ad",1.0,6.1,-0.6,0);
+
+      const nKept=(keepAK?1:0)+(keepKH?1:0)+(keepAH?1:0);
+      sceneSnap={mode,drive:+drive.toFixed(3),thresh:+thresh.toFixed(3),wBack:0,lambda:+lambda.toFixed(3),
+        h_of_W:+hv.toFixed(4),recon_loss:+recon.toFixed(4),l1_penalty:+L1pen.toFixed(4),
+        w_GATA1_KLF1:+wAK.toFixed(3),w_KLF1_HBB:+wKH.toFixed(3),w_GATA1_HBB:+wAH.toFixed(3),
+        edges_retained:nKept,indirect_kept:keepAH?1:0,genie_fp:null,deepsem_fp:null};
+
+      return {
+        badge:"Train · drive "+(drive*100).toFixed(0)+"% · "+nKept+" edges · h="+hv.toFixed(3),
+        formula:"min L<sub>recon</sub> + &lambda;&sdot;|W|<sub>1</sub> + &alpha;&sdot;h(W) + (&rho;/2)h(W)<sup>2</sup>",
+        insight:"The augmented Lagrangian balances three forces: reconstruction MSE pulls W up where it helps, the L1 penalty (λ) pulls every entry toward 0, and the DAG penalty drives h(W)→0. As <b>training drive</b> advances, W[GATA1,HBB] stays near 0.05 because KLF1 already explains HBB — so thresholding at |W|>"+thresh.toFixed(2)+" removes the indirect chord (brown) while keeping the two direct cascade edges (green).",
+        state:"At convergence h(W)="+hv.toFixed(3)+", recon="+recon.toFixed(2)+", λ|W|₁="+L1pen.toFixed(3)+". Edges kept after threshold: "+nKept+" (indirect "+(keepAH?"KEPT — raise threshold or λ":"correctly removed")+").",
+        metrics:{hOfW:hv.toFixed(3),wDirect:wKH.toFixed(2),wIndirect:wAH.toFixed(2),dagOk:hv<1e-2?"yes":"no"},
+        focus:{center:[1.0,0.4,0],radius:13.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: compare — DeepSEM vs GENIE3 on the indirect edge GATA1→HBB
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="compare"){
+      // small cascade reminder on the left
+      drawNodes(null);
+      drawEdge(0,1,GR.clone(),0.9,0.09,gNet);
+      drawEdge(1,2,GR.clone(),0.9,0.09,gNet);
+      {
+        const pa=new T.Vector3(...NODEPOS[0]), pb=new T.Vector3(...NODEPOS[2]);
+        const ctrl=new T.Vector3(0,-1.8,0);
+        const pts=new T.QuadraticBezierCurve3(pa,ctrl,pb).getPoints(26);
+        const lm=new T.LineDashedMaterial({color:BR.getHex(),dashSize:0.2,gapSize:0.15,transparent:true,opacity:0.6});
+        const ln=new T.Line(new T.BufferGeometry().setFromPoints(pts),lm); ln.computeLineDistances(); gNet.add(ln);
+        addLbl("indirect GATA1→HBB","#c8852b",1.0,0,-2.3,0);
+      }
+
+      // two grouped bars: importance/weight for GATA1→HBB (indirect) and KLF1→HBB (direct)
+      // GENIE3 column vs DeepSEM column
+      const groups=[
+        {name:"GENIE3", indirect:GENIE_GATA1_HBB, direct:GENIE_KLF1_HBB, x:-1.6},
+        {name:"DeepSEM",indirect:DEEP_GATA1_HBB,  direct:DEEP_KLF1_HBB,  x: 2.4}
+      ];
+      const yBase=-1.0, yS=4.4;
+      // threshold reference plane at thresh
+      const thY=yBase+thresh*yS;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-3.2,thY,2.2),new T.Vector3(4.6,thY,2.2)]),new T.LineBasicMaterial({color:VI.getHex()})));
+      addLbl("threshold "+thresh.toFixed(2),"#a78bfa",1.0,4.9,thY,2.2);
+
+      let genieFP=0, deepFP=0;
+      groups.forEach(g=>{
+        // direct bar (green) and indirect bar (brown/rose)
+        [["direct",g.direct,GR,0.9],["indirect",g.indirect,null,-0.9]].forEach((b,bi)=>{
+          const val=b[1], dx=b[3];
+          const kept=val>=thresh;
+          const isIndirect=(b[0]==="indirect");
+          const col=isIndirect?(kept?RS.clone():BR.clone()):GR.clone();
+          const h=0.08+val*yS;
+          const bar=new T.Mesh(new T.BoxGeometry(1.1,h,1.1),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.65,roughness:0.4,
+              transparent:true,opacity:kept?1.0:0.5}));
+          bar.position.set(g.x+dx,yBase+h/2,2.2); gBars.add(bar);
+          api.pick(bar,{cbar:{method:g.name,kind:b[0],val,kept}});
+          addLbl(val.toFixed(2),col.getStyle(),1.3,g.x+dx,yBase+h+0.4,2.2);
+          addSlbl(b[0],col.getStyle(),0.32,g.x+dx,yBase-0.35,2.2);
+          if(isIndirect && kept){ if(g.name==="GENIE3") genieFP=1; else deepFP=1; }
+        });
+        addLbl(g.name,"#dfeefc",1.5,g.x+0.0,yBase+yS+0.6,2.2);
+      });
+
+      sceneSnap={mode,drive:0,thresh:+thresh.toFixed(3),wBack:0,lambda:0,
+        h_of_W:0,genie_imp_indirect:GENIE_GATA1_HBB,deepsem_w_indirect:DEEP_GATA1_HBB,
+        genie_fp:genieFP,deepsem_fp:deepFP,
+        w_GATA1_KLF1:0.92,w_KLF1_HBB:0.83,w_GATA1_HBB:DEEP_GATA1_HBB,edges_retained:null};
+
+      return {
+        badge:"DeepSEM vs GENIE3 · indirect FP: G="+genieFP+" D="+deepFP,
+        formula:"GENIE3: imp(GATA1→HBB)="+GENIE_GATA1_HBB.toFixed(2)+" &nbsp;&nbsp; DeepSEM: W[GATA1,HBB]="+DEEP_GATA1_HBB.toFixed(2),
+        insight:"Same cascade, two verdicts on the spurious edge GATA1→HBB. GENIE3 scores it as moderately important ("+GENIE_GATA1_HBB.toFixed(2)+") because GATA1 and HBB co-vary through KLF1 — it cannot condition on KLF1, so the indirect edge survives any usable threshold (false positive). DeepSEM's joint SEM gives W[GATA1,HBB]≈"+DEEP_GATA1_HBB.toFixed(2)+": once KLF1→HBB is in the model, GATA1 adds no reconstruction benefit, and L1 drives it below threshold. Move the <b>threshold</b> to see GENIE3's brown bar stay above the line while DeepSEM's sits below.",
+        state:"GENIE3 indirect="+GENIE_GATA1_HBB.toFixed(2)+(genieFP?" (above thr → FALSE POSITIVE)":" (below thr)")+"; DeepSEM indirect="+DEEP_GATA1_HBB.toFixed(2)+(deepFP?" (above thr)":" (below thr → removed)")+".",
+        metrics:{hOfW:"0.000",wDirect:DEEP_KLF1_HBB.toFixed(2),wIndirect:DEEP_GATA1_HBB.toFixed(2),dagOk:"yes"},
+        focus:{center:[0.6,1.2,1.4],radius:14}
+      };
+    }
+
+    return {badge:"F06",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f06",
+    kind:"deepsem-neural-sem",
+    eyebrow:"Block F · GRN Inference",
+    title:"F06 · DeepSEM and neural structural equation models",
+    subtitle:"One cascade GATA1→KLF1→HBB, four views: the gated SEM, the NOTEARS DAG number h(W), augmented-Lagrangian training that removes the indirect edge, and DeepSEM vs GENIE3 on the spurious chord.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, a W cell, or a bar.",
+    modes:[
+      {value:"structure", label:"SEM structure (Hadamard gate W[:,j]∘x)"},
+      {value:"dag",       label:"DAG constraint h(W)=tr(exp(W∘W))−d"},
+      {value:"train",     label:"Train + threshold (augmented Lagrangian)"},
+      {value:"compare",   label:"DeepSEM vs GENIE3 (indirect edge)"}
+    ],
+    params:[
+      {key:"drive",  label:"training drive (init→converged)",min:0,max:1,step:0.01,value:1,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["structure","train"]},
+      {key:"thresh", label:"|W| threshold for binary GRN",min:0.05,max:0.6,step:0.01,value:0.30,
+       fmt:v=>v.toFixed(2),modes:["train","compare"]},
+      {key:"wBack",  label:"back-edge KLF1→GATA1 (cycle)",min:0,max:0.9,step:0.01,value:0,
+       fmt:v=>v.toFixed(2),modes:["dag"]},
+      {key:"lambda", label:"L1 sparsity λ",min:0,max:0.15,step:0.005,value:0.05,
+       fmt:v=>v.toFixed(3),modes:["structure","train"]}
+    ],
+    metrics:[
+      {key:"hOfW",      label:"DAG penalty h(W)",accent:"violet"},
+      {key:"wDirect",   label:"W[KLF1,HBB] (direct)",accent:"green"},
+      {key:"wIndirect", label:"indirect weight",accent:"amber"},
+      {key:"dagOk",     label:"valid DAG?",accent:"cyan"}
+    ],
+    layers:[
+      {group:"network", label:"Gene network"},
+      {group:"matrix",  label:"W matrix"},
+      {group:"bars",    label:"Bars / gauges"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"Converged W",
+      on:api=>{api.setParam("drive",1);api.setParam("wBack",0);}
+    },
+    secondary:{
+      label:"Random init",
+      on:api=>{api.setParam("drive",0);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:13},
+    hint:'<span style="color:#34d399">green</span>=retained/direct edge · <span style="color:#c8852b">brown</span>=indirect/removed · <span style="color:#f4709a">rose</span>=cycle / false positive · <span style="color:#a78bfa">violet</span>=DAG penalty / Hadamard gate · <span style="color:#4dd7ff">cyan</span>=gene node.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="compare") api.frame([0.6,1.2,1.4],14);
+      else if(s.mode==="dag") api.frame([1.2,0.4,0],13);
+      else api.frame([0.8,0.5,0],13.5);
+    },
+    onSelect(api,d){
+      if(d.gene)  api.setSelected("Gene "+d.gene.name+(d.gene.masked?" · MASKED":""));
+      if(d.wcell) api.setSelected("W["+d.wcell.src+"→"+d.wcell.tgt+"] = "+d.wcell.val.toFixed(3));
+      if(d.cbar)  api.setSelected(d.cbar.method+" · "+d.cbar.kind+" = "+d.cbar.val.toFixed(2)+(d.cbar.kept?" (above threshold)":" (below threshold)"));
+    },
+    build,
+    snapshot(s){
+      const W=trajW(s.mode==="dag"?1:s.drive);
+      let hv;
+      if(s.mode==="dag"){
+        const Wb=[[0,0.9,0],[s.wBack,0,0.83],[0,0,0]];
+        hv=hOfW(Wb);
+      } else hv=hOfW(W);
+      const wAH=(s.mode==="dag")?0:W[0][2];
+      const thr=s.thresh;
+      // recompute compare false positives independent of build()
+      const genieFP=(s.mode==="compare" && GENIE_GATA1_HBB>=thr)?1:0;
+      const deepFP =(s.mode==="compare" && DEEP_GATA1_HBB>=thr)?1:0;
+      return {
+        mode:s.mode,
+        drive:+(+s.drive).toFixed(3),
+        thresh:+(+s.thresh).toFixed(3),
+        wBack:+(+s.wBack).toFixed(3),
+        lambda:+(+s.lambda).toFixed(3),
+        h_of_W:+hv.toFixed(4),
+        is_dag:hv<1e-3?1:0,
+        w_GATA1_KLF1:+W[0][1].toFixed(3),
+        w_KLF1_HBB:+W[1][2].toFixed(3),
+        w_GATA1_HBB:+wAH.toFixed(3),
+        indirect_removed:(s.mode==="train")?(Math.abs(wAH)<thr?1:0):null,
+        genie_imp_indirect:GENIE_GATA1_HBB,
+        deepsem_w_indirect:DEEP_GATA1_HBB,
+        genie_fp:genieFP,
+        deepsem_fp:deepFP,
+        deepsem_removes_indirect: DEEP_GATA1_HBB<thr && GENIE_GATA1_HBB>=thr
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K04 · Biomedical graph foundation models</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no Math.random / Date) ───────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // WORKED EXAMPLE (note §5 — disease-gene association prediction)
+  // 3 gene nodes + 2 disease nodes; PubMedBERT 3-D projected embeddings.
+  // Axes: [0]=CF/channel signal, [1]=ciliary/dynein signal, [2]=DNA-repair.
+  // ════════════════════════════════════════════════════════════════════════
+  // hg = structural (GNN, 2-hop) embedding. Genes use the note's §5 numbers
+  // verbatim. Diseases get pulled toward their validated gene partner, exactly
+  // as the note states ("h_CF = GNN aggregates CFTR neighbors: strongly encoded
+  // by CFTR state") — this is what real message passing does and what a larger
+  // KG would sharpen. Text (e) embeddings are the note's §5 projections verbatim.
+  const NODES=[
+    {id:"CFTR",  kind:"gene",    e:[0.91,0.12,0.22], hg:[0.88,0.14,0.19]},
+    {id:"DNAI1", kind:"gene",    e:[0.14,0.88,0.19], hg:[0.12,0.86,0.18]},
+    {id:"BRCA1", kind:"gene",    e:[0.18,0.11,0.94], hg:[0.18,0.11,0.94]},
+    {id:"CF",    kind:"disease", e:[0.89,0.15,0.21], hg:[0.93,0.10,0.18]},
+    {id:"PCD",   kind:"disease", e:[0.16,0.85,0.23], hg:[0.10,0.90,0.16]}
+  ];
+  const idx=id=>NODES.findIndex(n=>n.id===id);
+  // validated edges (CFTR–CF, DNAI1–PCD)
+  const EDGES=[["CFTR","CF"],["DNAI1","PCD"]];
+  // candidate (held-out) links the lab scores
+  const CAND=[
+    {a:"BRCA1",b:"CF", truth:false, note:"unknown link · borderline +"},
+    {a:"CFTR", b:"PCD",truth:false, note:"false link · incorrectly high"}
+  ];
+
+  const sigmoid=z=>1/(1+Math.exp(-z));
+  const dot3=(u,v)=>u[0]*v[0]+u[1]*v[1]+u[2]*v[2];
+  const norm3=u=>Math.sqrt(dot3(u,u))||1e-9;
+  const cos3=(u,v)=>dot3(u,v)/(norm3(u)*norm3(v));
+
+  // joint embedding per node, depending on strategy + sliders.
+  //  strat 0 frozen   : text only (graph ignored by the LLM, GNN trained on text feats)
+  //  strat 1 finetune : text adapted toward graph by α=adapt; LoRA caps adaptation
+  //  strat 2 fusion   : Proj([e_text, e_graph]) = (1-β)·text + β·graph, β=fuse
+  // adapt/fuse/lora are 0..1.
+  function jointEmb(n,strat,adapt,fuse,lora){
+    const t=n.e, g=n.hg;
+    if(strat===0) return t.slice();
+    if(strat===1){
+      // fine-tuning pulls text toward graph; LoRA r limits how far it can move
+      const a=adapt*(0.30+0.70*lora);
+      return [t[0]+a*(g[0]-t[0]), t[1]+a*(g[1]-t[1]), t[2]+a*(g[2]-t[2])];
+    }
+    // strat 2 fusion: convex blend of text + structural embedding
+    return [(1-fuse)*t[0]+fuse*g[0],(1-fuse)*t[1]+fuse*g[1],(1-fuse)*t[2]+fuse*g[2]];
+  }
+
+  function linkScore(aId,bId,strat,adapt,fuse,lora){
+    const ja=jointEmb(NODES[idx(aId)],strat,adapt,fuse,lora);
+    const jb=jointEmb(NODES[idx(bId)],strat,adapt,fuse,lora);
+    return {z:dot3(ja,jb), p:sigmoid(dot3(ja,jb))};
+  }
+
+  // separation = how well the model keeps the false CFTR–PCD link below the
+  // true BRCA1–CF link… here both are wrong in the tiny graph (the §5 lesson):
+  // separation rises as fusion/finetune add graph structure.
+  let sceneSnap={};
+
+  const COLG={gene:"cyan", disease:"amber"};
+
+  // ── build ──────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const adapt=s.adapt/100;     // 0..1 fine-tune strength
+    const fuse=s.fuse/100;       // 0..1 graph-fusion weight
+    const lora=s.lora/100;       // 0..1 LoRA capacity
+    const ann=s.annot/100;       // 0..1 annotation density (text quality)
+
+    const gGraph =api.group("graph");
+    const gEmbed =api.group("embed");
+    const gScore =api.group("score");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff"); // gene
+    const AM=new T.Color("#fbbf24"); // disease
+    const GR=new T.Color("#34d399"); // graph / structural
+    const VI=new T.Color("#a78bfa"); // joint / fusion
+    const RO=new T.Color("#fb7185"); // false / wrong
+
+    const stratIdx={frozen:0,finetune:1,fusion:2}[mode];
+
+    // ── fixed layout positions for the 5-node KG (left of scene) ──────────
+    const KGPOS={
+      CFTR :[-4.6, 1.7,-1.0], CF   :[-2.7, 2.4,-1.0],
+      DNAI1:[-5.2,-1.4,-1.0], PCD  :[-3.3,-2.1,-1.0],
+      BRCA1:[-2.2,-0.2, 1.6]
+    };
+
+    // ════════════════════════════════════════════════════════════════
+    // PANEL 1 (all modes): the 5-node disease-gene knowledge graph
+    // ════════════════════════════════════════════════════════════════
+    NODES.forEach(n=>{
+      const p=KGPOS[n.id];
+      const base=n.kind==="gene"?CY:AM;
+      // annotation density dims poorly-annotated nodes (only matters in frozen/finetune)
+      const q=(stratIdx===2)?1:(0.45+0.55*ann);
+      const col=base.clone().lerp(new T.Color("#1b2a3f"),(1-q)*0.55);
+      const r=n.kind==="disease"?0.42:0.36;
+      const sph=new T.Mesh(new T.SphereGeometry(r,20,16),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6*q+0.1,roughness:0.4}));
+      sph.position.set(p[0],p[1],p[2]);
+      gGraph.add(sph);
+      api.pick(sph,{node:{id:n.id,kind:n.kind,q:+q.toFixed(2)}});
+      L(n.id,base.getStyle(),n.kind==="disease"?1.35:1.2,p[0],p[1]+r+0.45,p[2]);
+    });
+    // validated edges
+    EDGES.forEach(([a,b])=>{
+      const pa=KGPOS[a],pb=KGPOS[b];
+      gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(...pa),new T.Vector3(...pb)]),
+        new T.LineBasicMaterial({color:GR.getHex()})));
+    });
+    L("KG (gene–disease)","#7f93a8",1.0,-3.7,3.4,-1.0);
+
+    // structural message-passing arrows (only when graph informs the model)
+    if(stratIdx!==0){
+      EDGES.forEach(([a,b])=>{
+        const pa=KGPOS[a],pb=KGPOS[b];
+        const mid=[(pa[0]+pb[0])/2,(pa[1]+pb[1])/2,(pa[2]+pb[2])/2];
+        const cone=new T.Mesh(new T.ConeGeometry(0.1,0.34,8),new T.MeshBasicMaterial({color:VI.getHex()}));
+        const dir=new T.Vector3(pb[0]-pa[0],pb[1]-pa[1],pb[2]-pa[2]).normalize();
+        cone.position.set(mid[0]+dir.x*0.3,mid[1]+dir.y*0.3,mid[2]+dir.z*0.3);
+        cone.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+        gGraph.add(cone);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // PANEL 2 (all modes): the 3-D PubMedBERT embedding box (right-top)
+    // shows text emb (hollow) vs joint emb (filled) per node.
+    // ════════════════════════════════════════════════════════════════
+    const EO=[3.0,1.7,0.0], ES=3.0; // origin + scale of the embedding cube
+    // axes
+    const axCol=0x35506b;
+    [[1,0,0],[0,1,0],[0,0,1]].forEach((d,i)=>{
+      gEmbed.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(EO[0],EO[1],EO[2]),
+        new T.Vector3(EO[0]+d[0]*ES,EO[1]+d[1]*ES,EO[2]+d[2]*ES)]),
+        new T.LineBasicMaterial({color:axCol})));
+    });
+    l("CF",  "#4dd7ff",0.34,EO[0]+ES+0.2,EO[1],EO[2]);
+    l("cilia","#fbbf24",0.34,EO[0],EO[1]+ES+0.2,EO[2]);
+    l("repair","#a78bfa",0.34,EO[0],EO[1],EO[2]+ES+0.2);
+    L("PubMedBERT space","#7f93a8",1.0,EO[0]+1.0,EO[1]+ES+0.7,EO[2]);
+
+    const embPos=n=>{
+      const j=jointEmb(n,stratIdx,adapt,fuse,lora);
+      return new T.Vector3(EO[0]+j[0]*ES,EO[1]+j[1]*ES,EO[2]+j[2]*ES);
+    };
+    NODES.forEach(n=>{
+      const base=n.kind==="gene"?CY:AM;
+      // text (frozen) ghost
+      const tp=new T.Vector3(EO[0]+n.e[0]*ES,EO[1]+n.e[1]*ES,EO[2]+n.e[2]*ES);
+      const ghost=new T.Mesh(new T.SphereGeometry(0.12,10,8),
+        new T.MeshBasicMaterial({color:base.getHex(),transparent:true,opacity:0.22}));
+      ghost.position.copy(tp); gEmbed.add(ghost);
+      // joint / current embedding
+      const jp=embPos(n);
+      const dotCol=(stratIdx===0)?base.clone():base.clone().lerp(VI,0.45);
+      const dot=new T.Mesh(new T.SphereGeometry(0.17,14,12),
+        new T.MeshStandardMaterial({color:dotCol,emissive:dotCol,emissiveIntensity:0.85,roughness:0.3}));
+      dot.position.copy(jp); gEmbed.add(dot);
+      api.pick(dot,{emb:{id:n.id,e:n.e,j:jointEmb(n,stratIdx,adapt,fuse,lora).map(v=>+v.toFixed(2))}});
+      // movement trail text->joint
+      if(stratIdx!==0 && tp.distanceTo(jp)>0.05){
+        gEmbed.add(new T.Line(new T.BufferGeometry().setFromPoints([tp,jp]),
+          new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.6})));
+      }
+    });
+
+    // ════════════════════════════════════════════════════════════════
+    // PANEL 3 (all modes): link-prediction score bars (bottom)
+    // ════════════════════════════════════════════════════════════════
+    const scores=CAND.map(c=>{
+      const r=linkScore(c.a,c.b,stratIdx,adapt,fuse,lora);
+      return {...c,z:r.z,p:r.p};
+    });
+    const xB=[-1.4,1.4], yBase=-3.6, zB=2.2;
+    scores.forEach((sc,i)=>{
+      const h=0.12+sc.p*3.4;
+      const col=sc.truth?GR.clone():RO.clone();
+      const bar=new T.Mesh(new T.BoxGeometry(1.1,h,1.1),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.7),emissiveIntensity:0.55,roughness:0.4}));
+      bar.position.set(xB[i],yBase+h/2,zB);
+      gScore.add(bar);
+      api.pick(bar,{link:{pair:sc.a+"–"+sc.b,p:+sc.p.toFixed(3),z:+sc.z.toFixed(3),truth:sc.truth}});
+      L(sc.p.toFixed(2),col.getStyle(),1.5,xB[i],yBase+h+0.5,zB);
+      l(sc.a+"–"+sc.b,col.getStyle(),0.36,xB[i],yBase-0.45,zB);
+    });
+    // decision threshold 0.5 plane line
+    const th=0.12+0.5*3.4;
+    gScore.add(new T.Line(new T.BufferGeometry().setFromPoints([
+      new T.Vector3(-2.3,yBase+th,zB),new T.Vector3(2.3,yBase+th,zB)]),
+      new T.LineBasicMaterial({color:0xfde68a})));
+    L("score = σ(hᵤᵀhᵥ) · σ=0.5","#7f93a8",1.0,0,yBase-1.05,zB);
+
+    // separation: gap between true-link score and false-link score (want >0)
+    const trueCF =scores[0].p; // BRCA1–CF (unknown, treated as candidate +)
+    const falsePCD=scores[1].p; // CFTR–PCD (false)
+    const sep=trueCF-falsePCD;  // §5: tiny graph keeps this near zero
+    const cosTextPCD=cos3(NODES[idx("CFTR")].e,NODES[idx("PCD")].e); // ≈ low
+
+    // ── strategy badge / metric assembly ──────────────────────────────────
+    const stratName=["Frozen extraction","Joint fine-tune (LoRA)","KG + text fusion"][stratIdx];
+    const formula=[
+      "x_v = concat( PubMedBERT(t_v), x_num )  ·  θ_LM frozen",
+      "e_v(θ_LM) = PubMedBERT(t_v)  →  h = GNN(e_v,A)  ·  ∇ through LM",
+      "e_v^joint = Proj([ PubMedBERT(t_v) , GNN(G_KG,v) ])"
+    ][stratIdx];
+
+    sceneSnap={
+      mode, strat:stratIdx,
+      adapt:+adapt.toFixed(2), fuse:+fuse.toFixed(2), lora:+lora.toFixed(2), annot:+ann.toFixed(2),
+      scoreBRCA1_CF:+trueCF.toFixed(3),
+      scoreCFTR_PCD:+falsePCD.toFixed(3),
+      separation:+sep.toFixed(3),
+      cosTextCFTR_PCD:+cosTextPCD.toFixed(3),
+      llmFrozen:stratIdx===0
+    };
+
+    let insight, state;
+    if(stratIdx===0){
+      insight="Frozen extraction: PubMedBERT runs once, embeddings cached. The LLM never sees graph topology — joint dots sit exactly on the text ghosts. Annotation density dims poorly-annotated nodes; cheap, no catastrophic forgetting, but text and graph spaces never reconcile.";
+      state="θ_LM frozen. BRCA1–CF "+trueCF.toFixed(2)+" · CFTR–PCD "+falsePCD.toFixed(2)+" (false). Text cos(CFTR,PCD)="+cosTextPCD.toFixed(2)+" — low, yet the score stays high: the 5-node graph is too small to separate them (§5).";
+    } else if(stratIdx===1){
+      insight="Joint fine-tune: gradients flow HEAD→GNN→LLM so text embeddings drift toward graph structure (violet trails). LoRA caps how far weights move — small r preserves biomedical knowledge, large adapt risks overfitting a tiny dataset (Misconception 4).";
+      state="Fine-tune α="+(adapt).toFixed(2)+" · LoRA cap "+lora.toFixed(2)+". CFTR–PCD now "+falsePCD.toFixed(2)+", separation "+(sep>=0?"+":"")+sep.toFixed(2)+". On a 5-node graph the gradient signal is weak — drag Annotation to see density bias.";
+    } else {
+      insight="KG + text fusion: each node = Proj([text emb, structural emb]). Increasing fusion weight pulls the joint dot from its text ghost toward the GNN's structural embedding — disease-gene links now rest on both semantic and topological evidence.";
+      state="Fusion β="+fuse.toFixed(2)+". BRCA1–CF "+trueCF.toFixed(2)+" · CFTR–PCD "+falsePCD.toFixed(2)+". Separation "+(sep>=0?"+":"")+sep.toFixed(2)+" — fusion lifts the true link above the false one as β grows (full KG would separate them cleanly).";
+    }
+
+    return {
+      badge:stratName+" · σ(BRCA1·CF)="+trueCF.toFixed(2),
+      formula:formula,
+      insight:insight,
+      state:state,
+      metrics:{
+        scoreBRCA1CF:trueCF.toFixed(2),
+        scoreCFTRPCD:falsePCD.toFixed(2),
+        separation:(sep>=0?"+":"")+sep.toFixed(2),
+        cosTextPCD:cosTextPCD.toFixed(2)
+      },
+      focus:{center:[-0.4,0,0.3],radius:13.5}
+    };
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────
+  MathLab.create({
+    id:"k04",
+    kind:"biomedical-graph-foundation",
+    eyebrow:"Block K · Graph Foundation Models",
+    title:"K04 · Biomedical graph foundation models",
+    subtitle:"One 5-node disease-gene KG (CFTR, DNAI1, BRCA1 · CF, PCD) enriched with PubMedBERT text. Three ways to couple LLM embeddings to a GNN: frozen extraction, joint fine-tune (LoRA), and KG+text fusion.",
+    selectedLabel:"Element",
+    selectedHint:"Click a KG node, an embedding dot, or a score bar.",
+    modes:[
+      {value:"frozen",   label:"A · Frozen extraction (cached LLM)"},
+      {value:"finetune", label:"B · Joint fine-tune (LoRA)"},
+      {value:"fusion",   label:"C · KG + text fusion"}
+    ],
+    params:[
+      {key:"fuse",  label:"fusion weight β (graph share)",min:0,max:100,step:1,value:50,
+       fmt:v=>(v/100).toFixed(2),modes:["fusion"]},
+      {key:"adapt", label:"fine-tune strength α",min:0,max:100,step:1,value:40,
+       fmt:v=>(v/100).toFixed(2),modes:["finetune"]},
+      {key:"lora",  label:"LoRA capacity (rank r)",min:0,max:100,step:1,value:30,
+       fmt:v=>(v/100).toFixed(2),modes:["finetune"]},
+      {key:"annot", label:"annotation density (text quality)",min:0,max:100,step:1,value:70,
+       fmt:v=>(v/100).toFixed(2),modes:["frozen","finetune"]}
+    ],
+    metrics:[
+      {key:"scoreBRCA1CF",label:"σ(BRCA1·CF) link",accent:"green"},
+      {key:"scoreCFTRPCD",label:"σ(CFTR·PCD) false",accent:"rose"},
+      {key:"separation",  label:"true − false gap",accent:"violet"},
+      {key:"cosTextPCD",  label:"cos(CFTR,PCD) text",accent:"cyan"}
+    ],
+    layers:[
+      {group:"graph", label:"Knowledge graph"},
+      {group:"embed", label:"PubMedBERT space"},
+      {group:"score", label:"Link scores"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Frozen baseline",
+      on:api=>{api.setMode("frozen");}
+    },
+    secondary:{
+      label:"Full fusion (β=1)",
+      on:api=>{api.setMode("fusion");api.setParam("fuse",100);}
+    },
+    defaultCam:{theta:-0.5,phi:0.55,r:13.5},
+    hint:'<span style="color:#4dd7ff">cyan</span>=gene · <span style="color:#fbbf24">amber</span>=disease · <span style="color:#34d399">green</span>=validated edge / true link · <span style="color:#a78bfa">violet</span>=joint / graph signal · <span style="color:#fb7185">rose</span>=false link. Ghost dots = frozen text embedding.',
+    onParam(api){ api.frame([-0.4,0,0.3],13.5); },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node.id+" · "+d.node.kind+" · text quality "+d.node.q);
+      if(d.emb)  api.setSelected(d.emb.id+" · joint e=["+d.emb.j.join(", ")+"]");
+      if(d.link) api.setSelected(d.link.pair+" · σ="+d.link.p+" · z="+d.link.z+" · "+(d.link.truth?"true":"FALSE")+" link");
+    },
+    build,
+    snapshot(s){
+      const strat={frozen:0,finetune:1,fusion:2}[s.mode];
+      const adapt=s.adapt/100, fuse=s.fuse/100, lora=s.lora/100, ann=s.annot/100;
+      const sCF =linkScore("BRCA1","CF", strat,adapt,fuse,lora).p;
+      const sPCD=linkScore("CFTR","PCD",strat,adapt,fuse,lora).p;
+      const cosPCD=cos3(NODES[idx("CFTR")].e,NODES[idx("PCD")].e);
+      return {
+        mode:s.mode,
+        strategy:strat,
+        fuse:+fuse.toFixed(2), adapt:+adapt.toFixed(2), lora:+lora.toFixed(2), annot:+ann.toFixed(2),
+        scoreBRCA1_CF:+sCF.toFixed(3),
+        scoreCFTR_PCD:+sPCD.toFixed(3),
+        separation:+(sCF-sPCD).toFixed(3),
+        cosTextCFTR_PCD:+cosPCD.toFixed(3),
+        llmFrozen:strat===0,
+        falseLinkAboveThreshold:sPCD>0.5
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

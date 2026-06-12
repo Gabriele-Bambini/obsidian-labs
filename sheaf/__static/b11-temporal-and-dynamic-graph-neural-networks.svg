@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure B11 — A temporal GNN is a graph with a clock</title>
+<desc id="d">Four-panel captioned figure: A temporal GNN is a graph with a clock</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE B11 · BLOCK B · GNN ARCHITECTURES</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">A temporal GNN is a graph with a clock</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The timed event stream</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">events</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">t0 A active</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">0.20</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">t1 edge A→B</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">0.60</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Memory respects t− / t+</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">msg_{A→B}(1) = w·m_A(1−)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">= 0.60 · 0.20 = 0.12</text>
+<text x="502" y="187.5" fill="#fbbf24" font-size="11.5" font-weight="700">m_A(0+)</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.20</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Snapshot vs leakage</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">Bin events into G_0..G_T and a normal GNN runs per bin;</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">one bin pools everything and recreates the static mistake.</text>
+<text x="56" y="349.5" fill="#fbbf24" font-size="11.5" font-weight="700">1 bin</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">static pooling</text>
+<text x="56" y="369.5" fill="#fbbf24" font-size="11.5" font-weight="700">future leak</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">Σx = 1.45</text>
+<rect x="56" y="388" width="120" height="88" fill="none" stroke="#3a4a5e" stroke-width="1"/>
+<path d="M56 465.44 L92 427.6 L128 401.2 L176 396.8" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Takeaway</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">write</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">evidence ≤ t → predict &gt; t</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">t− / t+</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">blocks future leak</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">bin width</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">sets simultaneity</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">temporal split</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">is the guardrail</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure B11. </text>
+<text x="140.59" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="156.71" y="538" fill="#c7d2dd" font-size="13">tiny </text>
+<text x="197.01" y="538" fill="#c7d2dd" font-size="13">regulatory </text>
+<text x="285.67" y="538" fill="#c7d2dd" font-size="13">system </text>
+<text x="342.09" y="538" fill="#c7d2dd" font-size="13">(TF </text>
+<text x="374.33" y="538" fill="#c7d2dd" font-size="13">A, </text>
+<text x="398.51" y="538" fill="#c7d2dd" font-size="13">targets </text>
+<text x="462.99" y="538" fill="#c7d2dd" font-size="13">B </text>
+<text x="479.11" y="538" fill="#c7d2dd" font-size="13">and </text>
+<text x="511.35" y="538" fill="#c7d2dd" font-size="13">C, </text>
+<text x="535.53" y="538" fill="#c7d2dd" font-size="13">marker </text>
+<text x="591.95" y="538" fill="#c7d2dd" font-size="13">D) </text>
+<text x="616.13" y="538" fill="#c7d2dd" font-size="13">over </text>
+<text x="656.43" y="538" fill="#c7d2dd" font-size="13">five </text>
+<text x="696.73" y="538" fill="#c7d2dd" font-size="13">timed </text>
+<text x="745.09" y="538" fill="#c7d2dd" font-size="13">events. </text>
+<text x="809.57" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="843.1" y="538" fill="#c7d2dd" font-size="13">The</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">event </text>
+<text x="88.36" y="559" fill="#c7d2dd" font-size="13">stream </text>
+<text x="144.78" y="559" fill="#c7d2dd" font-size="13">stores </text>
+<text x="201.2" y="559" fill="#c7d2dd" font-size="13">(u,v,r,t,x); </text>
+<text x="305.98" y="559" fill="#c7d2dd" font-size="13">order </text>
+<text x="354.34" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="378.52" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="410.76" y="559" fill="#c7d2dd" font-size="13">signal. </text>
+<text x="475.24" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="508.77" y="559" fill="#c7d2dd" font-size="13">Memory </text>
+<text x="565.19" y="559" fill="#c7d2dd" font-size="13">updates </text>
+<text x="629.67" y="559" fill="#c7d2dd" font-size="13">respect </text>
+<text x="694.15" y="559" fill="#c7d2dd" font-size="13">t−/t+: </text>
+<text x="750.57" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="782.81" y="559" fill="#c7d2dd" font-size="13">message </text>
+<text x="847.29" y="559" fill="#c7d2dd" font-size="13">into</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">B </text>
+<text x="56.12" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="80.3" y="580" fill="#c7d2dd" font-size="13">w·m_A(1−) </text>
+<text x="160.9" y="580" fill="#c7d2dd" font-size="13">= </text>
+<text x="177.02" y="580" fill="#c7d2dd" font-size="13">0.60·0.20 </text>
+<text x="257.62" y="580" fill="#c7d2dd" font-size="13">= </text>
+<text x="273.74" y="580" fill="#c7d2dd" font-size="13">0.12, </text>
+<text x="322.1" y="580" fill="#c7d2dd" font-size="13">using </text>
+<text x="370.46" y="580" fill="#c7d2dd" font-size="13">only </text>
+<text x="410.76" y="580" fill="#c7d2dd" font-size="13">A's </text>
+<text x="443" y="580" fill="#c7d2dd" font-size="13">past. </text>
+<text x="491.36" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="524.89" y="580" fill="#c7d2dd" font-size="13">Snapshot </text>
+<text x="597.43" y="580" fill="#c7d2dd" font-size="13">binning </text>
+<text x="661.91" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="686.09" y="580" fill="#c7d2dd" font-size="13">convenient </text>
+<text x="774.75" y="580" fill="#c7d2dd" font-size="13">but </text>
+<text x="806.99" y="580" fill="#c7d2dd" font-size="13">one </text>
+<text x="839.23" y="580" fill="#c7d2dd" font-size="13">bin</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">pools </text>
+<text x="88.36" y="601" fill="#c7d2dd" font-size="13">everything </text>
+<text x="177.02" y="601" fill="#c7d2dd" font-size="13">into </text>
+<text x="217.32" y="601" fill="#c7d2dd" font-size="13">a </text>
+<text x="233.44" y="601" fill="#c7d2dd" font-size="13">static </text>
+<text x="289.86" y="601" fill="#c7d2dd" font-size="13">graph; </text>
+<text x="346.28" y="601" fill="#c7d2dd" font-size="13">future </text>
+<text x="402.7" y="601" fill="#c7d2dd" font-size="13">evidence </text>
+<text x="475.24" y="601" fill="#c7d2dd" font-size="13">(Σx </text>
+<text x="507.48" y="601" fill="#c7d2dd" font-size="13">= </text>
+<text x="523.6" y="601" fill="#c7d2dd" font-size="13">1.45 </text>
+<text x="563.9" y="601" fill="#c7d2dd" font-size="13">after </text>
+<text x="612.26" y="601" fill="#c7d2dd" font-size="13">t=2) </text>
+<text x="652.56" y="601" fill="#c7d2dd" font-size="13">must </text>
+<text x="692.86" y="601" fill="#c7d2dd" font-size="13">not </text>
+<text x="725.1" y="601" fill="#c7d2dd" font-size="13">leak </text>
+<text x="765.4" y="601" fill="#c7d2dd" font-size="13">back. </text>
+<text x="813.76" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="847.29" y="601" fill="#c7d2dd" font-size="13">Write</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">'evidence </text>
+<text x="120.6" y="622" fill="#c7d2dd" font-size="13">≤ </text>
+<text x="136.72" y="622" fill="#c7d2dd" font-size="13">t, </text>
+<text x="160.9" y="622" fill="#c7d2dd" font-size="13">predict </text>
+<text x="225.38" y="622" fill="#c7d2dd" font-size="13">&gt; </text>
+<text x="241.5" y="622" fill="#c7d2dd" font-size="13">t' </text>
+<text x="265.68" y="622" fill="#c7d2dd" font-size="13">first; </text>
+<text x="322.1" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="354.34" y="622" fill="#c7d2dd" font-size="13">temporal </text>
+<text x="426.88" y="622" fill="#c7d2dd" font-size="13">split </text>
+<text x="475.24" y="622" fill="#c7d2dd" font-size="13">is </text>
+<text x="499.42" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="531.66" y="622" fill="#c7d2dd" font-size="13">main </text>
+<text x="571.96" y="622" fill="#c7d2dd" font-size="13">guardrail.</text>
+</svg>

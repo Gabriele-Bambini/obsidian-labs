@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F17 — A GRN is a sequence G(t), not one averaged graph</title>
+<desc id="d">Four-panel captioned figure: A GRN is a sequence G(t), not one averaged graph</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F17 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">A GRN is a sequence G(t), not one averaged graph</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">4 cells ordered by pseudotime</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">4 · t 0.1→0.9</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">genes</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TF1</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">8.1 → 0.9</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TF2</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">1.2 → 8.8</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Per-bin GRNs: the TF switch</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">G1 = GRN(cells 1,2)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">G2 = GRN(cells 3,4)</text>
+<rect x="502" y="178.89" width="12" height="25.11" rx="2" fill="#4dd7ff"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">A1</text>
+<rect x="520" y="200.75" width="12" height="3.25" rx="2" fill="#4dd7ff"/>
+<text x="526" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">A2</text>
+<rect x="538" y="194.84" width="12" height="9.16" rx="2" fill="#fb7185"/>
+<text x="544" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">B1</text>
+<rect x="556" y="178" width="12" height="26" rx="2" fill="#fb7185"/>
+<text x="562" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">B2</text>
+<line x1="502" y1="195.14" x2="574" y2="195.14" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Δ = G2 − G1 classifies edges</text>
+<text x="56" y="301.5" fill="#fb7185" font-size="11.5" font-weight="700">TF1→GeneA</text>
+<text x="196" y="301.5" fill="#9fb4cc" font-size="11.5">-0.74</text>
+<text x="56" y="321.5" fill="#34d399" font-size="11.5" font-weight="700">TF2→GeneB</text>
+<text x="196" y="321.5" fill="#9fb4cc" font-size="11.5">+0.57</text>
+<text x="56" y="341.5" fill="#fbbf24" font-size="11.5" font-weight="700">→GeneC</text>
+<text x="196" y="341.5" fill="#9fb4cc" font-size="11.5">-0.01</text>
+<text x="56" y="369" fill="#9fb4cc" font-size="11">|Δ|&gt;0.30: silenced (−0.74), activated (+0.57); GeneC</text>
+<text x="56" y="389" fill="#9fb4cc" font-size="11">stable.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Static pooling hides the switch</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">pooled ρ(TF2,B)</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">1.00</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">binned</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.31 → 0.88</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">lost</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">WHEN it activated</text>
+<text x="502" y="369" fill="#8a99ad" font-size="11">Pooling 4 cells gives ρ=0.998 but cannot say when</text>
+<text x="502" y="389" fill="#8a99ad" font-size="11">TF2→GeneB turned on.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F17. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">dynamic </text>
+<text x="224.91" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="260.78" y="538" fill="#c7d2dd" font-size="13">over </text>
+<text x="301.08" y="538" fill="#c7d2dd" font-size="13">4 </text>
+<text x="317.2" y="538" fill="#c7d2dd" font-size="13">cells </text>
+<text x="365.56" y="538" fill="#c7d2dd" font-size="13">(pseudotime </text>
+<text x="462.28" y="538" fill="#c7d2dd" font-size="13">0.1→0.9), </text>
+<text x="549.33" y="538" fill="#c7d2dd" font-size="13">5 </text>
+<text x="565.45" y="538" fill="#c7d2dd" font-size="13">genes, </text>
+<text x="621.87" y="538" fill="#c7d2dd" font-size="13">2 </text>
+<text x="637.99" y="538" fill="#c7d2dd" font-size="13">bins. </text>
+<text x="686.35" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="719.88" y="538" fill="#c7d2dd" font-size="13">TF1 </text>
+<text x="754.54" y="538" fill="#c7d2dd" font-size="13">decays </text>
+<text x="810.96" y="538" fill="#c7d2dd" font-size="13">8.1→0.9</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">while </text>
+<text x="88.36" y="559" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="123.02" y="559" fill="#c7d2dd" font-size="13">rises </text>
+<text x="171.38" y="559" fill="#c7d2dd" font-size="13">1.2→8.8. </text>
+<text x="250.37" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="283.9" y="559" fill="#c7d2dd" font-size="13">Per-bin </text>
+<text x="349.58" y="559" fill="#c7d2dd" font-size="13">GRNs: </text>
+<text x="401.57" y="559" fill="#c7d2dd" font-size="13">TF1→GeneA </text>
+<text x="493.46" y="559" fill="#c7d2dd" font-size="13">0.85→0.11, </text>
+<text x="588.56" y="559" fill="#c7d2dd" font-size="13">TF2→GeneB </text>
+<text x="680.45" y="559" fill="#c7d2dd" font-size="13">0.31→0.88. </text>
+<text x="775.56" y="559" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="809.09" y="559" fill="#c7d2dd" font-size="13">Δ </text>
+<text x="825.21" y="559" fill="#c7d2dd" font-size="13">= </text>
+<text x="841.33" y="559" fill="#c7d2dd" font-size="13">G2 </text>
+<text x="866.71" y="559" fill="#c7d2dd" font-size="13">−</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">G1: </text>
+<text x="73.45" y="580" fill="#c7d2dd" font-size="13">silenced </text>
+<text x="145.99" y="580" fill="#c7d2dd" font-size="13">-0.74, </text>
+<text x="202.41" y="580" fill="#c7d2dd" font-size="13">activated </text>
+<text x="283.01" y="580" fill="#c7d2dd" font-size="13">+0.57, </text>
+<text x="339.43" y="580" fill="#c7d2dd" font-size="13">stable </text>
+<text x="395.85" y="580" fill="#c7d2dd" font-size="13">-0.01. </text>
+<text x="452.27" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="485.8" y="580" fill="#c7d2dd" font-size="13">Static </text>
+<text x="543.43" y="580" fill="#c7d2dd" font-size="13">pooled </text>
+<text x="599.85" y="580" fill="#c7d2dd" font-size="13">ρ=1.00 </text>
+<text x="656.27" y="580" fill="#c7d2dd" font-size="13">erases </text>
+<text x="712.69" y="580" fill="#c7d2dd" font-size="13">when </text>
+<text x="752.99" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="785.23" y="580" fill="#c7d2dd" font-size="13">program</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">switched.</text>
+</svg>

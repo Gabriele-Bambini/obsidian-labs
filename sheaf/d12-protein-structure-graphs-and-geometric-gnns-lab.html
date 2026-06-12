@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D12 · Protein structure graphs and geometric GNNs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random helper (hash via Math.sin/floor only) ─────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+
+  // ── FACTS: the note's Section-5 worked example ────────────────────────────
+  // Peptide Ala-Gly-Ser-Trp (AGSW), C-alpha coords in Angstroms.
+  const RES=[
+    {name:"Ala",one:"A",p:[0.0, 0.0, 0.0]},
+    {name:"Gly",one:"G",p:[3.8, 0.0, 0.0]},
+    {name:"Ser",one:"S",p:[7.6, 0.0, 0.2]},
+    {name:"Trp",one:"W",p:[11.4,0.2, 0.5]}
+  ];
+  // Pairwise C-alpha distances straight from the note (Angstroms).
+  // d12=3.80 d13=7.60 d14=11.41 d23=3.81 d24=7.62 d34=3.82
+  function dist(a,b){const da=RES[a].p,db=RES[b].p;
+    return Math.sqrt((da[0]-db[0])**2+(da[1]-db[1])**2+(da[2]-db[2])**2);}
+  // SchNet K=2 Gaussian basis: mu=[4.0,8.0], gamma=0.5. W_k(d)=exp(-gamma*(d-mu_k)^2)
+  const MU=[4.0,8.0], GAMMA=0.5;
+  const gauss=(d,mu)=>Math.exp(-GAMMA*(d-mu)*(d-mu));
+  // Chymotrypsin catalytic triad C-alpha distances (note Section 6, Ex.3).
+  const TRIAD={ "Ser195-His57":12.3, "His57-Asp102":9.4, "Ser195-Asp102":8.1 };
+
+  // scale Angstroms -> world units so 11.4 A reads ~7.6 world units
+  const SCALE=0.66;
+  const W=a=>RES[a].p.map(c=>c*SCALE);
+
+  let sceneSnap={};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const cutoff=s.cutoff;                  // 4..13 Angstroms
+    const rotDeg=Math.round(s.rotation);    // 0..180 deg about z
+    const focusIdx=Math.round(s.focusRes);  // 0..3 (which residue is "self")
+    const muSel=Math.round(s.basis);        // 0=basis1(mu4) 1=basis2(mu8)
+
+    const gGraph =api.group("graph");
+    const gMsg   =api.group("messages");
+    const gPanel =api.group("panel");
+    const gLabels=api.group("labels");
+
+    function lab(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slab(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+    const RESCOL=[CY,GR,AM,VI]; // Ala Gly Ser Trp
+
+    // rotation matrix about z (equivariance demo); for non-rot modes rad=0
+    const rad=(mode==="equivariance")? rotDeg*Math.PI/180 : 0;
+    const cr=Math.cos(rad), sr=Math.sin(rad);
+    function rot(p){ // rotate world-space point about z-axis through origin
+      return [cr*p[0]-sr*p[1], sr*p[0]+cr*p[1], p[2]];
+    }
+    function posOf(i){ return rot(W(i)); }
+
+    // place the four residues
+    const P=[0,1,2,3].map(posOf);
+    [0,1,2,3].forEach(i=>{
+      const r=0.30+(i===focusIdx?0.10:0);
+      const nd=new T.Mesh(new T.SphereGeometry(r,24,18),
+        new T.MeshStandardMaterial({color:RESCOL[i],emissive:new T.Color(RESCOL[i]).multiplyScalar(i===focusIdx?0.85:0.5),emissiveIntensity:i===focusIdx?0.8:0.5,roughness:0.4}));
+      nd.position.set(P[i][0],P[i][1],P[i][2]);
+      gGraph.add(nd);
+      api.pick(nd,{res:{idx:i,name:RES[i].name}});
+      lab(RES[i].name+" "+(i+1),RESCOL[i],1.25,P[i][0],P[i][1]+0.62,P[i][2]);
+    });
+
+    // backbone (covalent) chain i->i+1 always drawn faint
+    for(let i=0;i<3;i++){
+      gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(...P[i]),new T.Vector3(...P[i+1])]),
+        new T.LineBasicMaterial({color:0x213447,transparent:true,opacity:0.5})));
+    }
+
+    // compute contact edges under the current cutoff
+    const PAIRS=[[0,1],[0,2],[0,3],[1,2],[1,3],[2,3]];
+    const edges=[];
+    PAIRS.forEach(([a,b])=>{ const d=dist(a,b); if(d<cutoff) edges.push({a,b,d}); });
+    const nEdges=edges.length;
+    // density vs complete graph (6 possible pairs)
+    const density=nEdges/6;
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: contact-graph  (cutoff sweep on AGSW + chymotrypsin triad panel)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="contact-graph"){
+      edges.forEach(({a,b,d})=>{
+        const inDanger=(d>cutoff-1.0); // near the threshold -> amber
+        const col=inDanger?AM:GR;
+        const mid=[(P[a][0]+P[b][0])/2,(P[a][1]+P[b][1])/2,(P[a][2]+P[b][2])/2];
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([
+          new T.Vector3(...P[a]),new T.Vector3(...P[b])]),
+          new T.LineBasicMaterial({color:new T.Color(col).getHex(),transparent:true,opacity:0.92})));
+        slab(d.toFixed(2)+"A",col,0.34,mid[0],mid[1]+0.30,mid[2]);
+      });
+      // mark the (1,4) pair if excluded (d14=11.41)
+      const d14=dist(0,3);
+      if(d14>=cutoff){
+        const mid=[(P[0][0]+P[3][0])/2,(P[0][1]+P[3][1])/2-0.7,(P[0][2]+P[3][2])/2];
+        slab("(1,4) cut "+d14.toFixed(2)+"A",RO,0.36,mid[0],mid[1],mid[2]);
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([
+          new T.Vector3(...P[0]),new T.Vector3(...P[3])]),
+          new T.LineDashedMaterial({color:new T.Color(RO).getHex(),dashSize:0.2,gapSize:0.16,transparent:true,opacity:0.5})).computeLineDistances?
+          (()=>{const ln=new T.LineSegments(new T.BufferGeometry().setFromPoints([new T.Vector3(...P[0]),new T.Vector3(...P[3])]),new T.LineDashedMaterial({color:new T.Color(RO).getHex(),dashSize:0.2,gapSize:0.16,transparent:true,opacity:0.5}));ln.computeLineDistances();return ln;})():new T.Object3D());
+      }
+
+      // ── side panel: chymotrypsin catalytic triad connectivity vs cutoff ──
+      const px=-5.4, py=3.3;
+      lab("catalytic triad @ "+cutoff.toFixed(1)+"A",CY,1.05,px+2.0,py+0.9,0);
+      const triadRows=[
+        ["Ser195-His57",TRIAD["Ser195-His57"]],
+        ["His57-Asp102",TRIAD["His57-Asp102"]],
+        ["Ser195-Asp102",TRIAD["Ser195-Asp102"]]
+      ];
+      let triadConn=0;
+      triadRows.forEach(([nm,d],r)=>{
+        const on=d<cutoff; if(on)triadConn++;
+        const yy=py-r*0.62;
+        const dot=new T.Mesh(new T.SphereGeometry(0.13,12,10),
+          new T.MeshStandardMaterial({color:on?GR:SL,emissive:new T.Color(on?GR:SL).multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        dot.position.set(px,yy,0); gPanel.add(dot);
+        slab(nm+"  "+d.toFixed(1)+"A "+(on?"join":"cut"),on?GR:SL,0.34,px+1.9,yy,0);
+      });
+
+      const cg=density;
+      sceneSnap={mode,cutoffA:+cutoff.toFixed(1),contactEdges:nEdges,graphDensity:+cg.toFixed(3),triadConnected:triadConn,d14cut:(d14>=cutoff)?1:0};
+
+      return {
+        badge:"Contact graph · r="+cutoff.toFixed(1)+"A · "+nEdges+"/6 edges",
+        formula:"(i,j) ∈ E_contact  ⇔  ‖p_i − p_j‖₂ &lt; r_cutoff",
+        insight:"Edges form between C-alpha atoms closer than the cutoff. On AGSW the (1,4) pair sits at "+d14.toFixed(2)+" A and only joins past "+d14.toFixed(0)+" A. The chymotrypsin catalytic triad (Ser195/His57/Asp102) needs a 13 A cutoff before all three connect — an 8 A graph silently disconnects the active site, biasing any functional prediction.",
+        state:"Cutoff "+cutoff.toFixed(1)+" A → "+nEdges+" contact edges (density "+(cg*100).toFixed(0)+"% of complete). Triad pairs joined: "+triadConn+"/3. "+(d14>=cutoff?"(1,4) excluded.":"(1,4) now included."),
+        metrics:{contactEdges:""+nEdges,graphDensity:(cg*100).toFixed(0)+"%",basisWeight:"—",invariantResidual:"—"},
+        focus:{center:[0,0.6,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: schnet-dimenet  (distance-only invariant message; basis weights)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="schnet-dimenet"){
+      // draw contact edges (neighbours of focus residue highlighted)
+      edges.forEach(({a,b,d})=>{
+        const touchesFocus=(a===focusIdx||b===focusIdx);
+        const col=touchesFocus?CY:SL;
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([
+          new T.Vector3(...P[a]),new T.Vector3(...P[b])]),
+          new T.LineBasicMaterial({color:new T.Color(col).getHex(),transparent:true,opacity:touchesFocus?0.95:0.4})));
+      });
+
+      // neighbours of the focus residue + their SchNet basis weights
+      const nbrs=edges.filter(e=>e.a===focusIdx||e.b===focusIdx)
+                      .map(e=>({j:(e.a===focusIdx?e.b:e.a),d:e.d}));
+      const mu=MU[muSel];
+      // message magnitude = sum over neighbours of Gaussian basis weight (selected basis)
+      let msgMag=0; let maxW=0;
+      nbrs.forEach(nb=>{ nb.w=gauss(nb.d,mu); msgMag+=nb.w; if(nb.w>maxW)maxW=nb.w; });
+
+      // draw message arrows from neighbours into focus, thickness ∝ basis weight
+      nbrs.forEach(nb=>{
+        const from=P[nb.j], to=P[focusIdx];
+        const w=nb.w;
+        api.arrow(from,to,{color:w>0.5?GR:(w>0.1?AM:SL),width:0.03+0.10*w,head:0.18+0.10*w,group:"messages"});
+        const mid=[(from[0]+to[0])/2,(from[1]+to[1])/2+0.34,(from[2]+to[2])/2];
+        slab("W="+w.toFixed(3),w>0.5?GR:(w>0.1?AM:SL),0.34,mid[0],mid[1],mid[2]);
+      });
+
+      // ── DimeNet bonus: the three-body angle at the focus residue ──
+      // angle k-focus-i between the two strongest neighbours (cis/trans cue)
+      let angleDeg=null;
+      if(nbrs.length>=2){
+        const sorted=nbrs.slice().sort((a,b)=>b.w-a.w);
+        const j1=sorted[0].j, j2=sorted[1].j;
+        const c=P[focusIdx];
+        const v1=[P[j1][0]-c[0],P[j1][1]-c[1],P[j1][2]-c[2]];
+        const v2=[P[j2][0]-c[0],P[j2][1]-c[1],P[j2][2]-c[2]];
+        const dot=v1[0]*v2[0]+v1[1]*v2[1]+v1[2]*v2[2];
+        const n1=Math.hypot(...v1),n2=Math.hypot(...v2);
+        angleDeg=Math.acos(Math.max(-1,Math.min(1,dot/(n1*n2))))*180/Math.PI;
+        // arc-ish label
+        lab("angle θ = "+angleDeg.toFixed(0)+"°  (DimeNet 3-body)",VI,1.1,c[0],c[1]-0.9,c[2]);
+      }
+
+      lab("self: "+RES[focusIdx].name+" · basis μ="+mu.toFixed(0)+"A",CY,1.2,P[focusIdx][0],P[focusIdx][1]+1.0,P[focusIdx][2]);
+
+      sceneSnap={mode,focusRes:focusIdx,basisMu:mu,basisWeight:+msgMag.toFixed(3),angleDeg:angleDeg==null?0:+angleDeg.toFixed(1),contactEdges:nEdges,graphDensity:+density.toFixed(3)};
+
+      const nbrTxt=nbrs.map(n=>RES[n.j].name+"("+n.d.toFixed(1)+"A, W="+n.w.toFixed(2)+")").join(", ");
+      return {
+        badge:"SchNet/DimeNet · self="+RES[focusIdx].name+" · μ="+mu.toFixed(0)+"A",
+        formula:"m_i = Σ_{j∈N(i)} h_j · W(d_ij),   W(d)=Σ_k e_k·exp(−γ(d−μ_k)²)",
+        insight:"SchNet's message uses only the scalar distance d_ij through a Gaussian filter, so it is E(3)-invariant by construction. With μ="+mu.toFixed(0)+" A the close neighbour dominates; switch basis to weight medium-range contacts. DimeNet adds the three-body angle θ at the self residue — the extra term that distinguishes cis vs trans configurations sharing identical pairwise distances.",
+        state:"Self "+RES[focusIdx].name+" neighbours: "+(nbrTxt||"none in cutoff")+". Σ basis weight = "+msgMag.toFixed(3)+(angleDeg!=null?". DimeNet angle θ="+angleDeg.toFixed(0)+"°.":"."),
+        metrics:{contactEdges:""+nEdges,graphDensity:(density*100).toFixed(0)+"%",basisWeight:msgMag.toFixed(3),invariantResidual:"—"},
+        focus:{center:[0,0.4,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: equivariance  (rotate peptide; distances invariant, vectors rotate)
+    // ════════════════════════════════════════════════════════════════
+    // draw all contact edges; for the focus residue show displacement vectors
+    edges.forEach(({a,b})=>{
+      gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(...P[a]),new T.Vector3(...P[b])]),
+        new T.LineBasicMaterial({color:0x274055,transparent:true,opacity:0.6})));
+    });
+
+    // reference (unrotated) ghost of focus neighbourhood
+    const refP=[0,1,2,3].map(i=>W(i));
+    [0,1,2,3].forEach(i=>{
+      const g=new T.Mesh(new T.SphereGeometry(0.16,12,10),
+        new T.MeshStandardMaterial({color:SL,emissive:new T.Color(SL).multiplyScalar(0.3),emissiveIntensity:0.3,roughness:0.6,transparent:true,opacity:0.5}));
+      g.position.set(refP[i][0],refP[i][1],refP[i][2]); gMsg.add(g);
+    });
+
+    // displacement vectors (p_j - p_focus): EQUIVARIANT (rotate with molecule)
+    const nbrs2=edges.filter(e=>e.a===focusIdx||e.b===focusIdx)
+                     .map(e=>(e.a===focusIdx?e.b:e.a));
+    nbrs2.forEach(j=>{
+      api.arrow(P[focusIdx],P[j],{color:VI,width:0.04,head:0.2,group:"messages"});
+    });
+
+    // invariance residual: how much distances change under rotation (should be ~0)
+    let invRes=0;
+    edges.forEach(({a,b,d})=>{
+      const pa=posOf(a),pb=posOf(b);
+      const dRot=Math.hypot(pa[0]-pb[0],pa[1]-pb[1],pa[2]-pb[2])/SCALE;
+      invRes+=Math.abs(dRot-d);
+    });
+    invRes=invRes/Math.max(1,edges.length);
+
+    lab("rotation φ = "+rotDeg+"° about z",AM,1.25,0,4.0,0);
+    lab("violet = displacement (equivariant)",VI,1.0,0,-3.2,0);
+    lab("grey ghost = reference frame",SL,0.95,0,-3.9,0);
+
+    sceneSnap={mode,rotationDeg:rotDeg,invariantResidual:+invRes.toFixed(4),contactEdges:nEdges,graphDensity:+density.toFixed(3),focusRes:focusIdx};
+
+    return {
+      badge:"E(3) check · φ="+rotDeg+"° · Δd="+invRes.toFixed(3)+"A",
+      formula:"invariant: d_ij(Rp)=d_ij(p)   ·   equivariant: (p_j−p_i)→R(p_j−p_i)",
+      insight:"Rotating the peptide about z leaves every pairwise distance unchanged (residual ≈ 0 A), so SchNet/DimeNet scalar outputs are identical in any orientation — the crux of E(3)-invariance. The violet displacement vectors rotate WITH the molecule: these are equivariant quantities. EGNN updates coordinates using diff·scalar, so positions transform as R·p while feature scalars stay fixed.",
+      state:"φ="+rotDeg+"°: mean distance residual = "+invRes.toFixed(4)+" A (invariant). "+nEdges+" contact edges preserved. Displacement vectors rotated by "+rotDeg+"° (equivariant).",
+      metrics:{contactEdges:""+nEdges,graphDensity:(density*100).toFixed(0)+"%",basisWeight:"—",invariantResidual:invRes.toFixed(4)+"A"},
+      focus:{center:[0,0.4,0],radius:13}
+    };
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d12",
+    kind:"protein-structure-geometric-gnn",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D12 · Protein structure graphs and geometric GNNs",
+    subtitle:"Peptide Ala-Gly-Ser-Trp as a C-alpha contact graph. Three views: the cutoff that builds edges, distance-only invariant messages (SchNet/DimeNet), and the rotation check behind E(3) invariance vs equivariance.",
+    selectedLabel:"Residue / edge",
+    selectedHint:"Click a residue sphere.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"contact-graph",  label:"Contact graph (cutoff sweep)"},
+      {value:"schnet-dimenet", label:"SchNet / DimeNet messages"},
+      {value:"equivariance",   label:"E(3) invariance vs equivariance"}
+    ],
+    params:[
+      {key:"cutoff",  label:"contact cutoff r (Angstrom)",min:4,max:13,step:0.1,value:8,
+       fmt:v=>v.toFixed(1)+" A"},
+      {key:"focusRes",label:"self residue (0=Ala 1=Gly 2=Ser 3=Trp)",min:0,max:3,step:1,value:0,
+       fmt:v=>["Ala","Gly","Ser","Trp"][Math.round(v)],modes:["schnet-dimenet","equivariance"]},
+      {key:"basis",   label:"SchNet basis (0=mu4A 1=mu8A)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"mu=4A":"mu=8A",modes:["schnet-dimenet"]},
+      {key:"rotation",label:"rotation phi about z (deg)",min:0,max:180,step:5,value:90,
+       fmt:v=>Math.round(v)+" deg",modes:["equivariance"]}
+    ],
+    metrics:[
+      {key:"contactEdges",     label:"Contact edges",accent:"green"},
+      {key:"graphDensity",     label:"Graph density",accent:"cyan"},
+      {key:"basisWeight",      label:"Σ basis weight",accent:"amber"},
+      {key:"invariantResidual",label:"Distance residual",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",   label:"Residues / contacts"},
+      {group:"messages",label:"Messages / vectors"},
+      {group:"panel",   label:"Catalytic triad"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"8 A cutoff",
+      on:api=>{api.setParam("cutoff",8);}
+    },
+    secondary:{
+      label:"13 A (triad joins)",
+      on:api=>{api.setParam("cutoff",13);}
+    },
+    defaultCam:{theta:-0.5,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=Ala/self · <span style="color:#34d399">green</span>=in-cutoff edge / strong message · <span style="color:#fbbf24">amber</span>=near-threshold / medium basis · <span style="color:#a78bfa">violet</span>=displacement (equivariant) / DimeNet angle · <span style="color:#fb7185">rose</span>=(1,4) cut.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="contact-graph") api.frame([0,0.6,0],13);
+      else if(s.mode==="schnet-dimenet") api.frame([0,0.4,0],12);
+      else api.frame([0,0.4,0],13);
+    },
+    onSelect(api,d){
+      if(d.res) api.setSelected("Residue "+(d.res.idx+1)+" · "+d.res.name);
+    },
+    build,
+    snapshot(s){
+      const cutoff=s.cutoff, rotDeg=Math.round(s.rotation);
+      const focusIdx=Math.round(s.focusRes), muSel=Math.round(s.basis);
+      function dst(a,b){const da=RES[a].p,db=RES[b].p;
+        return Math.sqrt((da[0]-db[0])**2+(da[1]-db[1])**2+(da[2]-db[2])**2);}
+      const PAIRS=[[0,1],[0,2],[0,3],[1,2],[1,3],[2,3]];
+      let nE=0; PAIRS.forEach(([a,b])=>{if(dst(a,b)<cutoff)nE++;});
+      const dens=nE/6;
+      // SchNet basis weight sum at the focus residue
+      const mu=MU[muSel]; let bw=0;
+      PAIRS.forEach(([a,b])=>{const d=dst(a,b);if(d<cutoff&&(a===focusIdx||b===focusIdx))bw+=Math.exp(-GAMMA*(d-mu)*(d-mu));});
+      // invariance residual under rotation
+      const rdn=rotDeg*Math.PI/180, c=Math.cos(rdn), sn=Math.sin(rdn);
+      let inv=0,cnt=0;
+      PAIRS.forEach(([a,b])=>{const d=dst(a,b);if(d>=cutoff)return;
+        const pa=RES[a].p,pb=RES[b].p;
+        const ra=[c*pa[0]-sn*pa[1],sn*pa[0]+c*pa[1],pa[2]];
+        const rb=[c*pb[0]-sn*pb[1],sn*pb[0]+c*pb[1],pb[2]];
+        inv+=Math.abs(Math.hypot(ra[0]-rb[0],ra[1]-rb[1],ra[2]-rb[2])-d);cnt++;});
+      inv=inv/Math.max(1,cnt);
+      // triad connectivity at this cutoff
+      let triad=0; Object.keys(TRIAD).forEach(k=>{if(TRIAD[k]<cutoff)triad++;});
+      return {
+        mode:s.mode,
+        cutoffA:+cutoff.toFixed(2),
+        contactEdges:nE,
+        graphDensity:+dens.toFixed(3),
+        basisMu:mu,
+        basisWeight:+bw.toFixed(3),
+        rotationDeg:rotDeg,
+        invariantResidual:+inv.toFixed(4),
+        triadConnected:triad,
+        d14included:dst(0,3)<cutoff
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

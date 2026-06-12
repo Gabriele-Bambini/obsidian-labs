@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E03 · scATAC-seq, chromatin accessibility, and regulatory evidence</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic-only: every coordinate derives from the FACTS below.
+  //    No PRNG, no clock; the scene is a pure function of mode + params.
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the note's Section-5 worked example (erythropoiesis), verbatim.
+  //   2 TFs · 4 peaks · 3 genes. All scores are the note's exact numbers.
+  // ════════════════════════════════════════════════════════════════════════
+  const TFS  =[{id:"T1",name:"GATA1",motif:"WGATAR"},
+               {id:"T2",name:"TAL1", motif:"CANNTG"}];
+  const PEAKS=[{id:"P1",name:"Peak1",anno:"HBB prom",  dist: 1.2},   // promoter, kb to TSS
+               {id:"P2",name:"Peak2",anno:"HBB enh",   dist:42.0},   // distal enhancer
+               {id:"P3",name:"Peak3",anno:"GATA2 prom",dist: 0.8},
+               {id:"P4",name:"Peak4",anno:"KIT enh",   dist:50.0}];
+  const GENES=[{id:"G1",name:"HBB"},{id:"G2",name:"GATA2"},{id:"G3",name:"KIT"}];
+  // binarized accessibility: 4 peaks × 4 cells (Ery,Ery,HSC,HSC)
+  const ACC  =[[1,1,0,0],[1,1,0,0],[0,0,1,1],[0,0,1,1]];
+  const CELLTYPE=["Ery","Ery","HSC","HSC"];
+  // E_motif  (TF → peak), weight = JASPAR PWM motif score
+  const MOTIF=[{t:0,p:0,w:0.89},{t:0,p:2,w:0.76},{t:1,p:1,w:0.82},{t:1,p:3,w:0.71}];
+  // E_coaccess (peak — gene), weight = Cicero co-accessibility
+  const COACC=[{p:0,g:0,w:0.95},{p:1,g:0,w:0.88},{p:2,g:1,w:0.92},{p:3,g:2,w:0.81}];
+  // E_regulation (TF → gene), weight = motif · coaccess (two-hop)
+  const REG  =[{t:0,p:0,g:0,name:"GATA1→HBB"},
+               {t:0,p:2,g:1,name:"GATA1→GATA2"},
+               {t:1,p:1,g:0,name:"TAL1→HBB"},
+               {t:1,p:3,g:2,name:"TAL1→KIT"}];
+  // Section-6 peak-annotation strategies → # gene targets reached from 4 peaks
+  // (relative topology effect; promoter-only collapses enhancer peaks)
+  const ANNO=[
+    {key:"Nearest gene",  targets:3, label:"nearest"},   // each peak→its nearest gene
+    {key:"Body ±2 kb",    targets:2, label:"±2 kb"},      // misses the two distal enhancers
+    {key:"Threshold 100k",targets:3, label:"100 kb"},     // balanced, recovers all
+    {key:"TAD-aware",     targets:3, label:"TAD"},        // biologically correct
+    {key:"Cicero co-acc", targets:3, label:"Cicero"}      // data-driven, recovers all 3
+  ];
+
+  let sceneSnap={};
+
+  // ── derived helpers ──────────────────────────────────────────────────────
+  function motifW(t,p){const m=MOTIF.find(e=>e.t===t&&e.p===p);return m?m.w:0;}
+  function coaccW(p,g){const c=COACC.find(e=>e.p===p&&e.g===g);return c?c.w:0;}
+  function regW(r){return motifW(r.t,r.p)*coaccW(r.p,r.g);}      // combined two-hop weight
+
+  // column x-positions
+  const X_TF=-5.0, X_PK=0.0, X_GN=5.0;
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const tfSel   =Math.round(s.tf);          // 0=GATA1, 1=TAL1
+    const coThr   =s.coaccThr;                 // Cicero threshold 0..1
+    const motThr  =s.motifThr;                 // motif score threshold 0..1
+    const annoIdx =Math.round(s.anno);         // 0..4 annotation strategy
+    const evid    =Math.round(s.evidence);     // 0=ATAC chromatin, 1=expression-only
+
+    const gNodes =api.group("nodes");
+    const gMotif =api.group("motif");
+    const gCoacc =api.group("coacc");
+    const gReg   =api.group("reg");
+    const gCells =api.group("cells");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // peaks / chromatin
+    const GR=new T.Color("#34d399");   // genes
+    const AM=new T.Color("#fbbf24");    // TFs / motif
+    const VI=new T.Color("#a78bfa");    // regulation / two-hop
+    const RO=new T.Color("#fb7185");    // dropped / blind
+    const SL=new T.Color("#54667c");
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function sphere(x,y,z,r,c,emi,grp,pick){
+      const m=new T.Mesh(new T.SphereGeometry(r,20,16),
+        new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(emi),emissiveIntensity:0.85,roughness:0.38}));
+      m.position.set(x,y,z); grp.add(m); if(pick)api.pick(m,pick); return m;}
+    function line(a,b,c,op,grp){
+      grp.add(new T.Line(new T.BufferGeometry().setFromPoints([a,b]),
+        new T.LineBasicMaterial({color:c,transparent:true,opacity:op})));}
+    function tube(a,b,rad,c,emi,grp){
+      const dir=b.clone().sub(a),len=dir.length();
+      const m=new T.Mesh(new T.CylinderGeometry(rad,rad,len,10,1,true),
+        new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(emi),emissiveIntensity:0.7,roughness:0.45}));
+      m.position.copy(a).add(b).multiplyScalar(0.5);
+      m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+      grp.add(m); return m;}
+    function cone(pos,dir,c,grp){
+      const m=new T.Mesh(new T.ConeGeometry(0.16,0.42,10),new T.MeshBasicMaterial({color:c}));
+      m.position.copy(pos);
+      m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+      grp.add(m); return m;}
+
+    // y layout per column (centered)
+    const yTF=(i)=> (TFS.length-1)/2*2.4 - i*2.4;
+    const yPK=(i)=> (PEAKS.length-1)/2*2.0 - i*2.0;
+    const yGN=(i)=> (GENES.length-1)/2*2.6 - i*2.6;
+    const posTF=i=>new T.Vector3(X_TF,yTF(i),0);
+    const posPK=i=>new T.Vector3(X_PK,yPK(i),0);
+    const posGN=i=>new T.Vector3(X_GN,yGN(i),0);
+
+    // count surviving edges under thresholds
+    const motifLive=MOTIF.filter(e=>e.w>=motThr);
+    const coaccLive=COACC.filter(e=>e.w>=coThr);
+    const regLive=REG.filter(r=>motifW(r.t,r.p)>=motThr && coaccW(r.p,r.g)>=coThr);
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: tripartite — the full G_multiome (TF→peak→gene)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="tripartite"){
+      // column header labels
+      lbl("TF","#fbbf24",1.5,X_TF,yTF(0)+1.7,0);
+      lbl("peak","#4dd7ff",1.5,X_PK,yPK(0)+1.6,0);
+      lbl("gene","#34d399",1.5,X_GN,yGN(0)+1.9,0);
+
+      // gene nodes
+      GENES.forEach((g,i)=>{const p=posGN(i);
+        sphere(p.x,p.y,p.z,0.42,GR,0.55,gNodes,{gene:{id:g.id,name:g.name}});
+        lbl(g.name,"#34d399",1.25,p.x,p.y+0.78,0);});
+
+      // peak nodes — colored by mean accessibility, annotation in sublabel
+      PEAKS.forEach((pk,i)=>{const p=posPK(i);
+        const meanAcc=ACC[i].reduce((a,b)=>a+b,0)/ACC[i].length;
+        const c=CY.clone().lerp(new T.Color("#13314a"),1-meanAcc);
+        sphere(p.x,p.y,p.z,0.34,c,0.5,gNodes,{peak:{id:pk.id,name:pk.name,anno:pk.anno,acc:meanAcc,dist:pk.dist}});
+        lbl(pk.name,"#4dd7ff",1.0,p.x,p.y+0.62,0);
+        slbl(pk.anno,"#7fb6d8",0.32,p.x,p.y-0.6,0);});
+
+      // TF nodes
+      TFS.forEach((tf,i)=>{const p=posTF(i);
+        sphere(p.x,p.y,p.z,0.44,AM,0.55,gNodes,{tf:{id:tf.id,name:tf.name,motif:tf.motif}});
+        lbl(tf.name,"#fbbf24",1.3,p.x,p.y+0.82,0);
+        slbl("motif "+tf.motif,"#caa64a",0.32,p.x,p.y-0.78,0);});
+
+      // E_motif arrows  TF -> peak  (amber, survive motif threshold)
+      MOTIF.forEach(e=>{const a=posTF(e.t),b=posPK(e.p);
+        const live=e.w>=motThr;
+        const c=live?AM:RO.clone().lerp(SL,0.4);
+        const dir=b.clone().sub(a).normalize();
+        const end=b.clone().sub(dir.clone().multiplyScalar(0.42));
+        tube(a.clone().add(dir.clone().multiplyScalar(0.46)),end.clone().sub(dir.clone().multiplyScalar(0.32)),live?0.05:0.03,c,live?0.55:0.15,gMotif);
+        cone(end.clone().sub(dir.clone().multiplyScalar(0.1)),dir,c,gMotif);
+        if(live)slbl(e.w.toFixed(2),"#fbbf24",0.34,(a.x+b.x)/2,(a.y+b.y)/2+0.28,0.2);});
+
+      // E_coaccess edges peak -- gene (cyan↔green undirected, survive coacc threshold)
+      COACC.forEach(e=>{const a=posPK(e.p),b=posGN(e.g);
+        const live=e.w>=coThr;
+        const dir=b.clone().sub(a).normalize();
+        const c=live?GR.clone().lerp(CY,0.4):RO.clone().lerp(SL,0.4);
+        tube(a.clone().add(dir.clone().multiplyScalar(0.36)),
+             b.clone().sub(dir.clone().multiplyScalar(0.42)),
+             live?0.05:0.03,c,live?0.5:0.15,gCoacc);
+        if(live)slbl(e.w.toFixed(2),"#34d399",0.34,(a.x+b.x)/2,(a.y+b.y)/2+0.28,0.2);});
+
+      // small cell-accessibility strip below each peak (4 cells)
+      PEAKS.forEach((pk,i)=>{const p=posPK(i);
+        ACC[i].forEach((v,c)=>{
+          const cx=p.x-0.72+c*0.48, cy=p.y-1.05;
+          const col=v?CY.clone():new T.Color("#16222e");
+          const cube=new T.Mesh(new T.BoxGeometry(0.34,0.34,0.34),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(v?0.6:0.1),emissiveIntensity:0.7,roughness:0.4}));
+          cube.position.set(cx,cy,0); gCells.add(cube);
+          api.pick(cube,{cell:{peak:pk.name,cell:c+1,type:CELLTYPE[c],open:!!v}});});});
+      slbl("accessibility  Ery Ery HSC HSC","#6b7a8d",0.4,X_PK,yPK(PEAKS.length-1)-2.1,0);
+
+      const nm=motifLive.length, nc=coaccLive.length, nr=regLive.length;
+      sceneSnap={mode,tf:tfSel,motifThr:+motThr.toFixed(2),coaccThr:+coThr.toFixed(2),anno:annoIdx,evidence:evid,
+        motifEdges:nm,coaccEdges:nc,regEdges:nr,geneTargets:new Set(regLive.map(r=>r.g)).size};
+
+      return {
+        badge:"G_multiome · "+TFS.length+" TF · "+PEAKS.length+" peak · "+GENES.length+" gene",
+        formula:"G_multiome = (V_TF ∪ V_peak ∪ V_gene, &nbsp; E_motif ∪ E_coaccess ∪ E_regulation)",
+        insight:"The tripartite regulatory-evidence graph. Amber E_motif arrows (TF→peak) carry JASPAR PWM scores; green E_coaccess edges (peak—gene) carry Cicero co-accessibility. Peak brightness = mean accessibility across the 4 cells (Ery vs HSC). Raise the motif or co-accessibility threshold to prune weak edges (they turn rose).",
+        state:"E_motif: "+nm+"/4 · E_coaccess: "+nc+"/4 surviving. Peak1/2 open in erythroid cells; Peak3/4 open in HSC. Each open peak + motif match is binding OPPORTUNITY, not confirmed binding.",
+        metrics:{motifEdges:nm+"/4",coaccEdges:nc+"/4",regEdges:nr+"/4",geneTargets:""+new Set(regLive.map(r=>r.g)).size},
+        focus:{center:[0,0,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: two-hop — E_regulation = motif · coaccess (TF→peak→gene)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="two-hop"){
+      const tf=TFS[tfSel];
+      lbl("E_regulation  weight = motif · coaccess","#a78bfa",1.25,0,yPK(0)+2.5,0);
+
+      // TF nodes (dim the non-selected TF)
+      TFS.forEach((t,i)=>{const p=posTF(i);const on=(i===tfSel);
+        sphere(p.x,p.y,p.z,on?0.46:0.34,on?AM:AM.clone().lerp(SL,0.6),on?0.6:0.15,gNodes,{tf:{id:t.id,name:t.name,motif:t.motif}});
+        lbl(t.name,on?"#fbbf24":"#6e6a4a",on?1.35:1.0,p.x,p.y+0.82,0);});
+      PEAKS.forEach((pk,i)=>{const p=posPK(i);
+        sphere(p.x,p.y,p.z,0.32,CY,0.4,gNodes,{peak:{id:pk.id,name:pk.name,anno:pk.anno}});
+        lbl(pk.name,"#4dd7ff",0.95,p.x,p.y+0.58,0);});
+      GENES.forEach((g,i)=>{const p=posGN(i);
+        sphere(p.x,p.y,p.z,0.42,GR,0.5,gNodes,{gene:{id:g.id,name:g.name}});
+        lbl(g.name,"#34d399",1.2,p.x,p.y+0.78,0);});
+
+      // highlight selected TF's two-hop paths
+      const paths=REG.filter(r=>r.t===tfSel);
+      paths.forEach(r=>{
+        const a=posTF(r.t),b=posPK(r.p),c=posGN(r.g);
+        const mw=motifW(r.t,r.p), cw=coaccW(r.p,r.g), rw=mw*cw;
+        const live=mw>=motThr && cw>=coThr;
+        // hop 1: TF -> peak (amber)
+        const d1=b.clone().sub(a).normalize();
+        tube(a.clone().add(d1.clone().multiplyScalar(0.46)),b.clone().sub(d1.clone().multiplyScalar(0.45)),live?0.055:0.03,AM,0.5,gMotif);
+        cone(b.clone().sub(d1.clone().multiplyScalar(0.34)),d1,AM,gMotif);
+        slbl("m="+mw.toFixed(2),"#fbbf24",0.34,(a.x+b.x)/2,(a.y+b.y)/2+0.3,0.25);
+        // hop 2: peak -> gene (green)
+        const d2=c.clone().sub(b).normalize();
+        tube(b.clone().add(d2.clone().multiplyScalar(0.36)),c.clone().sub(d2.clone().multiplyScalar(0.45)),live?0.055:0.03,GR,0.5,gCoacc);
+        cone(c.clone().sub(d2.clone().multiplyScalar(0.34)),d2,GR,gCoacc);
+        slbl("c="+cw.toFixed(2),"#34d399",0.34,(b.x+c.x)/2,(b.y+c.y)/2+0.3,0.25);
+        // combined weight floating near gene
+        lbl("w="+rw.toFixed(3),live?"#a78bfa":"#fb7185",1.1,c.x+0.2,c.y-0.7,0.3);
+      });
+
+      // bars of all 4 regulation weights (so every TF's paths compare)
+      REG.forEach((r,i)=>{const rw=regW(r);
+        const bx=-5.0+i*3.3, h=0.15+rw*4.2;
+        const on=(r.t===tfSel);
+        const col=on?VI:VI.clone().lerp(SL,0.55);
+        const bar=new T.Mesh(new T.BoxGeometry(1.2,h,1.0),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(on?0.7:0.2),emissiveIntensity:on?0.6:0.2,roughness:0.4,transparent:!on,opacity:on?1:0.5}));
+        bar.position.set(bx,-5.2+h/2,3.4); gReg.add(bar);
+        api.pick(bar,{regbar:{name:r.name,w:rw}});
+        slbl(r.name,on?"#a78bfa":"#6b6a82",0.3,bx,-5.6,3.4);
+        if(on)lbl(rw.toFixed(3),"#a78bfa",1.0,bx,-5.0+h+0.5,3.4);});
+      line(new T.Vector3(-6.2,-5.2,3.4),new T.Vector3(6.2,-5.2,3.4),0x1e3046,1,gReg);
+
+      const selPaths=paths.map(r=>({name:r.name,w:regW(r)}));
+      const maxW=Math.max.apply(null,REG.map(regW));
+      sceneSnap={mode,tf:tfSel,motifThr:+motThr.toFixed(2),coaccThr:+coThr.toFixed(2),anno:annoIdx,evidence:evid,
+        selPaths:selPaths.length,topRegWeight:+maxW.toFixed(3),
+        selW0:+(selPaths[0]?selPaths[0].w:0).toFixed(3),selW1:+(selPaths[1]?selPaths[1].w:0).toFixed(3)};
+
+      return {
+        badge:"E_regulation · "+tf.name+" · "+paths.length+" two-hop paths",
+        formula:"w(TF→g) = motif_score(TF,pk) · coaccess(pk,g)",
+        insight:"Each E_regulation edge is a two-hop hypothesis TF→peak→gene. The amber hop is the JASPAR motif score, the green hop is the Cicero co-accessibility, and the combined weight w (violet) multiplies them. Bars compare all four derived regulatory edges; switch the TF slider to follow GATA1 vs TAL1.",
+        state:tf.name+" paths: "+selPaths.map(p=>p.name+" w="+p.w.toFixed(3)).join("  ·  ")+". Strongest edge overall: GATA1→HBB (0.846 = 0.89·0.95).",
+        metrics:{motifEdges:""+paths.length,coaccEdges:""+paths.length,regEdges:""+paths.length,geneTargets:""+new Set(paths.map(r=>r.g)).size},
+        focus:{center:[0,-1.5,1.4],radius:15}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: annotation — peak→gene strategy reshapes G_multiome topology
+    //   + chromatin-vs-expression evidence contrast
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="annotation"){
+      const strat=ANNO[annoIdx];
+      lbl("Peak annotation strategy → graph topology","#4dd7ff",1.2,0,4.6,0);
+
+      // bars: gene targets reached under each annotation strategy
+      ANNO.forEach((a,i)=>{const bx=-6.4+i*3.2, h=0.2+a.targets*1.3;
+        const on=(i===annoIdx);
+        const col=on?CY:CY.clone().lerp(SL,0.55);
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.3),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(on?0.75:0.18),emissiveIntensity:on?0.65:0.18,roughness:0.4,transparent:!on,opacity:on?1:0.5}));
+        bar.position.set(bx,h/2,-1.5); gNodes.add(bar);
+        api.pick(bar,{anno:{name:a.key,targets:a.targets}});
+        lbl(""+a.targets,on?"#4dd7ff":"#5f7180",on?1.5:1.1,bx,h+0.5,-1.5);
+        slbl(a.label,on?"#9fd2ee":"#6b7a8d",0.34,bx,-0.5,-1.5);});
+      line(new T.Vector3(-7.6,0,-1.5),new T.Vector3(7.6,0,-1.5),0x1e3046,1,gNodes);
+      slbl("gene targets reached (of 3)","#6b7a8d",0.42,0,-1.1,-1.5);
+
+      // evidence contrast: chromatin (ATAC) vs expression-only graph for HBB
+      // ATAC path: GATA1 -motif-> Peak1 -coacc-> HBB  (mechanistic)
+      // expression-only: GATA1 ~ HBB correlation (could be confounded)
+      const useChrom=(evid===0);
+      const a=new T.Vector3(-3.2,2.2,3.2), b=new T.Vector3(0,2.2,3.2), c=new T.Vector3(3.2,2.2,3.2);
+      sphere(a.x,a.y,a.z,0.4,AM,0.55,gNodes,{tf:{name:"GATA1"}}); lbl("GATA1","#fbbf24",1.1,a.x,a.y+0.7,3.2);
+      sphere(c.x,c.y,c.z,0.4,GR,0.55,gNodes,{gene:{name:"HBB"}});  lbl("HBB","#34d399",1.1,c.x,c.y+0.7,3.2);
+      if(useChrom){
+        sphere(b.x,b.y,b.z,0.32,CY,0.5,gNodes,{peak:{name:"Peak1"}}); lbl("Peak1","#4dd7ff",0.95,b.x,b.y+0.6,3.2);
+        const d1=b.clone().sub(a).normalize();
+        tube(a.clone().add(d1.clone().multiplyScalar(0.42)),b.clone().sub(d1.clone().multiplyScalar(0.36)),0.05,AM,0.5,gMotif);
+        cone(b.clone().sub(d1.clone().multiplyScalar(0.28)),d1,AM,gMotif);
+        const d2=c.clone().sub(b).normalize();
+        tube(b.clone().add(d2.clone().multiplyScalar(0.36)),c.clone().sub(d2.clone().multiplyScalar(0.42)),0.05,GR,0.5,gCoacc);
+        cone(c.clone().sub(d2.clone().multiplyScalar(0.32)),d2,GR,gCoacc);
+        lbl("chromatin evidence: physical binding opportunity","#a78bfa",1.0,0,3.3,3.2);
+      } else {
+        // dashed direct correlation edge, rose = weaker evidence
+        const d=c.clone().sub(a).normalize();
+        const geo=new T.BufferGeometry().setFromPoints([a.clone().add(d.clone().multiplyScalar(0.42)),c.clone().sub(d.clone().multiplyScalar(0.42))]);
+        const ln=new T.LineDashedMaterial({color:0xfb7185,dashSize:0.3,gapSize:0.22});
+        const seg=new T.LineSegments(geo,ln); seg.computeLineDistances(); gCoacc.add(seg);
+        lbl("expression r only: confounded (cell-type / 3rd regulator)","#fb7185",1.0,0,3.3,3.2);
+      }
+
+      sceneSnap={mode,tf:tfSel,motifThr:+motThr.toFixed(2),coaccThr:+coThr.toFixed(2),anno:annoIdx,evidence:evid,
+        annoTargets:strat.targets,chromatinEvidence:useChrom?1:0,
+        targetsLost:3-strat.targets};
+
+      return {
+        badge:"Annotation · "+strat.key+" · "+strat.targets+"/3 genes · "+(useChrom?"chromatin":"expr-only"),
+        formula:"peak→gene rule  ⇒  which genes enter G_multiome  ·  evidence ≫ correlation",
+        insight:"The peak→gene assignment rule reshapes the whole graph. 'Body ±2 kb' misses the two distal enhancer peaks (Peak2, Peak4) and reaches only 2 of 3 genes; distance-threshold, TAD-aware and Cicero recover all 3. Toggle the evidence slider: a motif-in-accessible-peak chromatin path (GATA1→Peak1→HBB) is mechanistic opportunity; bare expression correlation can be a confound.",
+        state:strat.key+" reaches "+strat.targets+"/3 genes ("+(3-strat.targets)+" lost). Evidence mode: "+(useChrom?"chromatin (necessary physical prerequisite)":"expression-only (correlational, weaker)")+".",
+        metrics:{motifEdges:"—",coaccEdges:"—",regEdges:strat.targets+"/3",geneTargets:""+strat.targets},
+        focus:{center:[0,1.4,1.0],radius:15}
+      };
+    }
+
+    return {badge:"E03",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:14}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e03",
+    kind:"scatac-regulatory-evidence",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E03 · scATAC-seq & regulatory evidence",
+    subtitle:"Build the tripartite G_multiome from a 2-TF / 4-peak / 3-gene erythropoiesis example. Three views: the full evidence graph, the two-hop E_regulation derivation, and how peak annotation reshapes topology.",
+    selectedLabel:"Element",
+    selectedHint:"Click a TF, peak, gene, edge, cell, or bar.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"tripartite", label:"Tripartite G_multiome (TF·peak·gene)"},
+      {value:"two-hop",    label:"E_regulation (motif · coaccess)"},
+      {value:"annotation", label:"Annotation & chromatin evidence"}
+    ],
+    params:[
+      {key:"tf",       label:"selected TF (0=GATA1 1=TAL1)",min:0,max:1,step:1,value:0,
+       fmt:v=>["GATA1","TAL1"][Math.round(v)],modes:["two-hop"]},
+      {key:"motifThr", label:"motif score threshold",min:0,max:1,step:0.01,value:0.5,
+       fmt:v=>v.toFixed(2),modes:["tripartite","two-hop"]},
+      {key:"coaccThr", label:"Cicero co-access threshold",min:0,max:1,step:0.01,value:0.2,
+       fmt:v=>v.toFixed(2),modes:["tripartite","two-hop"]},
+      {key:"anno",     label:"peak annotation strategy",min:0,max:4,step:1,value:2,
+       fmt:v=>["nearest","±2 kb","100 kb","TAD","Cicero"][Math.round(v)],modes:["annotation"]},
+      {key:"evidence", label:"evidence (0=chromatin 1=expr-only)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"chromatin":"expr-only",modes:["annotation"]}
+    ],
+    metrics:[
+      {key:"motifEdges", label:"E_motif edges",   accent:"amber"},
+      {key:"coaccEdges", label:"E_coaccess edges",accent:"green"},
+      {key:"regEdges",   label:"E_regulation",    accent:"violet"},
+      {key:"geneTargets",label:"gene targets",    accent:"cyan"}
+    ],
+    layers:[
+      {group:"nodes", label:"Nodes / bars"},
+      {group:"motif", label:"E_motif (TF→peak)"},
+      {group:"coacc", label:"E_coaccess (peak—gene)"},
+      {group:"reg",   label:"E_regulation"},
+      {group:"cells", label:"Cell accessibility"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Strict thresholds",
+      on:api=>{api.setParam("motifThr",0.80);api.setParam("coaccThr",0.85);}
+    },
+    secondary:{
+      label:"Permissive thresholds",
+      on:api=>{api.setParam("motifThr",0.0);api.setParam("coaccThr",0.0);}
+    },
+    defaultCam:{theta:-0.45,phi:0.7,r:14},
+    hint:'<span style="color:#fbbf24">amber</span>=TF / E_motif · <span style="color:#4dd7ff">cyan</span>=peak / accessibility · <span style="color:#34d399">green</span>=gene / E_coaccess · <span style="color:#a78bfa">violet</span>=E_regulation (two-hop) · <span style="color:#fb7185">rose</span>=pruned / expr-only.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="two-hop") api.frame([0,-1.5,1.4],15);
+      else if(s.mode==="annotation") api.frame([0,1.4,1.0],15);
+      else api.frame([0,0,0],14);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="two-hop") api.frame([0,-1.5,1.4],15);
+      else if(s.mode==="annotation") api.frame([0,1.4,1.0],15);
+      else api.frame([0,0,0],14);
+    },
+    onSelect(api,d){
+      if(d.tf)     api.setSelected("TF "+d.tf.name+(d.tf.motif?" · motif "+d.tf.motif:""));
+      if(d.peak)   api.setSelected("Peak "+d.peak.name+(d.peak.anno?" · "+d.peak.anno:"")+(d.peak.acc!=null?" · mean acc "+d.peak.acc.toFixed(2):""));
+      if(d.gene)   api.setSelected("Gene "+d.gene.name);
+      if(d.cell)   api.setSelected(d.cell.peak+" · cell"+d.cell.cell+" ("+d.cell.type+") · "+(d.cell.open?"OPEN":"closed"));
+      if(d.regbar) api.setSelected(d.regbar.name+" · w="+d.regbar.w.toFixed(3));
+      if(d.anno)   api.setSelected(d.anno.name+" · "+d.anno.targets+"/3 gene targets");
+    },
+    build,
+    snapshot(s){
+      const tf=Math.round(s.tf);
+      const motThr=s.motifThr, coThr=s.coaccThr;
+      const annoIdx=Math.round(s.anno), evid=Math.round(s.evidence);
+      const motifLive=MOTIF.filter(e=>e.w>=motThr).length;
+      const coaccLive=COACC.filter(e=>e.w>=coThr).length;
+      const regLive=REG.filter(r=>motifW(r.t,r.p)>=motThr && coaccW(r.p,r.g)>=coThr);
+      return {
+        mode:s.mode,
+        tf:tf,
+        motifThr:+motThr.toFixed(2),
+        coaccThr:+coThr.toFixed(2),
+        anno:annoIdx,
+        evidence:evid,
+        motifEdges:motifLive,
+        coaccEdges:coaccLive,
+        regEdges:regLive.length,
+        geneTargets:new Set(regLive.map(r=>r.g)).size,
+        annoTargets:ANNO[annoIdx].targets,
+        topRegWeight:+Math.max.apply(null,REG.map(regW)).toFixed(3),
+        chromatinEvidence:evid===0?1:0
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

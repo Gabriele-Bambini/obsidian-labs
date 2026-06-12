@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K02 · Transfer learning across graph domains</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no rng, no clock) ───────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — Section-5 worked example: scGPT (33M cells, d=512) → hepatocyte
+  // GRN edge prediction. 180 positive (ChIP-seq) + 540 negative edges.
+  // Domain shift: feature (rank-tokens vs accessibility), edge (none vs
+  // directed regulation), structural (dense context vs hub-and-spoke).
+  // ════════════════════════════════════════════════════════════════════════
+  const F={
+    dModel:512, dGrn:64,            // scGPT embed dim vs GRN input feature dim
+    posEdges:180, negEdges:540,     // hepatocyte GRN labels
+    nLayers:4,                      // encoder GNN layers (L)
+    adapterR:16,                    // adapter bottleneck dim
+    // AUROC / AUPRC / trainable-fraction per strategy (note's results table)
+    strat:[
+      {key:"scratch",  name:"Reinitialize",     auroc:0.61, auprc:0.38, train:1.00, frozenK:0},
+      {key:"frozen",   name:"Frozen encoder",   auroc:0.67, auprc:0.44, train:0.01, frozenK:4},
+      {key:"full",     name:"Full fine-tune",   auroc:0.71, auprc:0.49, train:1.00, frozenK:0},
+      {key:"selective",name:"Layer-sel.+adapter",auroc:0.74,auprc:0.52, train:0.30, frozenK:2}
+    ]
+  };
+  // adapter param accounting: 2·r·d per layer vs d·d for a full GNN layer
+  F.adapterParams = 2*F.adapterR*F.dModel;        // 16384
+  F.layerParams   = F.dModel*F.dModel;            // 262144
+  F.adapterRatio  = F.layerParams/F.adapterParams;// 16
+
+  // representation-drift profile per layer for a given freeze depth k.
+  // Healthy: drift<0.1 in frozen/early layers, 0.3-0.7 in late layers.
+  function driftProfile(frozenK, ewcLambda){
+    const out=[];
+    for(let l=1;l<=F.nLayers;l++){
+      let d;
+      if(l<=frozenK) d=0.0;                       // frozen layer cannot drift
+      else {
+        // later layers drift more; small-data full-FT over-drifts early layers
+        const depth=(l-frozenK)/Math.max(1,(F.nLayers-frozenK));
+        d=0.06+0.62*depth;
+        if(frozenK===0) d+=0.18*(1-(l-1)/(F.nLayers-1)); // scratch/full: early layers also move (forgetting)
+      }
+      // EWC pulls drift down on the protected (early) layers
+      const ewc=ewcLambda*0.55*(1-(l-1)/(F.nLayers-1));
+      d=Math.max(0,d-ewc);
+      out.push(Math.max(0,Math.min(0.95,d)));
+    }
+    return out;
+  }
+
+  let sceneSnap={};
+
+  const COLW={cyan:"#4dd7ff",green:"#34d399",amber:"#fbbf24",violet:"#a78bfa",rose:"#fb7185",slate:"#54667c"};
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const stratIdx=Math.max(0,Math.min(3,Math.round(s.strategy)));
+    const nPos=Math.round(s.posEdges);
+    const ewcLambda=s.ewc;
+    const adaptR=Math.round(s.adapterR);
+    const shift=s.shift; // 0..1 measured domain shift severity
+
+    const gA=api.group("structure");
+    const gB=api.group("flow");
+    const gC=api.group("bars");
+    const gLab=api.group("labels");
+
+    const CY=new T.Color(COLW.cyan), GR=new T.Color(COLW.green), AM=new T.Color(COLW.amber),
+          VI=new T.Color(COLW.violet), RO=new T.Color(COLW.rose), SL=new T.Color(COLW.slate);
+
+    function big(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);return sp;}
+    function small(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);return sp;}
+
+    // ──────────────────────────────────────────────────────────────────────
+    // MODE 1 · DOMAIN SHIFT — source (scGPT cell-gene context) vs target
+    // (directed hub-and-spoke hepatocyte GRN). Drag `shift` to morph target
+    // topology and read the three shift components.
+    // ──────────────────────────────────────────────────────────────────────
+    if(mode==="domain-shift"){
+      // SOURCE graph (left): dense co-expression context, all genes active
+      const sx=-4.2;
+      const srcN=9;
+      const srcPos=[];
+      for(let i=0;i<srcN;i++){
+        const ang=i/srcN*Math.PI*2;
+        const p=new T.Vector3(sx+Math.cos(ang)*1.9, Math.sin(ang)*1.9, 0);
+        srcPos.push(p);
+        api.node(p,{r:0.20,color:"cyan",halo:false,group:"structure",pick:{kind:"src",id:i}});
+      }
+      // dense undirected context edges (co-expression): connect most pairs
+      for(let i=0;i<srcN;i++)for(let j=i+1;j<srcN;j++){
+        if(prand(i*13+j*7)>0.42) api.edge(srcPos[i],srcPos[j],{color:"#21506b",width:0.022,opacity:0.5,group:"structure"});
+      }
+      big("source: scGPT context","#4dd7ff",1.25,sx,2.55,0);
+      small("dense · undirected","#7fb8d4",0.42,sx,-2.35,0);
+
+      // TARGET graph (right): directed hub-and-spoke GRN. shift morphs density.
+      const tx=4.2;
+      const tgtN=9;
+      const hub=new T.Vector3(tx,0,0);
+      api.node(hub,{r:0.34,color:"amber",group:"structure",pick:{kind:"tgtHub"}});
+      big("TF hub","#fbbf24",1.0,tx,0.62,0);
+      const spread=1.5+0.8*shift; // higher shift = more star-like
+      for(let i=0;i<tgtN;i++){
+        const ang=i/tgtN*Math.PI*2;
+        const r=spread+0.0;
+        const p=new T.Vector3(tx+Math.cos(ang)*r, Math.sin(ang)*r, 0);
+        api.node(p,{r:0.17,color:"green",halo:false,group:"structure",pick:{kind:"tgt",id:i}});
+        // directed regulatory edge TF→target gene
+        api.arrow(hub,p,{color:"#2f7d52",width:0.02,head:0.16,group:"structure"});
+        // a few cross-edges at low shift only (residual co-expression)
+        if(shift<0.4 && prand(i*5+2)>0.6){
+          const j=(i+1)%tgtN;const ang2=j/tgtN*Math.PI*2;
+          api.edge(p,new T.Vector3(tx+Math.cos(ang2)*r,Math.sin(ang2)*r,0),{color:"#274a38",width:0.016,opacity:0.4,group:"structure"});
+        }
+      }
+      big("target: hepatocyte GRN","#34d399",1.25,tx,2.65,0);
+      small("sparse · directed hubs","#86d6b0",0.42,tx,-2.45,0);
+
+      // feature-adapter bridge between the two domains (the d_grn→d_model map)
+      api.arrow([sx+2.0,0,0],[tx-2.0,0,0],{color:"violet",width:0.03,head:0.26,group:"flow"});
+      big("W_adapt: "+F.dGrn+"→"+F.dModel,"#a78bfa",1.3,0,0.55,0);
+      small("feature space bridge","#c4b3f0",0.4,0,-0.5,0);
+
+      // shift-component readout planes
+      const feat=0.7+0.3*shift, edg=0.6+0.4*shift, struct=0.5+0.5*shift;
+      const totalShift=(feat+edg+struct)/3;
+      api.setMetric("auroc","—");
+      api.setMetric("trainable","—");
+      api.setMetric("drift","—");
+      api.setMetric("shift",totalShift.toFixed(2));
+
+      sceneSnap={mode,shift:+shift.toFixed(2),domainShift:+totalShift.toFixed(3),
+        featureShift:+feat.toFixed(3),edgeShift:+edg.toFixed(3),structuralShift:+struct.toFixed(3),
+        auroc:null,trainableFrac:null,earlyDrift:null};
+
+      return {
+        badge:"Domain shift · severity "+totalShift.toFixed(2),
+        formula:"shift = ⅓·(feature + edge + structural)  ·  P_S(X) ≠ P_T(X)",
+        insight:"The source is a dense, undirected cell-gene co-expression context; the target is a sparse, directed hub-and-spoke hepatocyte GRN. Three shifts separate them — feature (rank-token vs accessibility), edge semantic (no edges vs directed regulation), structural (dense vs hub topology). A learned W_adapt ("+F.dGrn+"→"+F.dModel+") bridges the feature space; the encoder must adapt the rest. Drag domain shift to morph the target.",
+        state:"feature shift "+feat.toFixed(2)+" · edge shift "+edg.toFixed(2)+" · structural shift "+struct.toFixed(2)+" → total "+totalShift.toFixed(2)+". If key stats differ by >2×, prefer layer-selective or adapter transfer over a frozen encoder.",
+        metrics:{auroc:"—",trainable:"—",drift:"—",shift:totalShift.toFixed(2)},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // MODE 2 · STRATEGY — the 4 transfer strategies as a frozen/trained layer
+    // stack + the note's AUROC/AUPRC results bars. strategy slider selects.
+    // ──────────────────────────────────────────────────────────────────────
+    if(mode==="strategy"){
+      const st=F.strat[stratIdx];
+
+      // the encoder layer stack (input adapter + L GNN layers + edge head)
+      const stackX=-3.6;
+      const stackBase=-2.4, layerH=1.05;
+      const blocks=[
+        {name:"W_adapt",  frozen:false, alwaysTrain:true},
+        {name:"GNN L1",   frozen:st.frozenK>=1},
+        {name:"GNN L2",   frozen:st.frozenK>=2},
+        {name:"GNN L3",   frozen:st.frozenK>=3},
+        {name:"GNN L4",   frozen:st.frozenK>=4},
+        {name:"edge head",frozen:false, alwaysTrain:true}
+      ];
+      // scratch = no pretrained transfer: whole stack random (mark as "reinit")
+      const isScratch=(st.key==="scratch");
+      blocks.forEach((b,i)=>{
+        const y=stackBase+i*layerH*0.62;
+        const trained=isScratch?true:!b.frozen;
+        const reused=isScratch?false:b.frozen; // reused pretrained, kept frozen
+        const colName=isScratch?"rose":(trained?"green":"cyan");
+        const box=new T.Mesh(new T.BoxGeometry(2.0,0.5,1.2),
+          new T.MeshStandardMaterial({color:new T.Color(COLW[colName]),
+            emissive:new T.Color(COLW[colName]).multiplyScalar(trained?0.6:0.28),
+            emissiveIntensity:trained?0.7:0.32,roughness:0.45,
+            transparent:!trained&&!reused,opacity:1.0}));
+        box.position.set(stackX,y,0);
+        gA.add(box);
+        api.pick(box,{kind:"layer",name:b.name,trained,reused});
+        small(b.name,COLW[colName],0.34,stackX,y,0.7);
+        // lock / unlock glyph: a small marker cube
+        const mk=new T.Mesh(new T.SphereGeometry(0.1,10,8),
+          new T.MeshBasicMaterial({color:trained?GR:(reused?CY:RO)}));
+        mk.position.set(stackX-1.25,y,0);gA.add(mk);
+      });
+      big(isScratch?"random init":"pretrained θ*","#cfe0f0",1.15,stackX,stackBase+blocks.length*layerH*0.62+0.1,0);
+      small(isScratch?"discard transfer":("freeze first "+st.frozenK+" GNN layers"),
+        isScratch?COLW.rose:COLW.cyan,0.42,stackX,stackBase-0.65,0);
+
+      // adapter side-modules for the selective strategy
+      if(st.key==="selective"){
+        for(let i=1;i<=2;i++){
+          const y=stackBase+i*layerH*0.62;
+          const ad=new T.Mesh(new T.BoxGeometry(0.5,0.35,0.6),
+            new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+          ad.position.set(stackX+1.55,y,0);gA.add(ad);
+          api.arrow([stackX+1.0,y,0],[stackX+1.3,y,0],{color:"violet",width:0.018,head:0.1,group:"structure"});
+        }
+        small("adapters r="+F.adapterR,COLW.violet,0.4,stackX+1.75,stackBase+1.2,0);
+      }
+
+      // RESULTS bars: AUROC + AUPRC for ALL strategies (active one highlighted)
+      const bx0=2.0, bw=0.85, gap=1.5;
+      F.strat.forEach((str,idx)=>{
+        const x=bx0+idx*gap;
+        const active=(idx===stratIdx);
+        // AUROC bar
+        const hA=str.auroc*4.2;
+        const barA=new T.Mesh(new T.BoxGeometry(bw,hA,0.7),
+          new T.MeshStandardMaterial({color:CY.clone(),emissive:CY.clone().multiplyScalar(active?0.85:0.2),
+            emissiveIntensity:active?0.72:0.16,roughness:0.4,transparent:!active,opacity:active?1:0.4}));
+        barA.position.set(x,-2.4+hA/2,-0.5);gC.add(barA);
+        api.pick(barA,{kind:"auroc",name:str.name,val:str.auroc});
+        // AUPRC bar (behind, amber, thinner)
+        const hP=str.auprc*4.2;
+        const barP=new T.Mesh(new T.BoxGeometry(bw*0.5,hP,0.45),
+          new T.MeshStandardMaterial({color:AM.clone(),emissive:AM.clone().multiplyScalar(active?0.7:0.18),
+            emissiveIntensity:active?0.6:0.14,roughness:0.4,transparent:!active,opacity:active?0.95:0.38}));
+        barP.position.set(x+0.42,-2.4+hP/2,0.45);gC.add(barP);
+        if(active){
+          big(str.auroc.toFixed(2),COLW.cyan,1.5,x,-2.4+hA+0.5,-0.5);
+          big(str.auprc.toFixed(2),COLW.amber,1.1,x+0.42,-2.4+hP+0.4,0.45);
+        }
+        small(str.name.length>10?str.key:str.name,active?"#e8eef6":"#7c8b9c",0.3,x,-2.65,0);
+      });
+      // baseline line
+      gC.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(bx0-0.8,-2.4,-0.5),new T.Vector3(bx0+3*gap+0.8,-2.4,-0.5)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      big("AUROC / AUPRC","#8a99ad",0.95,bx0+1.5*gap,2.4,0);
+
+      sceneSnap={mode,strategy:stratIdx,strategyKey:st.key,auroc:st.auroc,auprc:st.auprc,
+        trainableFrac:st.train,frozenLayers:st.frozenK,domainShift:null,earlyDrift:null};
+
+      return {
+        badge:"Strategy · "+st.name+" · "+(st.train*100).toFixed(0)+"% trained",
+        formula:st.key==="scratch"?"θ = random_init  (discard θ*)":
+                st.key==="frozen"?"θ_frozen = θ*  ;  train φ (head) only":
+                st.key==="full"?"θ_init = θ*  ;  update all θ + φ":
+                "freeze first "+st.frozenK+" GNN layers ; train L"+(st.frozenK+1)+"…L"+F.nLayers+" + adapters + φ",
+        insight:"Each transfer strategy is a different freeze/train pattern over the layer stack. Cyan = reused pretrained (frozen), green = trained, violet = adapter side-modules, rose = discarded/random. The note's hepatocyte results: layer-selective+adapter wins (AUROC "+F.strat[3].auroc.toFixed(2)+") because it trains only ~30% of params on just "+F.posEdges+" positive edges — full fine-tune ("+F.strat[2].auroc.toFixed(2)+") overfits, frozen ("+F.strat[1].auroc.toFixed(2)+") cannot adapt the edge semantics, random ("+F.strat[0].auroc.toFixed(2)+") starts from nothing.",
+        state:st.name+": AUROC "+st.auroc.toFixed(2)+" · AUPRC "+st.auprc.toFixed(2)+" · trainable "+(st.train*100).toFixed(0)+"% · frozen GNN layers "+st.frozenK+"/"+F.nLayers+".",
+        metrics:{auroc:st.auroc.toFixed(2),trainable:(st.train*100).toFixed(0)+"%",drift:"—",shift:"—"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // MODE 3 · ADAPTER — parameter-efficient transfer: 2·r·d adapter vs d·d
+    // full GNN layer. adapterR slider changes the bottleneck and the ratio.
+    // ──────────────────────────────────────────────────────────────────────
+    if(mode==="adapter"){
+      const adapterP=2*adaptR*F.dModel;
+      const fullP=F.layerParams;
+      const ratio=fullP/adapterP;
+
+      // frozen GNN layer (large cyan block) with a residual adapter MLP
+      const layerBlk=new T.Mesh(new T.BoxGeometry(2.6,2.6,1.4),
+        new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(0.3),emissiveIntensity:0.4,roughness:0.5,transparent:true,opacity:0.85}));
+      layerBlk.position.set(-2.8,0,0);gA.add(layerBlk);
+      api.pick(layerBlk,{kind:"fullLayer",params:fullP});
+      big("frozen GNN layer","#4dd7ff",1.25,-2.8,1.9,0);
+      small(fullP.toLocaleString()+" params  (d·d)","#7fb8d4",0.42,-2.8,-1.85,0);
+
+      // adapter: down-project (d→r) → ReLU → up-project (r→d)
+      const ax=2.6;
+      const downW=2.4, upW=2.4;
+      const rH=Math.max(0.3,adaptR/64*2.4); // bottleneck height scales with r
+      // down projection (trapezoid via boxes)
+      const dn=new T.Mesh(new T.BoxGeometry(0.6,downW,0.8),new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+      dn.position.set(ax-1.0,0,0);gA.add(dn);
+      const bott=new T.Mesh(new T.BoxGeometry(0.5,rH,0.7),new T.MeshStandardMaterial({color:AM,emissive:AM.clone().multiplyScalar(0.7),emissiveIntensity:0.8,roughness:0.35}));
+      bott.position.set(ax,0,0);gA.add(bott);
+      api.pick(bott,{kind:"bottleneck",r:adaptR});
+      const up=new T.Mesh(new T.BoxGeometry(0.6,upW,0.8),new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+      up.position.set(ax+1.0,0,0);gA.add(up);
+      big("adapter  W_up·ReLU·W_down","#a78bfa",1.2,ax,1.95,0);
+      big("r = "+adaptR,"#fbbf24",1.4,ax,-0.0,1.0);
+      small(adapterP.toLocaleString()+" params  (2·r·d)","#c4b3f0",0.42,ax,-1.85,0);
+
+      // residual add arrow from frozen layer into adapter path
+      api.arrow([-1.4,0,0],[ax-1.5,0,0],{color:"cyan",width:0.025,head:0.2,group:"flow"});
+      api.arrow([ax+1.5,0,0],[ax+2.4,0,0],{color:"green",width:0.025,head:0.2,group:"flow"});
+      big("h^(l+1) = frozen(h) + Adapter(h)","#34d399",1.0,ax+0.2,-2.6,0);
+
+      // ratio bars: full vs adapter param count (log-ish via sqrt scale)
+      const fullH=Math.sqrt(fullP)/200;
+      const adH=Math.sqrt(adapterP)/200;
+      const fb=new T.Mesh(new T.BoxGeometry(0.7,fullH,0.6),new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+      fb.position.set(-5.3,-2.4+fullH/2,0);gC.add(fb);
+      const ab=new T.Mesh(new T.BoxGeometry(0.7,adH,0.6),new T.MeshStandardMaterial({color:AM,emissive:AM.clone().multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+      ab.position.set(-4.3,-2.4+adH/2,0);gC.add(ab);
+      big(ratio.toFixed(0)+"×","#fbbf24",1.4,-4.8,-2.4+fullH+0.4,0);
+      small("full","#7fb8d4",0.34,-5.3,-2.65,0);
+      small("adapter","#fbbf24",0.34,-4.3,-2.65,0);
+
+      const trainFrac=adapterP/fullP;
+      api.setMetric("auroc","—");
+      api.setMetric("trainable",(trainFrac*100).toFixed(1)+"%");
+      api.setMetric("drift","frozen");
+      api.setMetric("shift","—");
+
+      sceneSnap={mode,adapterR:adaptR,adapterParams:adapterP,fullParams:fullP,
+        adapterRatio:+ratio.toFixed(2),trainableFrac:+trainFrac.toFixed(4),auroc:null,domainShift:null};
+
+      return {
+        badge:"Adapter · r="+adaptR+" · "+ratio.toFixed(0)+"× fewer params",
+        formula:"Adapter(x) = W_up·ReLU(W_down·x)  ·  2·r·d = "+adapterP.toLocaleString()+"  vs  d·d = "+fullP.toLocaleString(),
+        insight:"An adapter inserts a tiny residual MLP between FROZEN pretrained layers: down-project d→r, ReLU, up-project r→d. With r="+adaptR+" and d="+F.dModel+" it adds only "+adapterP.toLocaleString()+" trainable params versus "+fullP.toLocaleString()+" in the full layer — a "+ratio.toFixed(0)+"× reduction. The pretrained weights stay intact, so catastrophic forgetting is avoided and multiple downstream tasks can share one frozen base. Drag r to resize the bottleneck.",
+        state:"bottleneck r="+adaptR+" → "+adapterP.toLocaleString()+" adapter params ("+(trainFrac*100).toFixed(1)+"% of the "+fullP.toLocaleString()+"-param layer). Smaller r = cheaper but less capacity for domain shift.",
+        metrics:{auroc:"—",trainable:(trainFrac*100).toFixed(1)+"%",drift:"frozen",shift:"—"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // MODE 4 · DRIFT — representation drift per layer + catastrophic
+    // forgetting. EWC (Fisher-weighted) pulls down early-layer drift.
+    // strategy chooses freeze depth; ewc slider sets λ.
+    // ──────────────────────────────────────────────────────────────────────
+    if(mode==="drift"){
+      const st=F.strat[stratIdx];
+      const prof=driftProfile(st.frozenK, ewcLambda);
+
+      // per-layer drift bars along x; target band <0.1 early, 0.3-0.7 late
+      const x0=-3.6, dx=2.4, yBase=-2.2, yS=4.4;
+      // healthy band planes (early target <0.1, late target 0.3-0.7)
+      prof.forEach((d,i)=>{
+        const x=x0+i*dx;
+        const isEarly=(i+1)<=2;
+        const lo=isEarly?0.0:0.3, hi=isEarly?0.1:0.7;
+        // target band as translucent slab
+        const band=new T.Mesh(new T.BoxGeometry(1.5,(hi-lo)*yS,0.06),
+          new T.MeshBasicMaterial({color:isEarly?GR.getHex():VI.getHex(),transparent:true,opacity:0.16}));
+        band.position.set(x,yBase+(lo+(hi-lo)/2)*yS,-0.6);gB.add(band);
+        // drift bar
+        const h=Math.max(0.05,d*yS);
+        const inBand=(d>=lo-0.001 && d<=hi+0.001);
+        const colName=inBand?(isEarly?"green":"violet"):"rose";
+        const bar=new T.Mesh(new T.BoxGeometry(1.0,h,0.9),
+          new T.MeshStandardMaterial({color:new T.Color(COLW[colName]),
+            emissive:new T.Color(COLW[colName]).multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(x,yBase+h/2,0.2);gC.add(bar);
+        api.pick(bar,{kind:"drift",layer:i+1,drift:d,inBand});
+        big(d.toFixed(2),COLW[colName],1.15,x,yBase+h+0.4,0.2);
+        small("L"+(i+1),"#9fb0c4",0.42,x,yBase-0.45,0.2);
+        small(isEarly?"target<0.1":"target .3-.7","#6b7a8d",0.28,x,yBase-0.85,0.2);
+      });
+      // axis
+      gC.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0-1,yBase,0.2),new T.Vector3(x0+(F.nLayers-1)*dx+1,yBase,0.2)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      big("representation drift per layer","#8a99ad",1.0,x0+(F.nLayers-1)*dx/2,yBase+yS-0.2,0.2);
+
+      const early=(prof[0]+prof[1])/2;
+      const late=(prof[F.nLayers-1]+prof[F.nLayers-2])/2;
+      const forgetting=early; // high early drift = forgetting
+      const healthy=(early<0.12 && late>0.28);
+      api.setMetric("auroc",st.auroc.toFixed(2));
+      api.setMetric("trainable",(st.train*100).toFixed(0)+"%");
+      api.setMetric("drift",early.toFixed(2));
+      api.setMetric("shift",healthy?"healthy":"forgetting");
+
+      sceneSnap={mode,strategy:stratIdx,strategyKey:st.key,ewc:+ewcLambda.toFixed(2),
+        earlyDrift:+early.toFixed(3),lateDrift:+late.toFixed(3),forgetting:+forgetting.toFixed(3),
+        healthyDrift:healthy,auroc:st.auroc,trainableFrac:st.train,domainShift:null};
+
+      return {
+        badge:"Drift · "+st.name+" · λ_EWC "+ewcLambda.toFixed(2),
+        formula:"drift_l = (1/N)·Σ_i [1 − cos(h_i^pre, h_i^fine)]   ·   L = L_task + λ·Σ F_i·(θ_i−θ_i*)²",
+        insight:"Cosine drift between pretrained and fine-tuned activations, measured per layer. Healthy transfer keeps early-layer drift below 0.1 (green band — structural knowledge preserved) and lets late layers drift 0.3-0.7 (violet band — task adaptation). Rose bars escape the band = catastrophic forgetting. EWC adds a Fisher-weighted penalty λ·ΣF_i(θ_i−θ_i*)² that pulls protected early-layer drift down. Raise λ to suppress forgetting; choose a strategy to set the freeze depth.",
+        state:"early drift "+early.toFixed(2)+" (target <0.10) · late drift "+late.toFixed(2)+" (target 0.3-0.7) · "+(healthy?"HEALTHY transfer":"FORGETTING — early layers overwritten")+". EWC λ="+ewcLambda.toFixed(2)+".",
+        metrics:{auroc:st.auroc.toFixed(2),trainable:(st.train*100).toFixed(0)+"%",drift:early.toFixed(2),shift:healthy?"healthy":"forget"},
+        focus:{center:[0,0.6,0],radius:13}
+      };
+    }
+
+    return {badge:"K02",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"k02",
+    kind:"transfer-learning-graph-domains",
+    eyebrow:"Block K · Graph Foundation Models",
+    title:"K02 · Transfer learning across graph domains",
+    subtitle:"scGPT (33M cells, d=512) → hepatocyte GRN edge prediction on 180+540 edges. Four views: domain shift, transfer strategies, parameter-efficient adapters, and representation drift / catastrophic forgetting.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, layer block, bar, or drift bar.",
+    modes:[
+      {value:"domain-shift", label:"Domain shift (source vs target)"},
+      {value:"strategy",     label:"Strategy (frozen / full / selective / reinit)"},
+      {value:"adapter",      label:"Adapter (parameter-efficient transfer)"},
+      {value:"drift",        label:"Drift (representation / forgetting)"}
+    ],
+    params:[
+      {key:"strategy", label:"transfer strategy",min:0,max:3,step:1,value:3,
+       fmt:v=>["reinit","frozen","full FT","layer-sel"][Math.round(v)],modes:["strategy","drift"]},
+      {key:"shift",    label:"domain shift severity",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["domain-shift"]},
+      {key:"posEdges", label:"# positive edges (labels)",min:20,max:500,step:10,value:180,
+       fmt:v=>Math.round(v).toString()},
+      {key:"adapterR", label:"adapter bottleneck r",min:4,max:64,step:4,value:16,
+       fmt:v=>Math.round(v).toString(),modes:["adapter"]},
+      {key:"ewc",      label:"EWC strength λ",min:0,max:1,step:0.05,value:0.0,
+       fmt:v=>v.toFixed(2),modes:["drift"]}
+    ],
+    metrics:[
+      {key:"auroc",     label:"AUROC (hepatocyte GRN)",accent:"cyan"},
+      {key:"trainable", label:"Trainable params",accent:"green"},
+      {key:"drift",     label:"Early-layer drift",accent:"violet"},
+      {key:"shift",     label:"Domain shift",accent:"amber"}
+    ],
+    layers:[
+      {group:"structure", label:"Graphs / Layer stack"},
+      {group:"flow",      label:"Adapters / Flow"},
+      {group:"bars",      label:"Result / Drift bars"},
+      {group:"labels",    label:"Labels"}
+    ],
+    primary:{
+      label:"Best: layer-selective",
+      on:api=>{api.setParam("strategy",3);}
+    },
+    secondary:{
+      label:"Reinitialize",
+      on:api=>{api.setParam("strategy",0);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=frozen/reused · <span style="color:#34d399">green</span>=trained · <span style="color:#a78bfa">violet</span>=adapter/late-drift · <span style="color:#fbbf24">amber</span>=AUPRC/bottleneck · <span style="color:#fb7185">rose</span>=discarded/forgetting.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="drift") api.frame([0,0.6,0],13);
+      else api.frame([0,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.kind==="src")   api.setSelected("Source gene "+d.id+" · scGPT co-expression context");
+      if(d.kind==="tgt")   api.setSelected("Target gene "+d.id+" · regulated by TF hub");
+      if(d.kind==="tgtHub")api.setSelected("TF hub · master transcription factor (high degree)");
+      if(d.kind==="layer") api.setSelected(d.name+" · "+(d.trained?"TRAINED":(d.reused?"frozen / reused pretrained":"random")));
+      if(d.kind==="auroc") api.setSelected(d.name+" · AUROC "+d.val.toFixed(2));
+      if(d.kind==="fullLayer")  api.setSelected("Full GNN layer · "+d.params.toLocaleString()+" params");
+      if(d.kind==="bottleneck") api.setSelected("Adapter bottleneck · r="+d.r);
+      if(d.kind==="drift") api.setSelected("Layer "+d.layer+" · drift "+d.drift.toFixed(2)+" · "+(d.inBand?"in target band":"OUT of band (forgetting)"));
+    },
+    build,
+    snapshot(s){
+      const stratIdx=Math.max(0,Math.min(3,Math.round(s.strategy)));
+      const st=F.strat[stratIdx];
+      const adaptR=Math.round(s.adapterR);
+      const adapterP=2*adaptR*F.dModel;
+      const ratio=F.layerParams/adapterP;
+      const prof=driftProfile(st.frozenK,s.ewc);
+      const early=(prof[0]+prof[1])/2;
+      const late=(prof[F.nLayers-1]+prof[F.nLayers-2])/2;
+      const feat=0.7+0.3*s.shift, edg=0.6+0.4*s.shift, struct=0.5+0.5*s.shift;
+      const totalShift=(feat+edg+struct)/3;
+      return {
+        mode:s.mode,
+        strategy:stratIdx,
+        strategyKey:st.key,
+        auroc:st.auroc,
+        auprc:st.auprc,
+        trainableFrac:st.train,
+        frozenLayers:st.frozenK,
+        posEdges:Math.round(s.posEdges),
+        adapterR:adaptR,
+        adapterParams:adapterP,
+        adapterRatio:+ratio.toFixed(2),
+        ewc:+(+s.ewc).toFixed(2),
+        earlyDrift:+early.toFixed(3),
+        lateDrift:+late.toFixed(3),
+        healthyDrift:(early<0.12 && late>0.28),
+        domainShift:+totalShift.toFixed(3),
+        layerSelectiveBest:(st.key==="selective")
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B09 · Graph structure learning for noisy graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over Math.sin; no rng, no clock) ────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── colour roles ──────────────────────────────────────────────────────────
+  // cyan  = retained / true edge      green = added (recovered) edge
+  // rose  = pruned / noisy edge       amber = candidate / missing-plausible
+  // violet= hallucination-risk / regularizer
+  const C_RET="#4dd7ff", C_ADD="#34d399", C_PRUNE="#fb7185",
+        C_CAND="#fbbf24", C_RISK="#a78bfa", C_GHOST="#54667c";
+
+  // ── the lesson's canonical toy GRN (Section 5) ────────────────────────────
+  // six genes on a hexagon
+  const GENES=["TF1","GATA","MYC","IL7R","SOX2","KLF4"];
+  const TF=[true,true,true,false,true,true]; // plausible regulator (source role)
+  function genePos(i){
+    const a=Math.PI/2 - i/6*Math.PI*2;     // TF1 at top, clockwise
+    return [Math.cos(a)*3.4, 0, -Math.sin(a)*3.4];
+  }
+
+  // Candidate edges. kind: "true" observed real, "noise" observed artifact,
+  // "missing" plausible un-observed. Each carries the four score components
+  // sim / prior / evidence / noise exactly as the note frames them.
+  // TF1=0 GATA=1 MYC=2 IL7R=3 SOX2=4 KLF4=5
+  const EDGES=[
+    // five true-ish OBSERVED edges
+    {a:0,b:1,kind:"true",   sim:0.61,prior:0.58,ev:0.52,noise:0.05}, // TF1->GATA
+    {a:0,b:2,kind:"true",   sim:0.49,prior:0.55,ev:0.60,noise:0.08}, // TF1->MYC
+    {a:1,b:4,kind:"true",   sim:0.54,prior:0.55,ev:0.52,noise:0.06}, // GATA->SOX2
+    {a:4,b:5,kind:"true",   sim:0.58,prior:0.52,ev:0.50,noise:0.07}, // SOX2->KLF4
+    {a:2,b:3,kind:"true",   sim:0.47,prior:0.50,ev:0.62,noise:0.10}, // MYC->IL7R
+    // two NOISY co-expression edges (high sim, no evidence, high noise)
+    {a:1,b:2,kind:"noise",  sim:0.72,prior:0.20,ev:0.10,noise:0.65}, // GATA-MYC  (worked: S=0.138)
+    {a:4,b:2,kind:"noise",  sim:0.69,prior:0.18,ev:0.12,noise:0.61}, // SOX2-MYC
+    // two MISSING plausible regulatory edges (recoverable)
+    {a:0,b:3,kind:"missing",sim:0.55,prior:0.42,ev:0.68,noise:0.00}, // TF1-IL7R (worked: S=0.686)
+    {a:5,b:3,kind:"missing",sim:0.48,prior:0.40,ev:0.44,noise:0.05}  // KLF4-IL7R (weaker, rejected at default τ)
+  ];
+
+  // ── score model S = w_f sim + w_p prior + w_e ev - w_n noise ──────────────
+  function scoreOf(e,wf,wp,we,wn){
+    return wf*e.sim + wp*e.prior + we*e.ev - wn*e.noise;
+  }
+  // classification of an edge under (weights, tau)
+  // returns {S, decision:'retain'|'prune'|'add'|'reject', risk:bool}
+  function classify(e,wf,wp,we,wn,tau){
+    const S=scoreOf(e,wf,wp,we,wn);
+    const pass=S>=tau;
+    let decision;
+    if(e.kind==="missing") decision = pass?"add":"reject";
+    else decision = pass?"retain":"prune";
+    // hallucination risk: an edge that passes on similarity alone, with
+    // little independent evidence (note: "added edges without prior/evidence")
+    const risk = pass && (e.ev<0.25) && (we*e.ev < wf*e.sim*0.5);
+    return {S:+S.toFixed(3),decision,risk,pass};
+  }
+
+  // full edit-accounting over the whole candidate set
+  function audit(wf,wp,we,wn,tau){
+    let retained=0,pruned=0,added=0,rejected=0,risky=0;
+    let truePassed=0,trueTotal=0,noisePruned=0,noiseTotal=0,missTotal=0;
+    EDGES.forEach(e=>{
+      const c=classify(e,wf,wp,we,wn,tau);
+      if(e.kind==="true"){trueTotal++; if(c.decision==="retain"){retained++;truePassed++;} else pruned++;}
+      else if(e.kind==="noise"){noiseTotal++; if(c.decision==="retain")retained++; else {pruned++;noisePruned++;}}
+      else {missTotal++; if(c.decision==="add"){added++;} else rejected++;}
+      if(c.risk)risky++;
+    });
+    const trueRecall   = trueTotal ? truePassed/trueTotal : 0;   // retained true edges
+    const noiseRemoval = noiseTotal? noisePruned/noiseTotal : 0; // noise pruned
+    void missTotal;
+    return {retained,pruned,added,rejected,risky,
+            trueRecall:+trueRecall.toFixed(3),
+            noiseRemoval:+noiseRemoval.toFixed(3),
+            edits:added+pruned};
+  }
+
+  let sceneSnap={};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const wf=s.wF, wp=s.wPrior, we=s.wEvid, wn=s.wNoise, tau=s.tau;
+
+    api.group("nodes"); api.group("edges"); api.group("score");
+    api.group("audit"); const gLabels=api.group("labels");
+
+    // shared: draw the six gene nodes on the hexagon
+    function drawGenes(){
+      GENES.forEach((g,i)=>{
+        const p=genePos(i);
+        api.node(p,{r:0.30,color: TF[i]?C_RET:C_CAND,
+          label:g, labelColor:"#dfeaf6",
+          pick:{gene:{id:i,name:g,tf:TF[i]}}, group:"nodes"});
+      });
+    }
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const A=audit(wf,wp,we,wn,tau);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 1 · OBSERVED  — the noisy input graph A
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="observed"){
+      drawGenes();
+      EDGES.forEach(e=>{
+        const pa=genePos(e.a), pb=genePos(e.b);
+        if(e.kind==="missing"){
+          api.edge(pa,pb,{color:C_GHOST,width:0.03,opacity:0.5,dashed:true,group:"edges"});
+        }else{
+          const c = e.kind==="noise" ? C_PRUNE : C_RET;
+          api.edge(pa,pb,{color:c,width:0.055,opacity:0.95,group:"edges"});
+        }
+      });
+      lbl("observed A — 5 true + 2 noisy edges, 2 missing","#9fb2c6",1.6,0,2.7,0);
+      lbl("dashed = plausible but UN-observed","#fbbf24",1.2,0,-2.9,0);
+
+      const nObs=EDGES.filter(e=>e.kind!=="missing").length;
+      const nNoise=EDGES.filter(e=>e.kind==="noise").length;
+      const nMiss=EDGES.filter(e=>e.kind==="missing").length;
+      api.setMetric("edits","—");
+      api.setMetric("trueRecall","—");
+      api.setMetric("noiseRemoval","—");
+      api.setMetric("topScore","—");
+      sceneSnap={mode,wf,wp,we,wn,tau,
+        observedEdges:nObs,noisyEdges:nNoise,missingEdges:nMiss,
+        edits:null,trueRecall:null,noiseRemoval:null,topScore:null};
+
+      return {
+        badge:"Observed A · "+nObs+" edges ("+nNoise+" noisy) · "+nMiss+" missing",
+        formula:"A' = g<sub>φ</sub>(X, A, P, E) &nbsp;—&nbsp; here we start from the raw observed A",
+        insight:"The input graph is a draft, not a law. Cyan edges look true; rose edges are co-expression artifacts (high similarity, no evidence); dashed grey edges are plausible regulatory links that were never observed. Graph structure learning will edit this draft — but every edit is a biological hypothesis to audit.",
+        state:"Observed graph: "+nObs+" edges of which "+nNoise+" are noisy co-expression. "+nMiss+" plausible edges are missing (dashed). Nothing learned yet.",
+        metrics:{edits:"—",trueRecall:"—",noiseRemoval:"—",topScore:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 2 · SCORING — S = w_f sim + w_p prior + w_e ev - w_n noise vs tau
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="scoring"){
+      // score bars, one per candidate edge, laid left→right
+      const n=EDGES.length, x0=-5.0, dx=10.0/(n-1);
+      // threshold plane
+      const tauY=tau*5.2;
+      lbl("τ = "+tau.toFixed(2),"#a78bfa",1.4,x0-0.9,tauY+0.05,0);
+      api.group("score").add(new T.Line(
+        new T.BufferGeometry().setFromPoints([new T.Vector3(x0-0.6,tauY,0),new T.Vector3(x0+(n-1)*dx+0.6,tauY,0)]),
+        new T.LineBasicMaterial({color:0xa78bfa})));
+      // axis baseline
+      api.group("score").add(new T.Line(
+        new T.BufferGeometry().setFromPoints([new T.Vector3(x0-0.6,0,0),new T.Vector3(x0+(n-1)*dx+0.6,0,0)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+
+      let topS=-9, topName="";
+      EDGES.forEach((e,i)=>{
+        const c=classify(e,wf,wp,we,wn,tau);
+        const x=x0+i*dx;
+        const h=Math.max(0.05,Math.abs(c.S)*5.2);
+        const yc=c.S>=0? h/2 : -h/2;
+        let col;
+        if(e.kind==="missing") col = c.pass? C_ADD : C_GHOST;
+        else if(e.kind==="noise") col = c.pass? C_RISK : C_PRUNE;
+        else col = c.pass? C_RET : C_PRUNE;
+        if(c.risk) col=C_RISK;
+        const bar=new T.Mesh(new T.BoxGeometry(0.62,h,0.62),
+          new T.MeshStandardMaterial({color:col,emissive:new T.Color(col).multiplyScalar(c.pass?0.7:0.25),
+            emissiveIntensity:c.pass?0.85:0.3,roughness:0.4,transparent:!c.pass,opacity:c.pass?1:0.6}));
+        bar.position.set(x,yc,0);
+        api.group("score").add(bar);
+        api.pick(bar,{score:{name:GENES[e.a]+"–"+GENES[e.b],S:c.S,kind:e.kind,decision:c.decision,risk:c.risk}});
+        // edge name + value
+        lbl(GENES[e.a]+"–"+GENES[e.b],"#7e90a4",0.85,x,-0.55,0);
+        lbl(c.S.toFixed(2), col, 1.05, x, (c.S>=0?h+0.5:-h-0.5), 0);
+        if(c.S>topS){topS=c.S;topName=GENES[e.a]+"–"+GENES[e.b];}
+      });
+      lbl("edge score S vs threshold τ","#9fb2c6",1.6,0,5.6,0);
+      lbl("above τ = kept · below = dropped · violet = hallucination-risk","#8a99ad",1.05,0,-1.5,0);
+
+      api.setMetric("edits",""+A.edits);
+      api.setMetric("trueRecall",(A.trueRecall*100).toFixed(0)+"%");
+      api.setMetric("noiseRemoval",(A.noiseRemoval*100).toFixed(0)+"%");
+      api.setMetric("topScore",topS.toFixed(3));
+      sceneSnap={mode,wf,wp,we,wn,tau,
+        edits:A.edits,trueRecall:A.trueRecall,noiseRemoval:A.noiseRemoval,
+        topScore:+topS.toFixed(3),risky:A.risky};
+
+      return {
+        badge:"Scoring · top S = "+topS.toFixed(2)+" ("+topName+") · τ="+tau.toFixed(2),
+        formula:"S<sub>ij</sub> = w<sub>f</sub>·sim + w<sub>p</sub>·prior + w<sub>e</sub>·evidence − w<sub>n</sub>·noise &nbsp;·&nbsp; keep if S ≥ τ",
+        insight:"Every candidate edge gets one score. The worked example: TF1–IL7R scores 0.4·0.55+0.3·0.42+0.5·0.68 = 0.686 (added); GATA–MYC scores 0.288+0.060+0.050−0.260 = 0.138 (pruned). Similar expression alone is not enough — evidence and noise terms decide. Drag the weight sliders to see edges cross τ.",
+        state:"Top edge "+topName+" at S="+topS.toFixed(3)+". "+A.edits+" edges would be edited. Violet bars = passed on similarity with little evidence (hallucination risk).",
+        metrics:{edits:""+A.edits,trueRecall:(A.trueRecall*100).toFixed(0)+"%",
+                 noiseRemoval:(A.noiseRemoval*100).toFixed(0)+"%",topScore:topS.toFixed(3)},
+        focus:{center:[0,2.0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 3 · LEARNED — apply τ: A' with retained / pruned / added edges
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="learned"){
+      drawGenes();
+      EDGES.forEach(e=>{
+        const c=classify(e,wf,wp,we,wn,tau);
+        const pa=genePos(e.a), pb=genePos(e.b);
+        if(e.kind==="missing"){
+          if(c.decision==="add"){
+            api.arrow(pa,pb,{color:c.risk?C_RISK:C_ADD,head:0.26,width:0.05,group:"edges"});
+          }else{
+            api.edge(pa,pb,{color:C_GHOST,width:0.025,opacity:0.3,dashed:true,group:"edges"});
+          }
+        }else{
+          if(c.decision==="retain"){
+            api.edge(pa,pb,{color:c.risk?C_RISK:C_RET,width:0.055,opacity:0.95,group:"edges"});
+          }else{
+            // pruned: faint rose dashed ghost
+            api.edge(pa,pb,{color:C_PRUNE,width:0.03,opacity:0.32,dashed:true,group:"edges"});
+          }
+        }
+      });
+      lbl("learned A' = 1[S ≥ τ]","#9fb2c6",1.6,0,2.7,0);
+      lbl("green arrow = added · cyan = retained · faded rose = pruned","#8a99ad",1.05,0,-2.9,0);
+
+      api.setMetric("edits",""+A.edits);
+      api.setMetric("trueRecall",(A.trueRecall*100).toFixed(0)+"%");
+      api.setMetric("noiseRemoval",(A.noiseRemoval*100).toFixed(0)+"%");
+      api.setMetric("topScore",A.added+"+ "+A.pruned+"−");
+      sceneSnap={mode,wf,wp,we,wn,tau,
+        retained:A.retained,pruned:A.pruned,added:A.added,risky:A.risky,
+        edits:A.edits,trueRecall:A.trueRecall,noiseRemoval:A.noiseRemoval};
+
+      return {
+        badge:"Learned A' · "+A.added+" added · "+A.pruned+" pruned · "+A.retained+" kept",
+        formula:"A'<sub>ij</sub> = 1[ S<sub>ij</sub> ≥ τ ]&nbsp;&nbsp;(or top-k per source)",
+        insight:"Thresholding the scores yields the learned graph A'. Green arrows are recovered missing edges (TF1–IL7R passes at 0.686). Faded rose edges were pruned (GATA–MYC drops to 0.138). Cyan edges survived. Violet means an edge passed on weak evidence — a hypothesis, not a fact. This is graph surgery, not decoration.",
+        state:"A' has "+A.retained+" retained, "+A.added+" added, "+A.pruned+" pruned ("+A.risky+" risky). True-edge recall "+(A.trueRecall*100).toFixed(0)+"%, noise removal "+(A.noiseRemoval*100).toFixed(0)+"%.",
+        metrics:{edits:""+A.edits,trueRecall:(A.trueRecall*100).toFixed(0)+"%",
+                 noiseRemoval:(A.noiseRemoval*100).toFixed(0)+"%",topScore:A.added+"+ "+A.pruned+"−"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 4 · AUDIT — edit accounting: the diagnostic the lesson demands
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="audit"){
+      const cats=[
+        {k:"retained",v:A.retained,c:C_RET,  l:"retained"},
+        {k:"added",   v:A.added,   c:C_ADD,  l:"added"},
+        {k:"pruned",  v:A.pruned,  c:C_PRUNE,l:"pruned"},
+        {k:"rejected",v:A.rejected,c:C_GHOST,l:"rejected"},
+        {k:"risky",   v:A.risky,   c:C_RISK, l:"hallucination risk"}
+      ];
+      const n=cats.length, x0=-4.4, dx=8.8/(n-1), yS=0.9;
+      api.group("audit").add(new T.Line(
+        new T.BufferGeometry().setFromPoints([new T.Vector3(x0-0.7,0,0),new T.Vector3(x0+(n-1)*dx+0.7,0,0)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+      cats.forEach((cat,i)=>{
+        const x=x0+i*dx, h=Math.max(0.06,cat.v*yS);
+        const bar=new T.Mesh(new T.BoxGeometry(1.1,h,1.1),
+          new T.MeshStandardMaterial({color:cat.c,emissive:new T.Color(cat.c).multiplyScalar(0.55),
+            emissiveIntensity:0.75,roughness:0.4}));
+        bar.position.set(x,h/2,0);
+        api.group("audit").add(bar);
+        api.pick(bar,{audit:{cat:cat.l,count:cat.v}});
+        lbl(""+cat.v, cat.c, 1.7, x, h+0.55, 0);
+        lbl(cat.l, "#8a99ad", 0.92, x, -0.6, 0);
+      });
+      // quality readouts as two side gauges
+      lbl("true-edge recall "+(A.trueRecall*100).toFixed(0)+"%","#4dd7ff",1.25,-2.6,5.3,0);
+      lbl("noise removal "+(A.noiseRemoval*100).toFixed(0)+"%","#fb7185",1.25,2.6,5.3,0);
+      lbl("edit accounting — retained / added / pruned / rejected","#9fb2c6",1.5,0,6.3,0);
+
+      api.setMetric("edits",""+A.edits);
+      api.setMetric("trueRecall",(A.trueRecall*100).toFixed(0)+"%");
+      api.setMetric("noiseRemoval",(A.noiseRemoval*100).toFixed(0)+"%");
+      api.setMetric("topScore",A.risky+" risky");
+      sceneSnap={mode,wf,wp,we,wn,tau,
+        retained:A.retained,added:A.added,pruned:A.pruned,rejected:A.rejected,risky:A.risky,
+        edits:A.edits,trueRecall:A.trueRecall,noiseRemoval:A.noiseRemoval};
+
+      return {
+        badge:"Audit · "+A.edits+" edits · "+A.risky+" risky · recall "+(A.trueRecall*100).toFixed(0)+"%",
+        formula:"report &nbsp;{ retained, added, pruned, rejected }&nbsp; + independent-evidence check",
+        insight:"A GSL method that changes edges without reporting what changed cannot support a biological claim. Good edits: high true-edge recall AND high noise removal with few risky additions. Push evidence weight down or noise weight down and watch hallucination-risk rise while noise removal falls — exactly the failure mode of Exercise 6.",
+        state:A.retained+" retained, "+A.added+" added, "+A.pruned+" pruned, "+A.rejected+" rejected, "+A.risky+" risky. Recall "+(A.trueRecall*100).toFixed(0)+"%, noise removal "+(A.noiseRemoval*100).toFixed(0)+"%.",
+        metrics:{edits:""+A.edits,trueRecall:(A.trueRecall*100).toFixed(0)+"%",
+                 noiseRemoval:(A.noiseRemoval*100).toFixed(0)+"%",topScore:A.risky+" risky"},
+        focus:{center:[0,2.6,0],radius:13}
+      };
+    }
+
+    return {badge:"B09",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"b09",
+    kind:"graph-structure-learning",
+    eyebrow:"Block B · GNN Architectures",
+    title:"B09 · Graph structure learning for noisy graphs",
+    subtitle:"The graph is a draft, not a law. Score candidate edges, threshold into a learned A', and audit every edit on the lesson's six-gene GRN.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, score bar, or audit bar.",
+    insightLabel:"What this shows",
+    modes:[
+      {value:"observed", label:"Observed A (noisy input)"},
+      {value:"scoring",  label:"Edge scoring (S vs τ)"},
+      {value:"learned",  label:"Learned A' (threshold)"},
+      {value:"audit",    label:"Audit (edit accounting)"}
+    ],
+    params:[
+      {key:"wF",   label:"w_f · feature similarity",min:0,max:1,step:0.05,value:0.40,
+       fmt:v=>v.toFixed(2),modes:["scoring","learned","audit"]},
+      {key:"wPrior",label:"w_p · biological prior",min:0,max:1,step:0.05,value:0.30,
+       fmt:v=>v.toFixed(2),modes:["scoring","learned","audit"]},
+      {key:"wEvid",label:"w_e · independent evidence",min:0,max:1,step:0.05,value:0.50,
+       fmt:v=>v.toFixed(2),modes:["scoring","learned","audit"]},
+      {key:"wNoise",label:"w_n · noise penalty",min:0,max:1,step:0.05,value:0.40,
+       fmt:v=>v.toFixed(2),modes:["scoring","learned","audit"]},
+      {key:"tau",  label:"τ · keep-edge threshold",min:0.2,max:0.9,step:0.02,value:0.60,
+       fmt:v=>v.toFixed(2),modes:["scoring","learned","audit"]}
+    ],
+    metrics:[
+      {key:"edits",       label:"Edges edited",accent:"violet"},
+      {key:"trueRecall",  label:"True-edge recall",accent:"cyan"},
+      {key:"noiseRemoval",label:"Noise removal",accent:"rose"},
+      {key:"topScore",    label:"Top score / edits",accent:"amber"}
+    ],
+    layers:[
+      {group:"nodes", label:"Genes"},
+      {group:"edges", label:"Graph edges"},
+      {group:"score", label:"Score bars"},
+      {group:"audit", label:"Audit bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Evidence-led (w_e=0.7, τ=0.60)",
+      on:api=>{api.setParam("wEvid",0.70);api.setParam("wNoise",0.50);api.setParam("tau",0.60);}
+    },
+    secondary:{
+      label:"Similarity-only (w_e=0, w_n=0)",
+      on:api=>{api.setParam("wEvid",0.00);api.setParam("wNoise",0.00);api.setParam("wF",0.80);}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=retained/true · <span style="color:#34d399">green</span>=added · <span style="color:#fb7185">rose</span>=pruned/noisy · <span style="color:#fbbf24">amber</span>=candidate · <span style="color:#a78bfa">violet</span>=hallucination-risk / τ · grey dashed=un-observed.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="scoring") api.frame([0,2.0,0],13);
+      else if(s.mode==="audit") api.frame([0,2.6,0],13);
+      else api.frame([0,0,0],11);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="scoring") api.frame([0,2.0,0],13);
+      else if(s.mode==="audit") api.frame([0,2.6,0],13);
+      else api.frame([0,0,0],11);
+    },
+    onSelect(api,d){
+      if(d.gene)  api.setSelected(d.gene.name+(d.gene.tf?" · plausible regulator (TF)":" · target only"));
+      if(d.score) api.setSelected(d.score.name+" · S="+d.score.S.toFixed(3)+" · "+d.score.kind+" → "+d.score.decision+(d.score.risk?" · RISK":""));
+      if(d.audit) api.setSelected(d.audit.cat+" : "+d.audit.count+" edges");
+    },
+    build,
+    snapshot(s){
+      const wf=s.wF,wp=s.wPrior,we=s.wEvid,wn=s.wNoise,tau=s.tau;
+      const A=audit(wf,wp,we,wn,tau);
+      // worked-example scores, recomputed live so the verifier sees them move
+      const tf1il7r=scoreOf(EDGES[7],wf,wp,we,wn);  // TF1-IL7R
+      const gataMyc=scoreOf(EDGES[5],wf,wp,we,wn);  // GATA-MYC
+      return {
+        mode:s.mode,
+        wF:+wf.toFixed(2),wPrior:+wp.toFixed(2),wEvid:+we.toFixed(2),wNoise:+wn.toFixed(2),tau:+tau.toFixed(2),
+        retained:A.retained,added:A.added,pruned:A.pruned,rejected:A.rejected,risky:A.risky,
+        edits:A.edits,trueRecall:A.trueRecall,noiseRemoval:A.noiseRemoval,
+        score_TF1_IL7R:+tf1il7r.toFixed(3),
+        score_GATA_MYC:+gataMyc.toFixed(3),
+        TF1_IL7R_added:tf1il7r>=tau,
+        GATA_MYC_pruned:gataMyc<tau
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

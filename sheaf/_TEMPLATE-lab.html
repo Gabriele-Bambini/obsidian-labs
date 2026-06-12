@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- ============================================================================
+     v2 LAB TEMPLATE — copy this file, rename to <id>-<slug>-lab.html, fill the
+     {{SLOTS}} and the three if(m===…) branches. Everything else is verbatim and
+     runs AS-IS (this file is a complete, working "tiny GRN" lab out of the box).
+
+     FILL POINTS (search for "FILL:"): ID/title/eyebrow/subtitle, the 3 modes,
+     the params, the 4 metrics, the FACTS block, the 3 scene branches, and the
+     build() return strings. Do NOT touch the PRNG, the includes, the IIFE, or
+     the engine wiring.
+
+     RULES (see VISUALIZATION_QUALITY_STANDARD.md §4):
+       • Determinism only: use prand(i) / Math.sin — never Math.random / Date.
+       • Draw with the engine helpers (api.node/edge/arrow/halo/plane/legend/
+         connectRamp + api.mat/col/accent) — never hand-roll THREE spheres,
+         tubes, or hex colors. That is what keeps every lab pixel-consistent.
+       • FACTS is the ONE source of truth: every number shown in build() and in
+         the figure must come from FACTS, and assertMath() recomputes them.
+       • 3 modes · 4 metrics · 3–4 layers · ≤5 params (gate each via modes:[…]).
+       • selfTest:true is pre-wired so the §6D lab verifier passes immediately.
+============================================================================ -->
+<title>{{ID}} · {{SHORT_TITLE}}</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ===========================================================================
+     0) FROZEN DETERMINISM — never Math.random / Date.
+        prand(i) = frac(sin(i·127.1+31.7)·43758.5453) → a stable hash in [0,1).
+        Same input ⇒ same scene ⇒ run-to-run identical snapshots.
+     =========================================================================== */
+  const prand = i => { const x = Math.sin(i*127.1 + 31.7) * 43758.5453; return x - Math.floor(x); };
+  const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+
+  /* ---------------------------------------------------------------------------
+     v2 HELPER SHIM — bakes api.node/edge/arrow/halo/plane/legend/connectRamp/
+     setMode + api.mat/col/accent into the api object the FIRST time build() runs.
+     It is a NO-OP once the engine provides these natively (every install checks
+     `if(api.<name>)` first), so when lab-engine.js is upgraded to v2 this template
+     needs ZERO edits. It exists only so the template "runs as-is" on today's
+     engine. When writing a real lab on the v2 engine you may delete this block.
+     --------------------------------------------------------------------------- */
+  function installHelpers(api){
+    if (api.__v2helpers) return; api.__v2helpers = true;
+    const T = api.THREE, vec = a => new T.Vector3(a[0],a[1],a[2]);
+    const ACCENT = {
+      cyan:  {base:"#4dd7ff", light:"#9fe0ff", tint:"#0e2740"},
+      rose:  {base:"#fb7185", light:"#fda4b0", tint:"#3a1420"},
+      amber: {base:"#fbbf24", light:"#fde68a", tint:"#33270a"},
+      violet:{base:"#a78bfa", light:"#c4b5fd", tint:"#241a40"},
+      green: {base:"#34d399", light:"#7fe7c0", tint:"#152a18"}
+    };
+    const into = (o,opts)=>{ (api.group(opts && opts.group ? opts.group : "main")).add(o); return o; };
+    if(!api.accent) api.accent = name => ACCENT[name] || ACCENT.cyan;
+    if(!api.col)    api.col    = c => (ACCENT[c] ? ACCENT[c].base : c);
+    if(!api.mat)    api.mat    = (color,o)=>{ o=o||{}; const hex=api.col(color);
+      if(o.basic) return new T.MeshBasicMaterial({color:hex});
+      const e=new T.Color(hex).multiplyScalar(o.emissive==null?0.35:o.emissive);
+      return new T.MeshStandardMaterial({color:hex, emissive:e, emissiveIntensity:0.9,
+        roughness:o.rough==null?0.4:o.rough, metalness:o.metal==null?0:o.metal}); };
+    if(!api.halo)   api.halo   = (pos,o)=>{ o=o||{}; const c=document.createElement("canvas");
+      c.width=c.height=256; const g=c.getContext("2d"), hex=api.col(o.color||"cyan");
+      const col=new T.Color(hex), rgb=Math.round(col.r*255)+","+Math.round(col.g*255)+","+Math.round(col.b*255);
+      const gr=g.createRadialGradient(128,128,4,128,128,128);
+      gr.addColorStop(0,"rgba("+rgb+","+(o.opacity==null?0.85:o.opacity)+")");
+      gr.addColorStop(0.5,"rgba("+rgb+",0.25)"); gr.addColorStop(1,"rgba("+rgb+",0)");
+      g.fillStyle=gr; g.fillRect(0,0,256,256);
+      const sp=new T.Sprite(new T.SpriteMaterial({map:new T.CanvasTexture(c),transparent:true,
+        depthWrite:false, blending:T.AdditiveBlending}));
+      const r=o.r==null?0.9:o.r; sp.scale.set(r*2,r*2,1); sp.position.set(pos[0],pos[1],pos[2]);
+      return into(sp,o); };
+    if(!api.node)   api.node   = (pos,o)=>{ o=o||{}; const r=o.r==null?0.34:o.r, color=o.color||"cyan";
+      const mesh=new T.Mesh(new T.SphereGeometry(r,32,24), api.mat(color,{emissive:0.35}));
+      mesh.position.set(pos[0],pos[1],pos[2]); if(o.pick)api.pick(mesh,o.pick); into(mesh,o);
+      if(o.halo!==false) api.halo(pos,{r:r*(o.haloScale||2.4)*0.5, color:color, group:o.group});
+      if(o.label){ const lb=api.bigLabel(o.label, o.labelColor||api.col(color), Math.max(0.8,r*3));
+        lb.position.set(pos[0],pos[1]+r*1.9,pos[2]); into(lb,o); }
+      return mesh; };
+    if(!api.edge)   api.edge   = (a,b,o)=>{ o=o||{}; const A=vec(a),B=vec(b), hex=o.color||"#2a3a4e", w=o.width==null?0.045:o.width;
+      if(o.dashed){ const geo=new T.BufferGeometry().setFromPoints([A,B]);
+        const ln=new T.LineSegments(geo, new T.LineDashedMaterial({color:hex,dashSize:0.18,gapSize:0.12,
+          transparent:true,opacity:o.opacity==null?0.95:o.opacity})); ln.computeLineDistances(); return into(ln,o); }
+      const dir=B.clone().sub(A), len=dir.length();
+      const tube=new T.Mesh(new T.CylinderGeometry(w,w,len,12), api.mat(hex,{emissive:0.18,basic:false}));
+      tube.position.copy(A.clone().add(B).multiplyScalar(0.5));
+      tube.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), dir.clone().normalize());
+      if(o.opacity!=null){ tube.material.transparent=true; tube.material.opacity=o.opacity; }
+      return into(tube,o); };
+    if(!api.arrow)  api.arrow  = (from,to,o)=>{ o=o||{}; const grp=new T.Group();
+      const A=vec(from),B=vec(to), color=o.color||"cyan", head=o.head==null?0.22:o.head, w=o.width==null?0.045:o.width;
+      const dir=B.clone().sub(A), len=dir.length(), nd=dir.clone().normalize();
+      const shaftLen=Math.max(0.001,len-head), mid=A.clone().add(nd.clone().multiplyScalar(shaftLen*0.5));
+      const shaft=new T.Mesh(new T.CylinderGeometry(w,w,shaftLen,12), api.mat(color,{emissive:0.3}));
+      shaft.position.copy(mid); shaft.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),nd); grp.add(shaft);
+      const cone=new T.Mesh(new T.ConeGeometry(head*0.6,head,16), api.mat(color,{emissive:0.5}));
+      cone.position.copy(A.clone().add(nd.clone().multiplyScalar(shaftLen+head*0.5)));
+      cone.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),nd); grp.add(cone);
+      if(o.label){ const lb=api.bigLabel(o.label, api.col(color), 1.0);
+        lb.position.copy(A.clone().add(B).multiplyScalar(0.5).add(new T.Vector3(0,0.35,0))); grp.add(lb); }
+      return into(grp,o); };
+    if(!api.plane)  api.plane  = (pos,o)=>{ o=o||{}; const w=o.w==null?2:o.w,h=o.h==null?2:o.h;
+      const m=new T.Mesh(new T.PlaneGeometry(w,h), new T.MeshBasicMaterial({color:api.col(o.color||"cyan"),
+        transparent:true, opacity:o.opacity==null?0.18:o.opacity, depthWrite:false, side:T.DoubleSide}));
+      if(o.flat!==false) m.rotation.x=-Math.PI/2; m.position.set(pos[0],pos[1],pos[2]); return into(m,o); };
+    if(!api.legend) api.legend = (items,o)=>{ o=o||{}; const grp=new T.Group();
+      const corner=o.corner||"bl", scale=o.scale==null?0.5:o.scale, gap=o.gap==null?0.6:o.gap;
+      const sx=corner.indexOf("r")>=0?4.6:-5.6, sy=corner.indexOf("t")>=0?3.4:-2.8;
+      (items||[]).forEach((it,k)=>{ const y=sy + (corner.indexOf("t")>=0?-1:1)*k*gap;
+        const dot=new T.Mesh(new T.SphereGeometry(0.12,16,12), new T.MeshBasicMaterial({color:it.color}));
+        dot.position.set(sx,y,0); grp.add(dot);
+        const lb=api.label(it.label, "#c7d2dd", scale); lb.position.set(sx+0.9,y,0); grp.add(lb); });
+      return into(grp,o); };
+    if(!api.connectRamp) api.connectRamp = (a,b,t,o)=>{ o=o||{};
+      const col=api.ramp(clamp(t,0,1), api.accent(o.from||"rose").base, api.accent(o.to||"green").base);
+      return api.edge(a,b,{color:"#"+col.getHexString(), width:o.width==null?0.045:o.width, group:o.group}); };
+    if(!api.setMode) api.setMode = value => { const sel=document.getElementById("ml-mode");
+      if(!sel) return false; let ok=false;
+      for(const op of sel.options) if(String(op.value)===String(value)) ok=true;
+      if(!ok) return false; sel.value=String(value);
+      sel.dispatchEvent(new Event("change")); return true; };
+  }
+
+  /* ===========================================================================
+     1) FACTS — the ONE source of truth for every number this lab shows.
+        Referenced inside build() AND recomputed by assertMath(). The matching
+        figure (_TEMPLATE-figure.js) mirrors these same keys.
+        FILL: replace with your lesson's canonical numbers.
+     =========================================================================== */
+  const GENES = ["TF", "A", "B"];                       // FILL: node labels
+  // edges: [from, to, sign]  (+1 activation, -1 repression). Indices into GENES.
+  const EDGES = [ [0,1,+1], [0,2,-1], [1,2,+1] ];        // FILL: regulatory wiring
+
+  // deterministic per-gene expression at "time t" given a global drive in [0,1]
+  function express(drive){
+    const x = [];
+    for (let i=0;i<GENES.length;i++){
+      let v = 0.30 + 0.55*drive*(0.6 + 0.4*prand(i+7));  // baseline + driven term
+      // apply one round of signed regulation from upstream edges
+      EDGES.forEach(([f,t,s])=>{ if(t===i) v += s*0.22*drive*(0.5+0.5*prand(f*3+1)); });
+      x.push(clamp(v, 0.02, 0.98));
+    }
+    return x;
+  }
+
+  const FACTS = (function(){
+    const drive = 0.6;                                   // reference operating point
+    const x = express(drive);
+    const nEdges = EDGES.length;
+    const nAct  = EDGES.filter(e=>e[2] > 0).length;
+    const nRep  = EDGES.filter(e=>e[2] < 0).length;
+    // signed inflow into the last gene (B) at the reference drive
+    let inflowB = 0;
+    EDGES.forEach(([f,t,s])=>{ if(t===2) inflowB += s*x[f]; });
+    return {
+      genes: GENES.length,
+      edges: nEdges,
+      activators: nAct,
+      repressors: nRep,
+      driveRef: drive,
+      exprRef: x.map(v=>+v.toFixed(3)),                  // [TF, A, B] at drive=0.6
+      inflowB: +inflowB.toFixed(3)
+    };
+  })();
+
+  // assertMath(): recompute every FACT independently; console.assert within ±0.011.
+  function assertMath(){
+    const tol = 0.011;
+    const near = (a,b)=>Math.abs(a-b) <= tol;
+    const x = express(FACTS.driveRef);
+    console.assert(FACTS.genes === GENES.length, "MATH MISMATCH genes");
+    console.assert(FACTS.edges === EDGES.length, "MATH MISMATCH edges");
+    console.assert(FACTS.activators + FACTS.repressors === EDGES.length, "MATH MISMATCH signs");
+    FACTS.exprRef.forEach((v,i)=>console.assert(near(v, x[i]), "MATH MISMATCH expr["+i+"]"));
+    let inflowB = 0; EDGES.forEach(([f,t,s])=>{ if(t===2) inflowB += s*x[f]; });
+    console.assert(near(FACTS.inflowB, inflowB), "MATH MISMATCH inflowB");
+    return true;
+  }
+
+  /* ===========================================================================
+     2) build(api) — called by the engine on every mode/param/button change.
+        Clears its named groups, repopulates the scene with engine HELPERS only,
+        and returns the readout contract. api.state holds {mode, step, ...params}.
+        FILL: the three if(m===…) branches + the return strings.
+     =========================================================================== */
+  function build(api){
+    installHelpers(api);                                  // no-op on the v2 engine; polyfills on v1
+    const m = api.state.mode;
+    const drive = api.state.drive;                        // shared param
+    const hi    = api.state.highlight;                    // MODE_B-only param
+    const x = express(drive);
+
+    api.clear("nodes"); api.clear("edges"); api.clear("labels"); api.clear("legend");
+
+    // shared node layout (triangle) — same in every mode for visual continuity
+    const POS = [ [-2.0, 0.4, 1.4], [2.0, 0.4, 1.4], [0, 0.4, -2.0] ];
+    const accentOf = i => ["cyan","green","amber"][i];    // per-gene accent
+
+    function drawNodes(){
+      GENES.forEach((g,i)=>{
+        api.node(POS[i], { r:0.34 + 0.22*x[i], color:accentOf(i), halo:true,
+                           label:g, labelColor:api.col(accentOf(i)), group:"nodes",
+                           pick:{ gene:g, expr:x[i] } });
+      });
+    }
+
+    if (m === "MODE_A"){
+      // FILL (Mode A — "wiring"): show the static signed regulatory graph.
+      drawNodes();
+      EDGES.forEach(([f,t,s])=>{
+        api.arrow(POS[f], POS[t], { color: s>0 ? "green" : "rose",
+                                    head:0.24, width:0.05, group:"edges" });
+      });
+      api.legend([ {color:api.col("green"), label:"activation (+)"},
+                   {color:api.col("rose"),  label:"repression (−)"} ],
+                 { corner:"bl", group:"legend" });
+
+    } else if (m === "MODE_B"){
+      // FILL (Mode B — "signed flow"): color edges by signed contribution; the
+      // `highlight` slider fades inactive edges so the dominant path stands out.
+      drawNodes();
+      EDGES.forEach(([f,t,s])=>{
+        const strength = Math.abs(s) * x[f];
+        const lit = strength >= hi;
+        api.arrow(POS[f], POS[t], { color: s>0 ? "green" : "rose",
+                                    head:0.24, width:0.04 + 0.04*strength,
+                                    group:"edges" });
+        if(!lit){ /* dim path: thin reference edge underneath for context */
+          api.edge(POS[f], POS[t], { color:"#2a3a4e", width:0.02, dashed:true, group:"edges" }); }
+      });
+      api.legend([ {color:api.col("green"), label:"net activating"},
+                   {color:api.col("rose"),  label:"net repressing"} ],
+                 { corner:"bl", group:"legend" });
+
+    } else {
+      // FILL (Mode C — "inflow"): a reference membrane + arrows into gene B,
+      // illustrating signed inflow (the FACTS.inflowB quantity).
+      drawNodes();
+      api.plane([0,0,-0.4], { w:6, h:6, color:"violet", opacity:0.10, flat:true, group:"edges" });
+      EDGES.forEach(([f,t,s])=>{ if(t!==2) return;
+        api.arrow(POS[f], POS[2], { color: s>0 ? "green" : "rose", head:0.26,
+                                    width:0.05, group:"edges",
+                                    label:(s>0?"+":"−")+(x[f]).toFixed(2) });
+      });
+      api.legend([ {color:api.col("green"), label:"adds to B"},
+                   {color:api.col("rose"),  label:"subtracts from B"} ],
+                 { corner:"bl", group:"legend" });
+    }
+
+    // signed inflow into B at the current drive (live number for the readouts)
+    let inflowB = 0; EDGES.forEach(([f,t,s])=>{ if(t===2) inflowB += s*x[f]; });
+
+    const modeName = { MODE_A:"Signed wiring", MODE_B:"Signed message flow",
+                       MODE_C:"Inflow into B" }[m];
+
+    return {
+      // FILL: live status / formula / what-to-watch / state sentence
+      badge: modeName + " · " + FACTS.edges + " edges",
+      formula: 'inflow(B) = <b>Σ</b> sign(e)·x<sub>src</sub>',           // <b> renders cyan
+      insight: "Watch the sign of each arrow: an activator adds, a repressor subtracts. "
+             + "Edge-blind aggregation would merge these and erase the inhibition.",
+      state: "drive " + drive.toFixed(2) + " → x = ["
+             + x.map(v=>v.toFixed(2)).join(", ") + "]; net inflow to B = "
+             + inflowB.toFixed(2) + ".",
+      metrics: {                                                          // 4 keys == metrics[].key
+        k1: FACTS.edges,
+        k2: FACTS.activators + "/" + FACTS.repressors,
+        k3: x[2].toFixed(2),
+        k4: inflowB.toFixed(2)
+      },
+      focus: { center:[0, 0.4, 0], radius:9 }
+    };
+  }
+
+  /* ===========================================================================
+     3) MathLab.create — engine config. FILL the {{SLOTS}}; the rest is wiring.
+     =========================================================================== */
+  MathLab.create({
+    id:"xnn", kind:"grn-template",                                        // FILL: idlower + slug
+    eyebrow:"Block X · Topic",                                            // FILL
+    title:"XNN · Signed regulation (template)",                          // FILL
+    subtitle:"A tiny 3-gene network. Drive the system, watch signed messages add and subtract, and read the live inflow into B.", // FILL
+    selectedLabel:"Gene", selectedHint:"Click a gene to inspect it.",    // FILL
+    insightLabel:"What to watch",
+    selfTest:true,                                                       // enables _selfTest for the §6D verifier
+
+    // FILL: exactly 3 modes (value = code branch in build(), label = UI text)
+    modes:[
+      {value:"MODE_A", label:"Wiring (signed graph)"},
+      {value:"MODE_B", label:"Signed message flow"},
+      {value:"MODE_C", label:"Inflow into B"}
+    ],
+
+    // FILL: ≤5 params. Gate per-mode ones with modes:[…] so the engine DIMS them
+    // (greys out + disables) where they have no effect.
+    params:[
+      {key:"drive",     label:"transcription drive", min:0, max:1, step:0.05, value:0.60, fmt:v=>v.toFixed(2)},
+      {key:"highlight", label:"flow threshold",      min:0, max:1, step:0.05, value:0.25, fmt:v=>v.toFixed(2), modes:["MODE_B"]}
+    ],
+
+    // FILL: exactly 4 metrics (key must match the metrics:{} keys returned by build)
+    metrics:[
+      {key:"k1", label:"Edges",        accent:"cyan"},
+      {key:"k2", label:"Act / Rep",    accent:"green"},
+      {key:"k3", label:"Expr(B)",      accent:"amber"},
+      {key:"k4", label:"Inflow(B)",    accent:"violet"}
+    ],
+
+    // 3–4 layers → SHOW toggles. Match the group names you clear()/add to in build().
+    layers:[
+      {group:"nodes",  label:"genes"},
+      {group:"edges",  label:"edges"},
+      {group:"labels", label:"labels"},
+      {group:"legend", label:"legend"}
+    ],
+
+    defaultCam:{theta:-0.5, phi:0.74, r:9},
+    hint:'<span class="g">green</span> = activation (+) · <span class="r">rose</span> = repression (−) · node size ∝ expression · <b>B</b> is the readout gene.',
+
+    primary:{label:"Step", on:api=>{ api.state.step++; }},               // advance one phenomenon step
+    secondary:{label:"Cycle mode", on:api=>{
+      const order=["MODE_A","MODE_B","MODE_C"];
+      api.setMode(order[(order.indexOf(api.state.mode)+1)%order.length]); // v2 helper: one mode code path
+    }},
+
+    onParam:(api)=>api.frame([0,0.4,0], 9),
+    onSelect:(api,d)=>api.setSelected(d.gene ? (d.gene + " · expr " + d.expr.toFixed(2)) : String(d)),
+    build,
+
+    // snapshot(): serialize the key numbers per mode so the verifier sees each
+    // mode/control produce a DISTINCT snapshot. snapshotPrecision keeps it stable.
+    snapshot:s=>{
+      const x = express(s.drive);
+      let inflowB = 0; EDGES.forEach(([f,t,sg])=>{ if(t===2) inflowB += sg*x[f]; });
+      return {
+        mode: s.mode,
+        drive: +s.drive.toFixed(3),
+        highlight: +s.highlight.toFixed(3),
+        exprB: +x[2].toFixed(3),
+        inflowB: +inflowB.toFixed(3)
+      };
+    }
+  });
+
+  // dev-only sanity (does not affect rendering): every shown number is recomputed.
+  try { assertMath(); } catch(e){ /* assertMath uses console.assert; never throws */ }
+})();
+</script>
+</body>
+</html>

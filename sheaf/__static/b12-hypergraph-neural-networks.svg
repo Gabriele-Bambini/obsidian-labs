@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure B12 — One hyperedge is a group, not many pairwise claims</title>
+<desc id="d">Four-panel captioned figure: One hyperedge is a group, not many pairwise claims</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE B12 · BLOCK B · GNN ARCHITECTURES</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">One hyperedge is a group, not many pairwise claims</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Incidence: one group relation</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e₁ members</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">H[A,e₁]</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">1</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">H[E,e₁]</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">1</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">δ(e₁)</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">5</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Clique expansion overclaims</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">clique_edges(k) = k(k−1)/2</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">k=5 → 10    k=8 → 28</text>
+<text x="502" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">1 hyperedge</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">1</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">pairs (k=5)</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">10</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Node→hyperedge→node</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">mₑ = mean(xᵥ) = 0.58</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">x'ᵥ = 0.7·xᵥ + 0.3·mₑ</text>
+<text x="56" y="349.5" fill="#34d399" font-size="11.5" font-weight="700">x'_C (target)</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">0.31</text>
+<text x="56" y="369.5" fill="#fbbf24" font-size="11.5" font-weight="700">x'_E (marker)</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.80</text>
+<text x="56" y="397" fill="#8a99ad" font-size="11">Low target C rises toward the group; high marker E falls</text>
+<text x="56" y="417" fill="#8a99ad" font-size="11">toward it. Diffusion smooths members — risky when the</text>
+<text x="56" y="437" fill="#8a99ad" font-size="11">hyperedge is large or noisy.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Takeaway</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">hyperedge</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">= 1 group fact</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">clique</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">invents pairs</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">incidence H</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">keeps the group</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">membership</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">≠ regulation</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure B12. </text>
+<text x="140.59" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="156.71" y="538" fill="#c7d2dd" font-size="13">curated </text>
+<text x="221.19" y="538" fill="#c7d2dd" font-size="13">5-gene </text>
+<text x="277.61" y="538" fill="#c7d2dd" font-size="13">program </text>
+<text x="342.09" y="538" fill="#c7d2dd" font-size="13">e₁ </text>
+<text x="366.27" y="538" fill="#c7d2dd" font-size="13">= </text>
+<text x="382.39" y="538" fill="#c7d2dd" font-size="13">{TF1, </text>
+<text x="430.75" y="538" fill="#c7d2dd" font-size="13">TF2, </text>
+<text x="471.05" y="538" fill="#c7d2dd" font-size="13">GeneA, </text>
+<text x="527.47" y="538" fill="#c7d2dd" font-size="13">GeneB, </text>
+<text x="583.89" y="538" fill="#c7d2dd" font-size="13">StateMarker}, </text>
+<text x="696.73" y="538" fill="#c7d2dd" font-size="13">features </text>
+<text x="769.27" y="538" fill="#c7d2dd" font-size="13">(0.8, </text>
+<text x="817.63" y="538" fill="#c7d2dd" font-size="13">0.6, </text>
+<text x="857.93" y="538" fill="#c7d2dd" font-size="13">0.2,</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">0.4, </text>
+<text x="80.3" y="559" fill="#c7d2dd" font-size="13">0.9). </text>
+<text x="128.66" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="162.19" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="194.43" y="559" fill="#c7d2dd" font-size="13">incidence </text>
+<text x="275.03" y="559" fill="#c7d2dd" font-size="13">column </text>
+<text x="331.45" y="559" fill="#c7d2dd" font-size="13">H[:,e₁] </text>
+<text x="395.93" y="559" fill="#c7d2dd" font-size="13">records </text>
+<text x="460.41" y="559" fill="#c7d2dd" font-size="13">one </text>
+<text x="492.65" y="559" fill="#c7d2dd" font-size="13">membership </text>
+<text x="581.31" y="559" fill="#c7d2dd" font-size="13">per </text>
+<text x="613.55" y="559" fill="#c7d2dd" font-size="13">node; </text>
+<text x="661.91" y="559" fill="#c7d2dd" font-size="13">degree </text>
+<text x="718.33" y="559" fill="#c7d2dd" font-size="13">δ(e₁)=5. </text>
+<text x="790.87" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b)</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">Flattening </text>
+<text x="128.66" y="580" fill="#c7d2dd" font-size="13">it </text>
+<text x="152.84" y="580" fill="#c7d2dd" font-size="13">into </text>
+<text x="193.14" y="580" fill="#c7d2dd" font-size="13">pairwise </text>
+<text x="265.68" y="580" fill="#c7d2dd" font-size="13">edges </text>
+<text x="314.04" y="580" fill="#c7d2dd" font-size="13">invents </text>
+<text x="378.52" y="580" fill="#c7d2dd" font-size="13">k(k−1)/2 </text>
+<text x="451.06" y="580" fill="#c7d2dd" font-size="13">claims </text>
+<text x="507.48" y="580" fill="#c7d2dd" font-size="13">— </text>
+<text x="530.05" y="580" fill="#c7d2dd" font-size="13">10 </text>
+<text x="554.23" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="578.41" y="580" fill="#c7d2dd" font-size="13">k=5, </text>
+<text x="618.71" y="580" fill="#c7d2dd" font-size="13">28 </text>
+<text x="642.89" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="667.07" y="580" fill="#c7d2dd" font-size="13">k=8. </text>
+<text x="707.37" y="580" fill="#fde68a" font-size="13" font-weight="700">(c)</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">Node→hyperedge→node </text>
+<text x="214.1" y="601" fill="#c7d2dd" font-size="13">passing </text>
+<text x="278.58" y="601" fill="#c7d2dd" font-size="13">aggregates </text>
+<text x="367.24" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="391.42" y="601" fill="#c7d2dd" font-size="13">mₑ=0.58, </text>
+<text x="463.96" y="601" fill="#c7d2dd" font-size="13">then </text>
+<text x="504.26" y="601" fill="#c7d2dd" font-size="13">x'ᵥ </text>
+<text x="536.5" y="601" fill="#c7d2dd" font-size="13">pulls </text>
+<text x="584.86" y="601" fill="#c7d2dd" font-size="13">C </text>
+<text x="600.98" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="625.16" y="601" fill="#c7d2dd" font-size="13">0.31, </text>
+<text x="673.52" y="601" fill="#c7d2dd" font-size="13">E </text>
+<text x="689.64" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="713.82" y="601" fill="#c7d2dd" font-size="13">0.80. </text>
+<text x="762.18" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="795.71" y="601" fill="#c7d2dd" font-size="13">The</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">hyperedge </text>
+<text x="120.6" y="622" fill="#c7d2dd" font-size="13">keeps </text>
+<text x="168.96" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="201.2" y="622" fill="#c7d2dd" font-size="13">group; </text>
+<text x="257.62" y="622" fill="#c7d2dd" font-size="13">co-membership </text>
+<text x="370.46" y="622" fill="#c7d2dd" font-size="13">is </text>
+<text x="394.64" y="622" fill="#c7d2dd" font-size="13">not </text>
+<text x="426.88" y="622" fill="#c7d2dd" font-size="13">pairwise </text>
+<text x="499.42" y="622" fill="#c7d2dd" font-size="13">regulation.</text>
+</svg>

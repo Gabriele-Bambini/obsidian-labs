@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 900 230" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-label="Figure K03 inline">
+<rect x="0" y="0" width="900" height="230" fill="#070b14"/>
+<text x="40" y="30" fill="#4dd7ff" font-size="11" font-weight="700" letter-spacing="2.2">K03 · BLOCK K · GRAPH FOUNDATION MODELS</text>
+<text x="40" y="56" fill="#8a99ad" font-size="11">BARD1 retrieval</text>
+<rect x="40" y="80" width="14" height="70" rx="2" fill="#a78bfa"/>
+<text x="49.21" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">BR1</text>
+<rect x="76" y="83.72" width="14" height="66.28" rx="2" fill="#4dd7ff"/>
+<text x="83" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">BR2</text>
+<rect x="112" y="96.38" width="14" height="53.62" rx="2" fill="#34d399"/>
+<text x="119" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">R51</text>
+<rect x="148" y="106.81" width="14" height="43.19" rx="2" fill="#fb7185"/>
+<text x="155" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">53BP1</text>
+<line x1="40" y1="80" x2="184" y2="80" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="270" y="124" fill="#8a99ad" font-size="26" text-anchor="middle">→</text>
+<rect x="310" y="78" width="70" height="40" rx="6" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<text x="345" y="93" fill="#8a99ad" font-size="9" text-anchor="middle">top hit</text>
+<text x="345" y="110" fill="#c4b5fd" font-size="13" font-weight="700" text-anchor="middle">BRCA1</text>
+<rect x="388" y="78" width="70" height="40" rx="6" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<text x="423" y="93" fill="#8a99ad" font-size="9" text-anchor="middle">cosine</text>
+<text x="423" y="110" fill="#9fe0ff" font-size="13" font-weight="700" text-anchor="middle">0.94</text>
+<line x1="470" y1="60" x2="470" y2="178" stroke="rgba(150,170,200,.2)" stroke-width="1"/>
+<text x="500" y="86" fill="#4dd7ff" font-size="11.5" font-weight="700">feature</text>
+<text x="620" y="86" fill="#9fb4cc" font-size="11.5">decoupled</text>
+<text x="500" y="110" fill="#fbbf24" font-size="11.5" font-weight="700">enhanced</text>
+<text x="620" y="110" fill="#9fb4cc" font-size="11.5">iterative</text>
+<text x="500" y="134" fill="#a78bfa" font-size="11.5" font-weight="700">contrastive</text>
+<text x="620" y="134" fill="#9fb4cc" font-size="11.5">zero-shot</text>
+<text x="500" y="158" fill="#34d399" font-size="11.5" font-weight="700">rule</text>
+<text x="620" y="158" fill="#9fb4cc" font-size="11.5">fuse, do not choose</text>
+<text x="450" y="210" fill="#c7d2dd" font-size="12" text-anchor="middle">Text carries the biology; topology places it — a graph-language model refuses to choose.</text>
+</svg>

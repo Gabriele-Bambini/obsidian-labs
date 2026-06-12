@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J04 · Causal graph representation learning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; fully reproducible) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── the lesson's Section-5 worked example: a 5-gene ESC GRN module ────────
+  // genes laid out so causal flow reads top→bottom.
+  const GENES=[
+    {id:"OCT4", x:-2.4, z:-2.6},
+    {id:"SOX2", x: 2.4, z:-2.6},
+    {id:"NANOG",x: 0.0, z: 0.0},
+    {id:"KLF4", x:-2.6, z: 2.7},
+    {id:"CDH1", x: 2.6, z: 2.7}
+  ];
+  const IDX={OCT4:0,SOX2:1,NANOG:2,KLF4:3,CDH1:4};
+
+  // Ground-truth causal edges (CRISPRi-confirmed). sign: +1 activate, -1 repress.
+  // w = NOTEARS recovered weight on the 200-gene matrix (λ=0.01, 500 cells).
+  const TRUE_EDGES=[
+    {a:"OCT4", b:"NANOG", sign:+1, w:0.72},
+    {a:"SOX2", b:"NANOG", sign:+1, w:0.68},
+    {a:"OCT4", b:"SOX2",  sign:+1, w:0.51},
+    {a:"NANOG",b:"KLF4",  sign:+1, w:0.44},
+    {a:"KLF4", b:"CDH1",  sign:-1, w:0.38},
+    {a:"NANOG",b:"CDH1",  sign:-1, w:-0.41}
+  ];
+  // The lone NOTEARS false positive (below the 0.30 threshold → filtered).
+  const FP_EDGE={a:"SOX2", b:"KLF4", sign:+1, w:0.22};
+
+  // CRISPRi OCT4-knockdown log-fold changes (Section-5 Step-3 numbers).
+  const KD_LFC={OCT4:-3.0, SOX2:-1.8, NANOG:-2.1, KLF4:-1.2, CDH1:+1.5};
+
+  // Edges the PC algorithm CANNOT orient from observation alone (Markov class):
+  // the chain NANOG–KLF4–CDH1 and the chord NANOG–CDH1 stay undirected in the CPDAG.
+  const AMBIGUOUS=new Set(["NANOG-KLF4","KLF4-CDH1","NANOG-CDH1"]);
+  // The v-structure OCT4 → NANOG ← SOX2 (collider) IS orientable from data.
+  const VSTRUCT=new Set(["OCT4-NANOG","SOX2-NANOG"]);
+
+  const NOTEARS_H=1.2e-5; // acyclicity residual h(W) ≈ 0
+
+  let sceneSnap={};
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+  function gpos(T,id,y){const g=GENES[IDX[id]];return new T.Vector3(g.x,y==null?0:y,g.z);}
+  function ekey(a,b){return a+"-"+b;}
+
+  // count how many of the 6 true edges are oriented in a given mode
+  function orientedCount(mode){
+    if(mode==="correlation") return 0;
+    if(mode==="cpdag"){
+      // CPDAG: v-structures oriented (2), the rest of the skeleton stays undirected.
+      let c=0; TRUE_EDGES.forEach(e=>{ if(VSTRUCT.has(ekey(e.a,e.b))) c++; }); return c;
+    }
+    if(mode==="intervention"||mode==="notears") return TRUE_EDGES.length; // all 6
+    return 0;
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const alpha=s.alpha;            // CI test significance (PC)
+    const tau=s.tau;                // NOTEARS edge threshold |W|
+    const kdGene=Math.round(s.kdGene); // 0=OCT4 1=NANOG 2=KLF4 (knockdown target)
+    const lambda=s.lambda;          // NOTEARS L1 sparsity
+
+    const gNodes =api.group("nodes");
+    const gEdges =api.group("edges");
+    const gFlow  =api.group("flow");
+    const gLabels=api.group("labels");
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+    const KD_TARGETS=["OCT4","NANOG","KLF4"];
+
+    // place the five gene nodes (shared across all modes)
+    function drawGenes(activeId,dimSet){
+      GENES.forEach(g=>{
+        const isKD = activeId && g.id===activeId;
+        const colName = isKD?RO:(g.id==="CDH1"?AM:(g.id==="NANOG"?VI:CY));
+        const dim = dimSet&&dimSet.has(g.id);
+        const nd=api.node([g.x,0,g.z],{
+          color:colName, r:isKD?0.42:0.34, group:"nodes",
+          label:g.id, labelColor:isKD?RO:"#e8eef6",
+          pick:{gene:{id:g.id, kd:!!isKD}}
+        });
+        if(dim) nd.children.forEach(c=>{ if(c.material){c.material.transparent=true;c.material.opacity=0.35;} });
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 — correlation skeleton (undirected, symmetric co-expression)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="correlation"){
+      drawGenes(null,null);
+      // co-expression connects every pair whose |partial r| survives at level alpha.
+      // smaller alpha ⇒ fewer surviving chords (stricter). We model survival from a
+      // deterministic per-pair "partial-correlation strength".
+      let kept=0, fp=0;
+      const pairs=[];
+      for(let i=0;i<GENES.length;i++)for(let j=i+1;j<GENES.length;j++){
+        const a=GENES[i].id,b=GENES[j].id;
+        const isTrue=TRUE_EDGES.some(e=>(e.a===a&&e.b===b)||(e.a===b&&e.b===a));
+        // strength: true edges strong; spurious chords moderate (co-vary via cascade)
+        const strength=isTrue?0.92:(0.55+0.30*prand(i*11+j*7));
+        pairs.push({a,b,isTrue,strength});
+      }
+      pairs.forEach(p=>{
+        // survives if strength beats the (1-alpha) bar → larger alpha keeps more
+        const bar=1.0-alpha; // alpha in [0.001..0.10] ⇒ bar 0.999..0.90
+        if(p.strength>=bar){
+          kept++; if(!p.isTrue) fp++;
+          api.edge(gpos(T,p.a),gpos(T,p.b),{color:p.isTrue?SL:RO,width:0.05,opacity:p.isTrue?0.8:0.95,group:"edges"});
+        }
+      });
+      const lb=api.bigLabel("undirected co-expression skeleton","#8a99ad",1.2);lb.position.set(0,2.6,0);gLabels.add(lb);
+
+      sceneSnap={mode,alpha:+alpha.toFixed(3),tau,lambda,kdGene,
+        keptEdges:kept,falsePos:fp,orientedEdges:0,acyclicityH:null,recoveredEdges:null};
+
+      return {
+        badge:"Correlation · skeleton · α="+alpha.toFixed(3)+" · "+kept+" edges",
+        formula:"r(X_i,X_j) ≠ 0  ⇏  X_i → X_j   ·   association, not causation",
+        insight:"A co-expression network connects genes that vary together — it is symmetric and has NO direction. Every kept chord (rose = spurious) is just correlation. The spurious chords arise because all five genes co-vary through the single ESC cascade. Tightening α prunes pairs but can never tell which way an arrow points.",
+        state:"α="+alpha.toFixed(3)+" → "+kept+" undirected edges kept, "+fp+" of them spurious (no causal edge). Direction is unrecoverable here.",
+        metrics:{recoveredEdges:kept+" / 0 dir", orientedEdges:"0", falsePos:""+fp, acyclicityH:"n/a"},
+        focus:{center:[0,0.4,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 — PC algorithm → CPDAG (Markov equivalence class)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="cpdag"){
+      drawGenes(null,null);
+      let oriented=0, undirected=0;
+      TRUE_EDGES.forEach(e=>{
+        const k=ekey(e.a,e.b);
+        const a=gpos(T,e.a), b=gpos(T,e.b);
+        if(VSTRUCT.has(k)){
+          // collider edges OCT4→NANOG, SOX2→NANOG: orientable from a v-structure.
+          api.arrow(a,b,{color:GR,width:0.05,head:0.26,group:"edges"});
+          oriented++;
+        }else if(AMBIGUOUS.has(k)){
+          // stays undirected in the CPDAG — draw a double-headed dashed bar.
+          api.edge(a,b,{color:AM,width:0.05,dashed:true,opacity:0.95,group:"edges"});
+          undirected++;
+        }else{
+          // OCT4→SOX2: a single non-collider edge — also undirected in CPDAG.
+          api.edge(a,b,{color:AM,width:0.05,dashed:true,opacity:0.95,group:"edges"});
+          undirected++;
+        }
+      });
+      // highlight the collider NANOG
+      api.halo([0,0,0],{color:GR,r:1.3,opacity:0.5,group:"flow"});
+      const l1=api.bigLabel("v-structure OCT4→NANOG←SOX2  (collider, orientable)","#34d399",1.0);l1.position.set(0,2.7,-1.4);gLabels.add(l1);
+      const l2=api.bigLabel("NANOG–KLF4–CDH1 chain stays undirected","#fbbf24",1.0);l2.position.set(0,2.2,2.6);gLabels.add(l2);
+
+      sceneSnap={mode,alpha:+alpha.toFixed(3),tau,lambda,kdGene,
+        keptEdges:TRUE_EDGES.length,falsePos:0,orientedEdges:oriented,acyclicityH:null,recoveredEdges:TRUE_EDGES.length};
+
+      return {
+        badge:"PC → CPDAG · "+oriented+" oriented · "+undirected+" undirected",
+        formula:"X ⟂ Z | Y  ⇒  X – Y – Z   ·   X → Y ← Z  iff  Y ∉ Sepset(X,Z)",
+        insight:"The PC algorithm recovers the correct skeleton, then orients only what conditional-independence forces. The collider OCT4 → NANOG ← SOX2 (green arrows) is identifiable because OCT4 and SOX2 are marginally independent yet dependent given NANOG. Every other edge stays undirected (amber) — three DAGs share these CIs, so they form one Markov-equivalence class. Observation alone cannot break the tie.",
+        state:"CPDAG: "+oriented+" edges oriented (the v-structure), "+undirected+" still undirected. NANOG→KLF4→CDH1 and NANOG→CDH1 are unidentifiable from observation.",
+        metrics:{recoveredEdges:TRUE_EDGES.length+" / 6", orientedEdges:oriented+" / 6", falsePos:"0", acyclicityH:"n/a"},
+        focus:{center:[0,0.4,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 — interventions (CRISPRi / Perturb-seq) orient the DAG
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="intervention"){
+      const target=KD_TARGETS[kdGene];
+      // genes downstream of the target are perturbed; compute effect via cascade.
+      // we propagate the knockdown along the TRUE DAG to get per-gene log-fold change.
+      const effect={}; GENES.forEach(g=>effect[g.id]=0); effect[target]=KD_LFC[target]||-2.0;
+      // one forward pass over edges in topo order (OCT4,SOX2,NANOG,KLF4,CDH1)
+      const order=["OCT4","SOX2","NANOG","KLF4","CDH1"];
+      order.forEach(g=>{
+        TRUE_EDGES.forEach(e=>{
+          if(e.a===g && effect[g]!==0){
+            // child shifts in direction = sign * parent shift, damped
+            const damp=0.7;
+            effect[e.b]+= e.sign*effect[g]*damp*(Math.abs(e.w));
+          }
+        });
+      });
+      // if target is OCT4 use the note's measured values exactly
+      if(target==="OCT4"){ Object.keys(KD_LFC).forEach(k=>effect[k]=KD_LFC[k]); }
+
+      const dim=new Set(); // none dim; we color by |effect|
+      drawGenes(target,dim);
+
+      // draw oriented arrows for every TRUE edge whose parent OR child moved → all 6
+      let oriented=0, confirmed=0;
+      TRUE_EDGES.forEach(e=>{
+        const moved=Math.abs(effect[e.b])>0.4; // substantial downstream effect
+        const adjToTarget=(e.a===target||e.b===target);
+        const col=e.sign>0?GR:RO;
+        api.arrow(gpos(T,e.a),gpos(T,e.b),{color:col,width:0.05,head:0.26,
+          opacity:(adjToTarget||moved)?1.0:0.55,group:"edges"});
+        oriented++; if(adjToTarget&&moved) confirmed++;
+      });
+
+      // vertical effect bars rising from each gene (log-fold change)
+      GENES.forEach(g=>{
+        const lfc=effect[g.id]||0;
+        const h=Math.min(2.4,Math.abs(lfc)*0.9);
+        if(h<0.05) return;
+        const up=lfc>0; // de-repression rises, knockdown drops
+        const col=up?AM:CY;
+        const bar=new T.Mesh(new T.BoxGeometry(0.22,h,0.22),
+          new T.MeshStandardMaterial({color:col,emissive:new T.Color(col).multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(g.x+0.55, (up?h/2:-h/2), g.z);
+        gFlow.add(bar);
+        const vlb=api.label((lfc>0?"+":"")+lfc.toFixed(1),col,0.34);vlb.position.set(g.x+0.55,(up?h+0.3:-h-0.3),g.z);gLabels.add(vlb);
+      });
+
+      const l1=api.bigLabel("do("+target+" = knockdown)","#fb7185",1.3);l1.position.set(0,2.9,0);gLabels.add(l1);
+      const l2=api.bigLabel("amber bar = de-repression ↑   ·   cyan bar = knockdown ↓","#8a99ad",1.0);l2.position.set(0,2.3,2.7);gLabels.add(l2);
+
+      sceneSnap={mode,alpha,tau,lambda,kdGene,
+        keptEdges:TRUE_EDGES.length,falsePos:0,orientedEdges:oriented,acyclicityH:null,recoveredEdges:TRUE_EDGES.length,kdTarget:target,cdh1Lfc:+(effect.CDH1||0).toFixed(2)};
+
+      return {
+        badge:"Intervention · do("+target+") · "+oriented+" edges oriented",
+        formula:"P(V | do(X_i = x))   ·   downstream shift ⇒ X_i → child",
+        insight:"A CRISPRi knockdown is a do-operation: it cuts incoming edges to the target and reveals what it controls. After do("+target+"), genes that shift are downstream, which orients edges the CPDAG left ambiguous. With do(OCT4): SOX2 −1.8, NANOG −2.1, KLF4 −1.2 (through NANOG), CDH1 +1.5 (relief from NANOG repression). Sign and direction now agree with the ground truth.",
+        state:"do("+target+"): CDH1 log-fold = "+(effect.CDH1>0?"+":"")+effect.CDH1.toFixed(1)+". "+confirmed+" edges adjacent to "+target+" confirmed; the full DAG is now oriented.",
+        metrics:{recoveredEdges:"6 / 6", orientedEdges:oriented+" / 6", falsePos:"0", acyclicityH:"n/a"},
+        focus:{center:[0,0.4,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 4 — NOTEARS continuous DAG optimization (threshold W)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="notears"){
+      drawGenes(null,null);
+      // sparsity λ shrinks weights toward zero; effective weight = w*(1 - k*λ).
+      const shrink=g=>g*(1 - Math.min(0.6, lambda*8));
+      let recovered=0, fp=0, tp=0;
+      const allEdges=TRUE_EDGES.concat([FP_EDGE]);
+      allEdges.forEach(e=>{
+        const wEff=shrink(e.w);
+        const mag=Math.abs(wEff);
+        const kept=mag>=tau;
+        const isFP=(e===FP_EDGE);
+        const a=gpos(T,e.a), b=gpos(T,e.b);
+        if(kept){
+          recovered++; if(isFP) fp++; else tp++;
+          const col=isFP?RO:(e.sign>0?GR:VI);
+          api.arrow(a,b,{color:col,width:0.04+mag*0.06,head:0.22+mag*0.12,
+            opacity:isFP?0.9:1.0,group:"edges"});
+          const wl=api.label((wEff>=0?"+":"")+wEff.toFixed(2),col,0.32);
+          const mid=a.clone().add(b).multiplyScalar(0.5);wl.position.copy(mid).add(new T.Vector3(0.35,0.5,0));gLabels.add(wl);
+        }else{
+          // below threshold → faint dashed (filtered)
+          api.edge(a,b,{color:SL,width:0.03,dashed:true,opacity:0.4,group:"edges"});
+        }
+      });
+
+      // threshold reference plane at y = tau-scaled height (visual cue)
+      const l1=api.bigLabel("NOTEARS  ·  threshold |W| > "+tau.toFixed(2),"#a78bfa",1.2);l1.position.set(0,2.9,0);gLabels.add(l1);
+      const l2=api.bigLabel("h(W) = tr(e^{W∘W}) − d = "+NOTEARS_H.toExponential(1),"#34d399",1.0);l2.position.set(0,2.3,2.7);gLabels.add(l2);
+
+      sceneSnap={mode,alpha,tau:+tau.toFixed(2),lambda:+lambda.toFixed(3),kdGene,
+        keptEdges:recovered,falsePos:fp,orientedEdges:recovered,acyclicityH:NOTEARS_H,recoveredEdges:tp};
+
+      return {
+        badge:"NOTEARS · τ="+tau.toFixed(2)+" · λ="+lambda.toFixed(3)+" · "+tp+" TP / "+fp+" FP",
+        formula:"min (1/2n)‖X − XWᵀ‖² + λ‖W‖₁   s.t.   h(W) = tr(e^{W∘W}) − d = 0",
+        insight:"NOTEARS turns DAG search into smooth optimization: the acyclicity penalty h(W)=0 holds exactly when W has no directed cycle. Weights recover the causal structure — OCT4→NANOG 0.72, SOX2→NANOG 0.68, OCT4→SOX2 0.51, NANOG→KLF4 0.44, KLF4→CDH1 0.38, NANOG⊣CDH1 −0.41. The lone false positive SOX2→KLF4 (0.22) sits below τ and is filtered. Raise λ to shrink weights; raise τ to prune.",
+        state:"τ="+tau.toFixed(2)+", λ="+lambda.toFixed(3)+": "+tp+" true edges + "+fp+" false positive kept. h(W)="+NOTEARS_H.toExponential(1)+" (acyclic).",
+        metrics:{recoveredEdges:tp+" / 6", orientedEdges:recovered+" edges", falsePos:""+fp, acyclicityH:NOTEARS_H.toExponential(1)},
+        focus:{center:[0,0.4,0],radius:12}
+      };
+    }
+
+    return {badge:"J04",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"j04",
+    kind:"causal-graph-representation-learning",
+    eyebrow:"Block J · Advanced GNN Theory",
+    title:"J04 · Causal graph representation learning",
+    subtitle:"A 5-gene ESC module (OCT4, SOX2, NANOG, KLF4, CDH1). Four lenses on the same data: a correlation skeleton, the PC-CPDAG equivalence class, CRISPRi interventions, and NOTEARS continuous DAG recovery.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene node.",
+    modes:[
+      {value:"correlation", label:"Correlation skeleton (undirected)"},
+      {value:"cpdag",       label:"PC → CPDAG (Markov class)"},
+      {value:"intervention",label:"Intervention (CRISPRi / Perturb-seq)"},
+      {value:"notears",     label:"NOTEARS (continuous DAG)"}
+    ],
+    params:[
+      {key:"alpha", label:"CI test α (PC)",min:0.001,max:0.10,step:0.001,value:0.01,
+       fmt:v=>v.toFixed(3),modes:["correlation","cpdag"]},
+      {key:"kdGene",label:"knockdown target (0=OCT4 1=NANOG 2=KLF4)",min:0,max:2,step:1,value:0,
+       fmt:v=>["OCT4","NANOG","KLF4"][Math.round(v)],modes:["intervention"]},
+      {key:"tau",   label:"NOTEARS edge threshold |W|",min:0.10,max:0.70,step:0.01,value:0.30,
+       fmt:v=>v.toFixed(2),modes:["notears"]},
+      {key:"lambda",label:"NOTEARS L1 sparsity λ",min:0.0,max:0.06,step:0.001,value:0.01,
+       fmt:v=>v.toFixed(3),modes:["notears"]}
+    ],
+    metrics:[
+      {key:"recoveredEdges",label:"True edges recovered",accent:"cyan"},
+      {key:"orientedEdges", label:"Edges oriented",accent:"green"},
+      {key:"falsePos",      label:"False positives",accent:"amber"},
+      {key:"acyclicityH",   label:"Acyclicity h(W)",accent:"violet"}
+    ],
+    layers:[
+      {group:"nodes", label:"Gene nodes"},
+      {group:"edges", label:"Edges / arrows"},
+      {group:"flow",  label:"Effect bars / halos"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Strict threshold (τ=0.30)",
+      on:api=>{api.setParam("tau",0.30);api.setParam("alpha",0.01);}
+    },
+    secondary:{
+      label:"do(OCT4) knockdown",
+      on:api=>{api.setMode("intervention");api.setParam("kdGene",0);}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF node · <span style="color:#a78bfa">violet</span>=NANOG / repression · <span style="color:#fbbf24">amber</span>=CDH1 / undirected · <span style="color:#34d399">green</span>=activating arrow · <span style="color:#fb7185">rose</span>=spurious / knockdown / false +.',
+    onParam(api){
+      const s=api.state;
+      api.frame([0,0.4,0], s.mode==="intervention"||s.mode==="notears"?12:11);
+    },
+    onMode(api){
+      const s=api.state;
+      api.frame([0,0.4,0], s.mode==="intervention"||s.mode==="notears"?12:11);
+    },
+    onSelect(api,d){
+      if(d.gene){
+        const g=d.gene;
+        const role={OCT4:"core TF (upstream)",SOX2:"core TF",NANOG:"collider / hub",KLF4:"mediator",CDH1:"epithelial readout (repressed)"}[g.id]||"gene";
+        api.setSelected(g.id+" · "+role+(g.kd?" · KNOCKED DOWN":""));
+      }
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const oriented=orientedCount(mode);
+      const tau=+(s.tau!=null?s.tau:0.30);
+      const lambda=+(s.lambda!=null?s.lambda:0.01);
+      // recompute NOTEARS recovery deterministically for the snapshot
+      let recovered=0, fp=0;
+      if(mode==="notears"){
+        const shrink=g=>g*(1-Math.min(0.6,lambda*8));
+        TRUE_EDGES.forEach(e=>{ if(Math.abs(shrink(e.w))>=tau) recovered++; });
+        if(Math.abs(shrink(FP_EDGE.w))>=tau) fp++;
+      }else if(mode==="cpdag"||mode==="intervention"){
+        recovered=TRUE_EDGES.length;
+      }
+      return {
+        mode,
+        alpha:+(s.alpha!=null?(+s.alpha).toFixed(3):0.01),
+        tau:+tau.toFixed(2),
+        lambda:+lambda.toFixed(3),
+        kdGene:Math.round(s.kdGene!=null?s.kdGene:0),
+        orientedEdges:oriented,
+        recoveredTrueEdges:recovered,
+        falsePositives:fp,
+        acyclicityH:mode==="notears"?NOTEARS_H:null,
+        identifiable:(mode==="intervention"||mode==="notears")
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

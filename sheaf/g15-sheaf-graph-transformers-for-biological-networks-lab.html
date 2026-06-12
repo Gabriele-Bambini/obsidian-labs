@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G15 · Sheaf graph transformers for biological networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin, no rng / clock) ──────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the 4-node GRN worked example (note §5). One source of truth.
+  // Nodes: 0 TF1, 1 TF2, 2 GeneA, 3 GeneB.  Edges e1=(0,2) e2=(1,2) e3=(1,3).
+  // ════════════════════════════════════════════════════════════════════════
+  const F={
+    names:["TF1","TF2","GeneA","GeneB"],
+    // node features h (d_feat=2)
+    h:[[0.8,0.6],[0.3,0.4],[0.7,0.9],[0.1,0.2]],
+    // restriction-map scalars (scaled-identity 2x2): R_src→e, gene side = 1
+    edges:[
+      {i:0,j:2,name:"e1",Rs:0.9, sign:+1},   // TF1 → GeneA  (activation)
+      {i:1,j:2,name:"e2",Rs:0.5, sign:+1},   // TF2 → GeneA  (activation)
+      {i:1,j:3,name:"e3",Rs:0.4, sign:-1}    // TF2 → GeneB  (repression, signed map)
+    ],
+    // sheaf Laplacian L_F scalar diagonal blocks (per the note)
+    Ldiag:[0.81,0.41,2.0,1.0],
+    // top-2 eigenvector blocks (approximate, note §5) [u1, u2] per node, d=2
+    pe:[
+      [[0.52,0.52],[0.60,-0.60]],   // TF1
+      [[0.45,0.45],[-0.40,0.40]],   // TF2
+      [[0.47,0.47],[0.30,-0.30]],   // GeneA
+      [[0.30,0.30],[-0.20,0.20]]    // GeneB
+    ],
+    sqrt2:Math.SQRT2
+  };
+
+  // 3D layout of the four nodes (TFs left, genes right) ─────────────────────
+  const POS=[
+    [-3.4, 1.7, 0],   // TF1
+    [-3.4,-1.7, 0],   // TF2
+    [ 3.0, 1.9, 0],   // GeneA
+    [ 3.0,-1.9, 0]    // GeneB
+  ];
+
+  // restriction-map-projected representation R_{src→e} h_src  (signed for repression)
+  function proj(edge,signedMode){
+    const h=F.h[edge.i];
+    const s=(signedMode&&edge.sign<0)?-1:1;          // signed map flips repressor vector
+    return [edge.Rs*h[0]*s, edge.Rs*h[1]*s];
+  }
+  function projGene(edge){ const h=F.h[edge.j]; return [h[0],h[1]]; }  // gene map = identity
+  function dot(a,b){return a[0]*b[0]+a[1]*b[1];}
+
+  // attention bias for a connected pair (inner product / sqrt(d_e)), de=2
+  function aBias(edge,scaleK,signedMode){
+    const pv=proj(edge,signedMode), gv=projGene(edge);
+    const raw=dot(pv,gv)/F.sqrt2;
+    return raw*scaleK;   // scaleK = restriction-map strength multiplier (slider)
+  }
+
+  // softmax over a row (TF/Gene attends to all 4 nodes; only edge biases nonzero)
+  function softmaxRow(srcIdx,biasRow,temp){
+    // base QK score: deterministic feature inner product / sqrt(d_k), d_k=2
+    const scores=[];
+    for(let j=0;j<4;j++){
+      const qk=dot(F.h[srcIdx],F.h[j])/F.sqrt2;
+      scores.push((qk+biasRow[j])/Math.max(0.15,temp));
+    }
+    const m=Math.max.apply(null,scores);
+    const ex=scores.map(s=>Math.exp(s-m));
+    const Z=ex.reduce((a,b)=>a+b,0);
+    return ex.map(e=>e/Z);
+  }
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const peK     = Math.max(1,Math.round(s.peK));        // 1..2  # eigenvectors used
+    const mapGain = s.mapGain;                            // 0.4..1.6 restriction-map strength
+    const temp    = s.temp;                               // 0.4..2.0 attention temperature
+    const signed  = Math.round(s.signed);                 // 0/1 signed (repression-aware) bias
+    const archIdx = Math.round(s.arch);                   // 0 SheafGNN 1 StdGT 2 SheafGT
+
+    const gGraph =api.group("graph");
+    const gMaps  =api.group("maps");
+    const gAttn  =api.group("attn");
+    const gLabels=api.group("labels");
+
+    const CY=api.col("cyan"), GR=api.col("green"), AM=api.col("amber"), VI=api.col("violet"), RO=api.col("rose");
+    const nodeCol=[CY,VI,GR,AM];   // TF1 cyan, TF2 violet, GeneA green, GeneB amber
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+
+    // draw the four nodes (shared across modes) ────────────────────────────
+    function drawNodes(rBoost){
+      for(let v=0;v<4;v++){
+        const p=POS[v];
+        api.node(p,{r:0.34*(rBoost?rBoost[v]:1),color:nodeCol[v],group:"graph",
+                    pick:{node:{id:v,name:F.names[v]}}});
+        lbl(F.names[v],nodeCol[v],1.25,p[0],p[1]+0.78,p[2]);
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE A: SheafPE  — sheaf-Laplacian eigenvector positional encoding
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="sheafpe"){
+      drawNodes();
+
+      // show the k eigenvector blocks as little oriented arrows on each node.
+      const evCol=[CY,RO];
+      let peSpread=0;
+      for(let v=0;v<4;v++){
+        const p=POS[v];
+        for(let k=0;k<peK;k++){
+          const blk=F.pe[v][k];                       // [d0,d1]
+          const ang=Math.atan2(blk[1],blk[0]);        // orientation of the 2D block
+          const mag=Math.hypot(blk[0],blk[1])*1.7;
+          const tip=[p[0]+Math.cos(ang)*mag, p[1]+Math.sin(ang)*mag, p[2]+0.4+k*0.35];
+          api.arrow(p,tip,{color:evCol[k],width:0.045,head:0.18,group:"maps"});
+          peSpread+=Math.abs(blk[0]-blk[1]);
+        }
+      }
+      // SheafPE(TF1) vs SheafPE(GeneA) similarity: cosine of u1 blocks
+      const a=F.pe[0][0], b=F.pe[2][0];
+      const cosPE=dot(a,b)/(Math.hypot(a[0],a[1])*Math.hypot(b[0],b[1]));
+      const peDim=peK*2;   // k * d
+
+      lbl("u₁ (smoothest section)","#4dd7ff",1.05,0,3.4,0);
+      if(peK>1) lbl("u₂ (contrast axis)","#fb7185",1.0,0,-3.4,0);
+      slbl("SheafPE(v) = top-"+peK+" eigvec blocks  ·  dim = "+peDim,"#9fb4cc",0.42,0,2.6,0);
+
+      api.setMetric("biasTF1A","—");
+      api.setMetric("biasTF2A","—");
+      api.setMetric("attnTF1A","—");
+      api.setMetric("model","SheafPE");
+
+      sceneSnap={mode,archIdx,peK,peDim,signed,
+                 cosPE:+cosPE.toFixed(3),peSpread:+peSpread.toFixed(3),
+                 biasTF1A:null,attnTF1A:null,biasTF2A:null};
+
+      return {
+        badge:"SheafPE · k="+peK+" eigenvectors · PE dim "+peDim,
+        formula:"SheafPE(v) = [ u₁[v·d:(v+1)·d], … , uₖ[v·d:(v+1)·d] ]   ·   L_F = U Λ Uᵀ",
+        insight:"The top-k block eigenvectors of the sheaf Laplacian L_F give each node a d-dimensional positional code. TF1 and GeneA share a strong activation edge, so their u₁ blocks point the same way (cos≈"+cosPE.toFixed(2)+"); the u₂ contrast axis separates TF1's solo signature from GeneA's shared (TF1+TF2) context. Unlike scalar Laplacian PE, each block encodes stalk orientation — activation→aligned, repression→antiparallel.",
+        state:"k="+peK+" eigenvectors → PE dim "+peDim+". cos(SheafPE TF1, GeneA)="+cosPE.toFixed(2)+". Two nodes on an activation edge get aligned blocks; repression flips them.",
+        metrics:{biasTF1A:"—",biasTF2A:"—",attnTF1A:"—",model:"SheafPE"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE B: A_bias  — restriction-map attention bias on edges
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="abias"){
+      drawNodes();
+
+      // draw each edge with thickness ∝ |A_bias|, colour by sign
+      let biasTF1A=0,biasTF2A=0,biasTF2B=0;
+      F.edges.forEach(e=>{
+        const pa=POS[e.i], pb=POS[e.j];
+        const bias=aBias(e,mapGain,signed);
+        const pos=bias>=0;
+        const w=0.04+Math.min(0.42,Math.abs(bias)*0.55);
+        const c=pos?GR:RO;
+        api.edge(pa,pb,{color:c,width:w,group:"attn",opacity:0.95});
+        // restriction-map projection vector drawn as a stub arrow off the source
+        const pv=proj(e,signed);
+        const stub=[pa[0]+pv[0]*1.3, pa[1]+pv[1]*1.3, pa[2]+0.5];
+        api.arrow(pa,stub,{color:VI,width:0.038,head:0.15,group:"maps"});
+        // bias value label at edge midpoint
+        const mx=(pa[0]+pb[0])/2, my=(pa[1]+pb[1])/2, mz=(pa[2]+pb[2])/2;
+        lbl((bias>=0?"+":"")+bias.toFixed(3),c,1.1,mx,my+0.45,mz+0.4);
+        slbl(e.name+" · R="+e.Rs.toFixed(1),"#9fb4cc",0.4,mx,my-0.35,mz+0.4);
+        if(e.name==="e1") biasTF1A=bias;
+        if(e.name==="e2") biasTF2A=bias;
+        if(e.name==="e3") biasTF2B=bias;
+      });
+      // non-edges shown as faint dashed lines with A_bias = 0
+      [[0,1],[0,3],[2,3]].forEach(pr=>{
+        api.edge(POS[pr[0]],POS[pr[1]],{color:"#1f3142",width:0.02,dashed:true,opacity:0.5,group:"attn"});
+      });
+      lbl("A_bias[i,j] = (Rⱼₕᵢ)·(Rⱼₕⱼ)/√d_e","#a78bfa",0.95,0,3.5,0);
+      slbl(signed?"signed: repression flips bias":"unsigned inner product","#fbbf24",0.42,0,-3.4,0);
+
+      const ratio=biasTF2A!==0?biasTF1A/biasTF2A:0;
+      api.setMetric("biasTF1A",biasTF1A.toFixed(3));
+      api.setMetric("biasTF2A",biasTF2A.toFixed(3));
+      api.setMetric("attnTF1A","—");
+      api.setMetric("model","A_bias");
+
+      sceneSnap={mode,archIdx,peK,signed,
+                 biasTF1A:+biasTF1A.toFixed(4),biasTF2A:+biasTF2A.toFixed(4),
+                 biasTF2B:+biasTF2B.toFixed(4),biasRatio:+ratio.toFixed(3),attnTF1A:null};
+
+      return {
+        badge:"Restriction-map bias · gain "+mapGain.toFixed(2)+(signed?" · signed":""),
+        formula:"A_bias[i,j] = (R_{i→e} h_i)ᵀ (R_{j→e} h_j) / √d_e ,   A_bias[non-edge]=0",
+        insight:"Each connected pair gets a structured bias from its restriction maps. TF1→GeneA earns "+biasTF1A.toFixed(3)+" while TF2→GeneA earns only "+biasTF2A.toFixed(3)+" — a "+ratio.toFixed(1)+"× gap that comes straight from TF1's stronger map (R=0.9 vs 0.5) and better stalk alignment. The bias equals the negative cross-term of the sheaf energy: high attention ⇔ low regulatory inconsistency. Non-edges get bias 0.",
+        state:"e1 "+biasTF1A.toFixed(3)+" · e2 "+biasTF2A.toFixed(3)+" · e3 "+biasTF2B.toFixed(3)+". TF1/TF2 ratio "+ratio.toFixed(2)+"×. Green=positive (aligned), rose=negative (antiparallel).",
+        metrics:{biasTF1A:biasTF1A.toFixed(3),biasTF2A:biasTF2A.toFixed(3),attnTF1A:"—",model:"A_bias"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE C: forward  — full sheaf-GT attention; rows over all 4 nodes
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="forward"){
+      drawNodes();
+
+      // bias rows (only edge entries nonzero), depending on architecture:
+      //  arch 0 SheafGNN : 1-hop only, no global attention
+      //  arch 1 StdGT    : global attention, NO restriction-map bias
+      //  arch 2 SheafGT  : global attention + restriction-map bias  (the lesson's model)
+      const biasMat=[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+      if(archIdx!==1){   // SheafGNN and SheafGT carry the restriction-map bias
+        F.edges.forEach(e=>{
+          const b=aBias(e,mapGain,signed);
+          biasMat[e.i][e.j]+=b; biasMat[e.j][e.i]+=b;
+        });
+      }
+      const localOnly=(archIdx===0);
+
+      function rowOf(src){
+        const br=biasMat[src].slice();
+        if(localOnly){ for(let j=0;j<4;j++){ const isN=(biasMat[src][j]!==0)||j===src; if(!isN) br[j]=-50; } }
+        return softmaxRow(src,br,temp);
+      }
+      const wTF1=rowOf(0);
+      const wTF2=rowOf(1);
+
+      // visualise TF1's attention as arrows whose width ∝ weight
+      for(let j=0;j<4;j++){
+        if(j===0) continue;
+        const w=wTF1[j];
+        if(w<0.02) continue;
+        const pa=POS[0], pb=POS[j];
+        api.arrow(pa,pb,{color:CY,width:0.03+w*0.5,head:0.16+w*0.2,group:"attn",opacity:0.92});
+      }
+      // and TF2's strongest attention target
+      let bj=0,bw=-1; for(let j=0;j<4;j++){ if(j!==1&&wTF2[j]>bw){bw=wTF2[j];bj=j;} }
+      api.arrow(POS[1],POS[bj],{color:VI,width:0.03+bw*0.45,head:0.16,group:"attn",opacity:0.9});
+
+      const attnTF1A=wTF1[2];        // TF1 → GeneA attention weight
+      const attnTF2A=wTF2[2];
+      const span=Math.max.apply(null,wTF1)-Math.min.apply(null,wTF1);
+
+      const archName=["Sheaf-GNN (MPNN)","Standard GT","Sheaf-GT"][archIdx];
+      lbl(archName,archIdx===2?"#34d399":(archIdx===1?"#fbbf24":"#a78bfa"),1.3,0,3.5,0);
+      slbl("TF1 attends → GeneA: "+(attnTF1A*100).toFixed(0)+"%","#4dd7ff",0.44,POS[0][0],POS[0][1]-0.6,0);
+      lbl("two-head softmax(QKᵀ/√d_k + A_bias)·V","#9fb4cc",0.9,0,-3.4,0);
+
+      const biasShown=archIdx===1?"—":aBias(F.edges[0],mapGain,signed).toFixed(3);
+      api.setMetric("biasTF1A",biasShown);
+      api.setMetric("biasTF2A",archIdx===1?"—":aBias(F.edges[1],mapGain,signed).toFixed(3));
+      api.setMetric("attnTF1A",(attnTF1A*100).toFixed(0)+"%");
+      api.setMetric("model",archName);
+
+      sceneSnap={mode,archIdx,peK,signed,temp:+temp.toFixed(3),mapGain:+mapGain.toFixed(3),
+                 attnTF1A:+attnTF1A.toFixed(4),attnTF2A:+attnTF2A.toFixed(4),
+                 attnSpan:+span.toFixed(4),
+                 biasTF1A:archIdx===1?null:+aBias(F.edges[0],mapGain,signed).toFixed(4)};
+
+      return {
+        badge:"Forward pass · "+archName+" · T="+temp.toFixed(2),
+        formula:"AttnWeight = softmax( Q Kᵀ/√d_k + A_bias ) ;   h¹ = AttnWeight·V + h⁰",
+        insight:archIdx===0
+          ? "Sheaf-GNN (MPNN) only passes messages to 1-hop neighbours — TF1 reaches GeneA but never GeneB's regulon in a single layer, and deep stacks oversmooth. Attention is forced local."
+          : archIdx===1
+          ? "Standard GT attends globally (every pair) but is edge-blind: with NO restriction-map bias, TF1's attention to GeneA ("+(attnTF1A*100).toFixed(0)+"%) is driven only by raw feature similarity — it cannot tell an activation edge from no edge."
+          : "Sheaf-GT keeps global attention AND injects A_bias: TF1 attends "+(attnTF1A*100).toFixed(0)+"% to GeneA, lifted by its strong restriction map, while still reaching distant cascade nodes in one layer. One transformer layer captures the full cascade without oversmoothing.",
+        state:"TF1→GeneA "+(attnTF1A*100).toFixed(0)+"% · TF2→GeneA "+(attnTF2A*100).toFixed(0)+"% · row span "+(span*100).toFixed(0)+"pp. "+archName+".",
+        metrics:{biasTF1A:biasShown,
+                 biasTF2A:archIdx===1?"—":aBias(F.edges[1],mapGain,signed).toFixed(3),
+                 attnTF1A:(attnTF1A*100).toFixed(0)+"%",model:archName},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    return {badge:"G15",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g15",
+    kind:"sheaf-graph-transformer",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G15 · Sheaf graph transformers for biological networks",
+    subtitle:"Inject sheaf structure into global attention. Three views: SheafPE positional encoding, restriction-map attention bias, and the full sheaf-GT forward pass vs MPNN / standard GT.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge, or arrow.",
+    modes:[
+      {value:"sheafpe",  label:"SheafPE (eigenvector encoding)"},
+      {value:"abias",    label:"Restriction-map attention bias"},
+      {value:"forward",  label:"Forward pass (Sheaf-GT vs GNN vs GT)"}
+    ],
+    params:[
+      {key:"peK",    label:"# eigenvectors k (PE dim = k·d)",min:1,max:2,step:1,value:2,
+       fmt:v=>Math.round(v)+" (dim "+(Math.round(v)*2)+")",modes:["sheafpe"]},
+      {key:"mapGain",label:"restriction-map strength",min:0.4,max:1.6,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)+"×",modes:["abias","forward"]},
+      {key:"temp",   label:"attention temperature T",min:0.4,max:2.0,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2),modes:["forward"]},
+      {key:"signed", label:"signed bias (0=unsigned 1=repression-aware)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"unsigned":"signed",modes:["abias","forward"]},
+      {key:"arch",   label:"architecture (0=GNN 1=stdGT 2=SheafGT)",min:0,max:2,step:1,value:2,
+       fmt:v=>["Sheaf-GNN","std GT","Sheaf-GT"][Math.round(v)],modes:["forward"]}
+    ],
+    metrics:[
+      {key:"biasTF1A", label:"A_bias TF1→GeneA",accent:"green"},
+      {key:"biasTF2A", label:"A_bias TF2→GeneA",accent:"amber"},
+      {key:"attnTF1A", label:"attn TF1→GeneA",  accent:"cyan"},
+      {key:"model",    label:"component",        accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"GRN nodes"},
+      {group:"maps",   label:"Restriction maps / PE"},
+      {group:"attn",   label:"Attention / bias"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Sheaf-GT",
+      on:api=>{api.setMode("forward");api.setParam("arch",2);}
+    },
+    secondary:{
+      label:"Standard GT",
+      on:api=>{api.setMode("forward");api.setParam("arch",1);}
+    },
+    defaultCam:{theta:-0.35,phi:0.5,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF1 / attention · <span style="color:#a78bfa">violet</span>=TF2 / restriction map · <span style="color:#34d399">green</span>=GeneA / activation bias · <span style="color:#fbbf24">amber</span>=GeneB · <span style="color:#fb7185">rose</span>=repression / contrast axis.',
+    onParam(api){ api.frame([0,0,0],12); },
+    onSelect(api,d){
+      if(d.node) api.setSelected("Node "+d.node.id+" · "+d.node.name);
+    },
+    build,
+    snapshot(s){
+      const peK=Math.round(s.peK), signed=Math.round(s.signed), archIdx=Math.round(s.arch);
+      const mapGain=s.mapGain, temp=s.temp;
+      const e1=F.edges[0], e2=F.edges[1], e3=F.edges[2];
+      const b1=aBias(e1,mapGain,signed), b2=aBias(e2,mapGain,signed), b3=aBias(e3,mapGain,signed);
+      return {
+        mode:s.mode,
+        archIdx, peK, peDim:peK*2, signed,
+        mapGain:+mapGain.toFixed(3), temp:+temp.toFixed(3),
+        biasTF1A:+b1.toFixed(4), biasTF2A:+b2.toFixed(4), biasTF2B:+b3.toFixed(4),
+        biasRatio:b2!==0?+(b1/b2).toFixed(3):0,
+        usesGlobalAttention:archIdx!==0,
+        usesRestrictionBias:archIdx!==1
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

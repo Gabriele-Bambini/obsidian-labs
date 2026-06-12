@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure G09 — Heterogeneous stalks, signed restriction maps, one consistency energy</title>
+<desc id="d">Four-panel captioned figure: Heterogeneous stalks, signed restriction maps, one consistency energy</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE G09 · BLOCK G · SHEAF GNN FOR BIOLOGY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="19" font-weight="700">Heterogeneous stalks, signed restriction maps, one consistency energy</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The heterogeneous TF→gene sheaf</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TF stalk</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">ℝ³ expr·activity·motif</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">gene stalk</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">ℝ² expr·ATAC</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edge stalk</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">ℝ² (d_e = 2)</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">e1+ e2− e3+</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Restriction maps from biology</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">R_t→e = sign·motif·[I₂|0]</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">R_g→e = [[1, atac],[0,1]]</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">e1 motif (+)</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">+0.9</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">e2 motif (−)</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">−0.5</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Coboundary energy per edge</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">Energy ‖δx‖² is largest on e2: a weak repressor (TF2)</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">aimed at a highly-expressed gene (GeneA). The sheaf</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">correctly flags this clash.</text>
+<rect x="56" y="411.76" width="12" height="12.24" rx="2" fill="#4dd7ff"/>
+<text x="62" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">e1</text>
+<rect x="74" y="360" width="12" height="64" rx="2" fill="#fb7185"/>
+<text x="80" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">e2</text>
+<rect x="92" y="423.74" width="12" height="0.26" rx="2" fill="#34d399"/>
+<text x="98" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">e3</text>
+<line x1="56" y1="406.54" x2="110" y2="406.54" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Total energy + gradient</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">total E</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">4.38</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">(L_F x)_GA</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">[-2.51, -2.56]</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">loss</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">L_link + λ·L_sheaf</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">λ typical</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">0.05</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure G09. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">Section-5 </text>
+<text x="258.36" y="538" fill="#c7d2dd" font-size="13">GRN: </text>
+<text x="302.29" y="538" fill="#c7d2dd" font-size="13">TF1, </text>
+<text x="345.01" y="538" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="379.66" y="538" fill="#c7d2dd" font-size="13">(ℝ³) </text>
+<text x="417.55" y="538" fill="#c7d2dd" font-size="13">regulate </text>
+<text x="490.09" y="538" fill="#c7d2dd" font-size="13">GeneA, </text>
+<text x="548.92" y="538" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="599.7" y="538" fill="#c7d2dd" font-size="13">(ℝ²); </text>
+<text x="645.64" y="538" fill="#c7d2dd" font-size="13">edge </text>
+<text x="685.94" y="538" fill="#c7d2dd" font-size="13">stalk </text>
+<text x="734.3" y="538" fill="#c7d2dd" font-size="13">d_e=2. </text>
+<text x="790.72" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a)</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">Heterogeneous </text>
+<text x="154.05" y="559" fill="#c7d2dd" font-size="13">bipartite </text>
+<text x="234.65" y="559" fill="#c7d2dd" font-size="13">sheaf, </text>
+<text x="291.07" y="559" fill="#c7d2dd" font-size="13">2 </text>
+<text x="307.19" y="559" fill="#c7d2dd" font-size="13">activation </text>
+<text x="395.85" y="559" fill="#c7d2dd" font-size="13">+ </text>
+<text x="411.97" y="559" fill="#c7d2dd" font-size="13">1 </text>
+<text x="428.09" y="559" fill="#c7d2dd" font-size="13">repression </text>
+<text x="516.75" y="559" fill="#c7d2dd" font-size="13">edge, </text>
+<text x="565.11" y="559" fill="#c7d2dd" font-size="13">non-square </text>
+<text x="653.77" y="559" fill="#c7d2dd" font-size="13">maps. </text>
+<text x="702.13" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="735.66" y="559" fill="#c7d2dd" font-size="13">Maps </text>
+<text x="777.17" y="559" fill="#c7d2dd" font-size="13">init </text>
+<text x="817.47" y="559" fill="#c7d2dd" font-size="13">from</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">motif </text>
+<text x="88.36" y="580" fill="#c7d2dd" font-size="13">scores </text>
+<text x="144.78" y="580" fill="#c7d2dd" font-size="13">with </text>
+<text x="185.08" y="580" fill="#c7d2dd" font-size="13">sign: </text>
+<text x="233.44" y="580" fill="#c7d2dd" font-size="13">+0.9 </text>
+<text x="273.74" y="580" fill="#c7d2dd" font-size="13">on </text>
+<text x="297.92" y="580" fill="#c7d2dd" font-size="13">e1, </text>
+<text x="330.16" y="580" fill="#c7d2dd" font-size="13">−0.5 </text>
+<text x="370.46" y="580" fill="#c7d2dd" font-size="13">on </text>
+<text x="394.64" y="580" fill="#c7d2dd" font-size="13">repressor </text>
+<text x="475.24" y="580" fill="#c7d2dd" font-size="13">e2. </text>
+<text x="507.48" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="541.01" y="580" fill="#c7d2dd" font-size="13">Energy </text>
+<text x="598.64" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="622.82" y="580" fill="#c7d2dd" font-size="13">largest </text>
+<text x="687.3" y="580" fill="#c7d2dd" font-size="13">on </text>
+<text x="711.48" y="580" fill="#c7d2dd" font-size="13">e2 </text>
+<text x="735.66" y="580" fill="#c7d2dd" font-size="13">(3.67): </text>
+<text x="800.14" y="580" fill="#c7d2dd" font-size="13">weak</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">repressor </text>
+<text x="120.6" y="601" fill="#c7d2dd" font-size="13">vs </text>
+<text x="144.78" y="601" fill="#c7d2dd" font-size="13">high-expression </text>
+<text x="273.74" y="601" fill="#c7d2dd" font-size="13">gene; </text>
+<text x="322.1" y="601" fill="#c7d2dd" font-size="13">e1=0.70, </text>
+<text x="394.64" y="601" fill="#c7d2dd" font-size="13">e3=0.015. </text>
+<text x="475.24" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="508.77" y="601" fill="#c7d2dd" font-size="13">Total </text>
+<text x="558.34" y="601" fill="#c7d2dd" font-size="13">energy </text>
+<text x="614.76" y="601" fill="#c7d2dd" font-size="13">4.38; </text>
+<text x="663.12" y="601" fill="#c7d2dd" font-size="13">training </text>
+<text x="735.66" y="601" fill="#c7d2dd" font-size="13">minimises </text>
+<text x="816.26" y="601" fill="#c7d2dd" font-size="13">L_link </text>
+<text x="873.89" y="601" fill="#c7d2dd" font-size="13">+</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">λ·L_sheaf.</text>
+</svg>

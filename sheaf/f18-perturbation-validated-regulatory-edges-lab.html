@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F18 · Perturbation-validated regulatory edges</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no RNG, no clock) ────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — GATA1-KO in K562 erythroid progenitors (Section 5 worked example)
+  // ════════════════════════════════════════════════════════════════════════
+  const F={
+    koCells:580, ctrlCells:1240,
+    gata1SelfLFC:-2.34,                 // strong knockdown
+    degDown:180, degUp:95,             // activation / repression target counts at delta=1.0
+    precisionChip:0.69, recallChip:0.067, intersectChip:124,
+    coexprPrecision:0.20,              // co-expression precision vs perturbation GT (mid of 0.15-0.25)
+    chipPrecision:0.45,                // ChIP-seq precision vs perturbation evidence (~delta=1.0 row)
+    // top activation targets (DEG_down, LFC<-1) — note Step 3
+    actTargets:[
+      {g:"HBB",   lfc:-3.21},
+      {g:"HBA1",  lfc:-2.87},
+      {g:"GYPA",  lfc:-2.54},
+      {g:"ANK1",  lfc:-1.98},
+      {g:"ALAS2", lfc:-1.65},
+      {g:"KLF1",  lfc:-1.44}           // itself a TF — indirect cascade
+    ],
+    // top repression targets (DEG_up, LFC>+1) — note Step 5
+    repTargets:[
+      {g:"MPO",   lfc: 2.11},
+      {g:"CEBPA", lfc: 1.84},
+      {g:"CD14",  lfc: 1.67},
+      {g:"LYZ",   lfc: 1.43}
+    ],
+    // LFC-threshold sweep table (Section 4.3) — degMid is a single representative count
+    sweep:[
+      {delta:0.25, deg:1400, prec:0.22, rec:0.78},
+      {delta:0.50, deg:550,  prec:0.31, rec:0.61},
+      {delta:1.00, deg:200,  prec:0.48, rec:0.41},
+      {delta:1.50, deg:55,   prec:0.62, rec:0.22},
+      {delta:2.00, deg:18,   prec:0.73, rec:0.09}
+    ],
+    // sign-aware validation of 4 predicted edges (Section 5 Step 6)
+    signEdges:[
+      {tgt:"HBB",  pred:"+1", lfc:-3.21, ok:true,  why:"KO drops HBB → GATA1 activates"},
+      {tgt:"CEBPA",pred:"−1", lfc: 1.84, ok:true,  why:"KO raises CEBPA → GATA1 represses"},
+      {tgt:"MPO",  pred:"+1", lfc: 2.11, ok:false, why:"KO raises MPO → it is repressed, not activated"},
+      {tgt:"TP53", pred:"·",  lfc: 0.00, ok:true,  why:"not in DEG set → correct non-edge"}
+    ]
+  };
+
+  // interpolate precision/recall at an arbitrary delta from the sweep table
+  function sweepAt(delta){
+    const t=F.sweep;
+    if(delta<=t[0].delta) return {prec:t[0].prec,rec:t[0].rec,deg:t[0].deg};
+    if(delta>=t[t.length-1].delta) return {prec:t[t.length-1].prec,rec:t[t.length-1].rec,deg:t[t.length-1].deg};
+    for(let i=0;i<t.length-1;i++){
+      if(delta>=t[i].delta&&delta<=t[i+1].delta){
+        const f=(delta-t[i].delta)/(t[i+1].delta-t[i].delta);
+        return {
+          prec:t[i].prec+f*(t[i+1].prec-t[i].prec),
+          rec :t[i].rec +f*(t[i+1].rec -t[i].rec),
+          deg :Math.round(t[i].deg+f*(t[i+1].deg-t[i].deg))
+        };
+      }
+    }
+    return {prec:t[2].prec,rec:t[2].rec,deg:t[2].deg};
+  }
+
+  // DEG membership of a gene given its |LFC| under threshold delta & FDR gate
+  // (fdrGate/exprGate are scene knobs that gate weak/unexpressed genes)
+  function isDEG(absLfc,delta,fdrOk,exprOk){ return absLfc>delta && fdrOk && exprOk; }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const delta=+s.delta;                    // LFC threshold
+    const alpha=+s.alpha;                     // FDR threshold (display / gate strictness)
+    const eps=+s.eps;                          // min-expression filter
+    const koEff=+s.koEff;                      // KO efficiency 0..1 (scales observed |LFC|)
+
+    const gMain =api.group("graph");
+    const gBars =api.group("bars");
+    const gAux  =api.group("aux");
+    const gLab  =api.group("labels");
+
+    function L(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLab.add(sp);}
+    function Ls(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLab.add(sp);}
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 1: perturbation — the GATA1-KO scene (activation DOWN / repression UP)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="perturbation"){
+      // central TF (GATA1), knocked out — drawn dim/cracked
+      const tfCol=koEff>0.5?SL:CY;
+      api.node([0,0,0],{r:0.78,color:tfCol,group:"graph",label:"GATA1 (KO)",labelColor:CY,
+        pick:{tf:{name:"GATA1",selfLFC:F.gata1SelfLFC,koEff}}});
+      L("self LFC "+(F.gata1SelfLFC*koEff).toFixed(2),CY,1.1,0,-1.35,0);
+
+      // activation targets — left arc, pushed DOWN (LFC<0)
+      const act=F.actTargets, rep=F.repTargets;
+      const exprOk=true; // top targets are well-expressed (> eps) by construction
+      let nDeg=0, nVal=0;
+      act.forEach((d,i)=>{
+        const lfc=d.lfc*koEff;
+        const ang=Math.PI*0.62 + (i/(act.length-1))*Math.PI*0.55;  // left fan
+        const R=4.6;
+        const px=Math.cos(ang)*R, pz=Math.sin(ang)*R;
+        const fdrOk=Math.abs(lfc)>0.6;                  // strong effects clear alpha
+        const deg=isDEG(Math.abs(lfc),delta,fdrOk,exprOk);
+        if(deg)nDeg++;
+        const yDrop=lfc*0.85;                             // negative → sinks below plane
+        const col=deg?GR:SL;
+        api.node([px,yDrop,pz],{r:deg?0.34:0.24,color:col,group:"graph",
+          pick:{target:{g:d.g,lfc:+lfc.toFixed(2),kind:"activation",deg}}});
+        // signed edge GATA1→target (down arrow = activation, KO lowers it)
+        api.edge([0,0,0],[px,yDrop,pz],{color:deg?GR:"#26323f",width:deg?0.05:0.03,
+          opacity:deg?0.9:0.4,group:"graph"});
+        L(d.g,deg?GR:SL,deg?1.05:0.9,px,yDrop+0.55,pz);
+        L((lfc).toFixed(1),deg?GR:SL,0.95,px,yDrop-0.6,pz);
+        if(deg){
+          const cone=new T.Mesh(new T.ConeGeometry(0.12,0.4,10),new T.MeshBasicMaterial({color:GR}));
+          cone.rotation.x=Math.PI; cone.position.set(px,yDrop+1.0,pz); gAux.add(cone);
+        }
+      });
+
+      // repression targets — right arc, pushed UP (LFC>0)
+      rep.forEach((d,i)=>{
+        const lfc=d.lfc*koEff;
+        const ang=-Math.PI*0.06 - (i/(rep.length-1))*Math.PI*0.42;  // right fan
+        const R=4.6;
+        const px=Math.cos(ang)*R, pz=Math.sin(ang)*R;
+        const fdrOk=Math.abs(lfc)>0.6;
+        const deg=isDEG(Math.abs(lfc),delta,fdrOk,exprOk);
+        const yUp=lfc*0.85;                               // positive → rises above plane
+        const col=deg?RO:SL;
+        api.node([px,yUp,pz],{r:deg?0.34:0.24,color:col,group:"graph",
+          pick:{target:{g:d.g,lfc:+lfc.toFixed(2),kind:"repression",deg}}});
+        api.edge([0,0,0],[px,yUp,pz],{color:deg?RO:"#3a2630",width:deg?0.05:0.03,
+          opacity:deg?0.9:0.4,group:"graph"});
+        L(d.g,deg?RO:SL,deg?1.05:0.9,px,yUp+0.55,pz);
+        L("+"+(lfc).toFixed(1),deg?RO:SL,0.95,px,yUp-0.6,pz);
+        if(deg){
+          const cone=new T.Mesh(new T.ConeGeometry(0.12,0.4,10),new T.MeshBasicMaterial({color:RO}));
+          cone.position.set(px,yUp-1.0,pz); gAux.add(cone);
+        }
+      });
+
+      // LFC=0 baseline plane and the ±delta gates
+      api.plane([0,0,1.0],{w:11,h:9,color:"#16263a",opacity:0.10,group:"aux"});
+      [ -delta*0.85, +delta*0.85 ].forEach((gy,gi)=>{
+        api.plane([0,gy,1.0],{w:10.6,h:8.6,color:AM,opacity:0.07,group:"aux"});
+      });
+      L("LFC = 0",SL,0.95,5.6,0.05,1.0);
+      L("−δ ("+(-delta).toFixed(1)+")",AM,0.95,5.6,-delta*0.85,1.0);
+      L("+δ ("+(delta).toFixed(1)+")",AM,0.95,5.6,delta*0.85,1.0);
+      L("activation targets · go DOWN",GR,1.15,-3.3,3.4,1.0);
+      L("repression targets · go UP",RO,1.15,3.0,3.4,1.0);
+
+      // count validated activation/repression DEGs among the displayed top targets
+      const actDeg=act.filter(d=>isDEG(Math.abs(d.lfc*koEff),delta,Math.abs(d.lfc*koEff)>0.6,true)).length;
+      const repDeg=rep.filter(d=>isDEG(Math.abs(d.lfc*koEff),delta,Math.abs(d.lfc*koEff)>0.6,true)).length;
+      // scale the full-genome DEG counts by ko efficiency (cruder genes drop out)
+      const degDownScaled=Math.round(F.degDown*Math.min(1,koEff/0.95)*(delta<=1.0?1:(2.0-delta)));
+      const degUpScaled=Math.round(F.degUp*Math.min(1,koEff/0.95)*(delta<=1.0?1:(2.0-delta)));
+
+      sceneSnap={mode,delta,alpha,eps,koEff:+koEff.toFixed(2),
+        degDown:Math.max(0,degDownScaled),degUp:Math.max(0,degUpScaled),
+        precision:F.precisionChip,topActValidated:actDeg,topRepValidated:repDeg};
+
+      return {
+        badge:"GATA1-KO · "+Math.max(0,degDownScaled)+" act / "+Math.max(0,degUpScaled)+" rep DEGs",
+        formula:"edge f→g validated ⇔ |LFC(g|KO f)| > δ  AND  FDR < α  AND  mean_expr(g) > ε",
+        insight:"Knock out GATA1 and read the response. Activation targets (green) collapse below the LFC=0 plane — HBB −3.21, HBA1 −2.87, GYPA −2.54. Repression targets (rose) rise above it — MPO +2.11, CEBPA +1.84. The sign of the change IS the sign of the edge: a gene that drops was being activated. Raise δ and weak-effect targets fall back below the amber gate and stop counting.",
+        state:"KO efficiency "+(koEff*100).toFixed(0)+"% → GATA1 self LFC "+(F.gata1SelfLFC*koEff).toFixed(2)+". At δ="+delta.toFixed(2)+": "+Math.max(0,degDownScaled)+" activation + "+Math.max(0,degUpScaled)+" repression DEGs. Top targets passing: "+actDeg+" act, "+repDeg+" rep.",
+        metrics:{
+          degDown:""+Math.max(0,degDownScaled),
+          degUp:""+Math.max(0,degUpScaled),
+          precision:F.precisionChip.toFixed(2),
+          recall:F.recallChip.toFixed(3)
+        },
+        focus:{center:[0,0.5,1.0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 2: threshold — sweep δ, precision↑ / recall↓ tradeoff (Sec 4.3 table)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="threshold"){
+      const xS=2.0, xOff=-4.2, yOff=-1.8, yS=4.6;
+      // axes
+      api.edge([xOff,yOff,0],[xOff+ (F.sweep.length-1)*xS+1.2,yOff,0],{color:"#2a3d52",width:0.03,group:"aux"});
+      api.edge([xOff,yOff,0],[xOff,yOff+yS+0.4,0],{color:"#2a3d52",width:0.03,group:"aux"});
+      L("evidence quality →",SL,1.0,xOff+2.4,yOff-0.7,0);
+      L("0",SL,0.9,xOff-0.5,yOff,0);
+      L("1",SL,0.9,xOff-0.5,yOff+yS,0);
+
+      // precision curve (green, rises) and recall curve (cyan, falls)
+      const precPts=[], recPts=[];
+      F.sweep.forEach((r,i)=>{
+        const x=xOff+i*xS;
+        precPts.push(new T.Vector3(x,yOff+r.prec*yS,0));
+        recPts.push(new T.Vector3(x,yOff+r.rec*yS,0));
+        L("δ="+r.delta.toFixed(2),SL,0.95,x,yOff-0.45,0);
+      });
+      gAux.add(new T.Line(new T.BufferGeometry().setFromPoints(precPts),new T.LineBasicMaterial({color:0x34d399})));
+      gAux.add(new T.Line(new T.BufferGeometry().setFromPoints(recPts),new T.LineBasicMaterial({color:0x4dd7ff})));
+      F.sweep.forEach((r,i)=>{
+        const x=xOff+i*xS;
+        api.node([x,yOff+r.prec*yS,0],{r:0.16,color:GR,halo:false,group:"graph",
+          pick:{point:{kind:"precision",delta:r.delta,val:r.prec}}});
+        api.node([x,yOff+r.rec*yS,0],{r:0.16,color:CY,halo:false,group:"graph",
+          pick:{point:{kind:"recall",delta:r.delta,val:r.rec}}});
+      });
+
+      // current δ marker — vertical bar + the live precision/recall readout
+      const cur=sweepAt(delta);
+      const cx=xOff + ((delta-F.sweep[0].delta)/(F.sweep[F.sweep.length-1].delta-F.sweep[0].delta))*((F.sweep.length-1)*xS);
+      api.edge([cx,yOff,0],[cx,yOff+yS+0.2,0],{color:VI,width:0.04,opacity:0.8,group:"aux"});
+      api.node([cx,yOff+cur.prec*yS,0],{r:0.26,color:GR,group:"graph",
+        pick:{marker:{kind:"precision",delta:+delta.toFixed(2),val:+cur.prec.toFixed(2)}}});
+      api.node([cx,yOff+cur.rec*yS,0],{r:0.26,color:CY,group:"graph",
+        pick:{marker:{kind:"recall",delta:+delta.toFixed(2),val:+cur.rec.toFixed(2)}}});
+      L("δ = "+delta.toFixed(2),VI,1.25,cx,yOff+yS+0.7,0);
+      L("precision "+cur.prec.toFixed(2),GR,1.1,cx+1.6,yOff+cur.prec*yS,0);
+      L("recall "+cur.rec.toFixed(2),CY,1.1,cx+1.6,yOff+cur.rec*yS,0);
+      L("DEGs ≈ "+cur.deg,AM,1.1,cx+1.6,yOff+yS+0.2,0);
+
+      sceneSnap={mode,delta,alpha,eps,koEff:+koEff.toFixed(2),
+        precision:+cur.prec.toFixed(3),recall:+cur.rec.toFixed(3),degCount:cur.deg};
+
+      return {
+        badge:"LFC sweep · δ="+delta.toFixed(2)+" · prec "+cur.prec.toFixed(2)+" / rec "+cur.rec.toFixed(2),
+        formula:"DEG(f) = { g : |LFC| > δ  ∧  FDR < α  ∧  mean_expr > ε }",
+        insight:"The LFC threshold δ is the master dial. Low δ (0.25) keeps ~1400 DEGs at precision 0.22 but recall 0.78 vs ChIP — many noisy edges. High δ (2.0) keeps ~18 DEGs at precision 0.73, recall 0.09 — only the strongest, surest targets. δ=1.0 (2-fold) is the standard compromise: precision 0.48, recall 0.41. Higher precision always costs recall.",
+        state:"At δ="+delta.toFixed(2)+": precision "+cur.prec.toFixed(2)+", recall "+cur.rec.toFixed(2)+", ≈ "+cur.deg+" DEGs. Green curve = precision (rises with δ), cyan = recall (falls).",
+        metrics:{
+          degDown:""+cur.deg,
+          degUp:"—",
+          precision:cur.prec.toFixed(2),
+          recall:cur.rec.toFixed(2)
+        },
+        focus:{center:[1.0,0.5,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 3: evidence — three regimes ranked by precision (Sec 1 + Diag 4)
+    // co-expression  <  ChIP-seq  <  perturbation
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="evidence"){
+      const regimes=[
+        {name:"co-expression", prec:F.coexprPrecision, col:AM, sub:"covary across cells"},
+        {name:"ChIP-seq",      prec:F.chipPrecision,    col:VI, sub:"TF physically binds"},
+        {name:"perturbation",  prec:F.precisionChip,    col:GR, sub:"KO → causal response"}
+      ];
+      const xPos=[-4.0,0,4.0];
+      regimes.forEach((r,i)=>{
+        const x=xPos[i];
+        const h=0.2+r.prec*6.0;
+        const active=(i===2); // perturbation is the gold standard the lesson argues for
+        const bar=new T.Mesh(new T.BoxGeometry(1.9,h,1.6),
+          api.mat(r.col,{emissive:active?0.85:0.25}));
+        bar.material.transparent=!active; bar.material.opacity=active?1.0:0.55;
+        bar.position.set(x,h/2-1.6,0);
+        gBars.add(bar);
+        api.pick(bar,{regime:{name:r.name,prec:r.prec,active}});
+        L((r.prec*100).toFixed(0)+"%",r.col,1.7,x,h-1.0,0);
+        L(r.name,r.col,1.2,x,-2.1,0);
+        Ls(r.sub,SL,0.42,x,-2.7,0);
+      });
+      // baseline
+      api.edge([-6,-1.6,0],[6,-1.6,0],{color:"#1e3046",width:0.025,group:"aux"});
+      // ascending-evidence arrow over the bars
+      api.arrow([-4.4,4.6,0],[4.4,4.6,0],{color:GR,width:0.04,head:0.4,group:"aux",label:"stronger evidence",labelColor:GR});
+      L("precision vs ground truth",SL,1.05,0,-3.4,0);
+
+      const gap=F.precisionChip-F.coexprPrecision;
+      sceneSnap={mode,delta,alpha,eps,koEff:+koEff.toFixed(2),
+        precision:F.precisionChip,coexprPrecision:F.coexprPrecision,
+        precisionGap:+gap.toFixed(3)};
+
+      return {
+        badge:"Evidence regimes · perturbation "+(F.precisionChip*100).toFixed(0)+"% vs co-expr "+(F.coexprPrecision*100).toFixed(0)+"%",
+        formula:"Precision(f) = |{(f,g) ∈ G_pred ∧ g ∈ DEG(f)}| / |{(f,g) ∈ G_pred}|",
+        insight:"Three generations of edge evidence, ranked by precision. Co-expression (amber, ~0.20) is cheap but weak — two genes can covary from shared upstream activation, batch, or chance. ChIP-seq (violet, ~0.45) proves binding but not function — a TF can bind without activating. Perturbation (green, ~0.69) is causal: remove the TF, measure who responds. The "+(((F.precisionChip-F.coexprPrecision)*100).toFixed(0))+"pp gap is exactly why Perturb-seq became the gold standard.",
+        state:"Precision vs ground truth — co-expression "+(F.coexprPrecision*100).toFixed(0)+"%, ChIP "+(F.chipPrecision*100).toFixed(0)+"%, perturbation "+(F.precisionChip*100).toFixed(0)+"%. Perturbation supersedes co-expression by "+((gap*100).toFixed(0))+"pp.",
+        metrics:{
+          degDown:""+F.degDown,
+          degUp:""+F.degUp,
+          precision:F.precisionChip.toFixed(2),
+          recall:F.recallChip.toFixed(3)
+        },
+        focus:{center:[0,1.0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 4: sign — sign-aware validation of 4 predicted edges (Step 6)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="sign"){
+      api.node([0,0,0],{r:0.7,color:CY,group:"graph",label:"GATA1",labelColor:CY,
+        pick:{tf:{name:"GATA1"}}});
+      const edges=F.signEdges;
+      const n=edges.length;
+      let nOk=0;
+      edges.forEach((e,i)=>{
+        const ang=Math.PI*0.5 + (i-(n-1)/2)*0.62;
+        const R=4.4;
+        const px=Math.cos(ang)*R, pz=Math.sin(ang)*R;
+        const lfc=e.lfc*koEff;
+        const isNonEdge=(e.pred==="·");
+        // node color: green=correctly validated, rose=wrong sign / invalidated, slate=non-edge
+        let col= e.ok ? (isNonEdge?SL:GR) : RO;
+        const py= isNonEdge?0 : lfc*0.7;
+        api.node([px,py,pz],{r:isNonEdge?0.28:0.36,color:col,group:"graph",
+          pick:{edge:{tgt:e.tgt,pred:e.pred,lfc:+lfc.toFixed(2),ok:e.ok,why:e.why}}});
+        // predicted edge: solid if validated, dashed if invalidated/non-edge
+        api.edge([0,0,0],[px,py,pz],{color:col,width:e.ok&&!isNonEdge?0.05:0.03,
+          dashed:!e.ok||isNonEdge,opacity:0.9,group:"graph"});
+        L(e.tgt,col,1.1,px,py+0.6,pz);
+        Ls("pred "+e.pred,col,0.42,px,py+0.2,pz);
+        L(isNonEdge?"LFC 0":(lfc>0?"+":"")+lfc.toFixed(1),col,0.95,px,py-0.6,pz);
+        // verdict tick / cross above node
+        const mk=new T.Mesh(
+          e.ok?new T.SphereGeometry(0.13,12,10):new T.BoxGeometry(0.22,0.22,0.22),
+          new T.MeshBasicMaterial({color:e.ok?GR:RO}));
+        mk.position.set(px,py+1.0,pz); gAux.add(mk);
+        if(e.ok)nOk++;
+      });
+      api.plane([0,0,1.2],{w:11,h:9,color:"#16263a",opacity:0.08,group:"aux"});
+      L("sign(edge) must match sign(−LFC)",VI,1.2,0,3.6,1.2);
+      L("solid = validated · dashed = wrong sign / non-edge",SL,1.0,0,-3.5,1.2);
+
+      sceneSnap={mode,delta,alpha,eps,koEff:+koEff.toFixed(2),
+        edgesChecked:n,edgesCorrect:nOk,signAccuracy:+(nOk/n).toFixed(3)};
+
+      return {
+        badge:"Sign-aware validation · "+nOk+"/"+n+" edges correct",
+        formula:"sign(f→g)=+1 ⇒ LFC<0 (activation) ;  sign=−1 ⇒ LFC>0 (repression)",
+        insight:"Existence is not enough — the edge sign must match the response direction. GATA1→HBB predicted +1: HBB drops, validated. GATA1→CEBPA predicted −1: CEBPA rises, validated. GATA1→MPO predicted +1 (activation): but MPO RISES on KO, so GATA1 represses it — the sign is wrong, the edge is invalidated. GATA1→TP53 has no edge and TP53 is not in the DEG set — a correct non-edge. A GRN that ignores sign conflates activation with repression.",
+        state:nOk+"/"+n+" predicted edges pass sign-aware validation. MPO fails: predicted activation (+1) but KO raises it (LFC "+(2.11*koEff).toFixed(1)+") — GATA1 represses MPO.",
+        metrics:{
+          degDown:""+nOk,
+          degUp:""+(n-nOk),
+          precision:(nOk/n).toFixed(2),
+          recall:"—"
+        },
+        focus:{center:[0,0.5,1.2],radius:12}
+      };
+    }
+
+    return {badge:"F18",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f18",
+    kind:"perturbation-validated-edges",
+    eyebrow:"Block F · GRN Inference",
+    title:"F18 · Perturbation-validated regulatory edges",
+    subtitle:"Knock out a TF, read the transcriptome, and turn differential expression into causal, sign-aware edges. Worked on GATA1-KO in K562 erythroid progenitors.",
+    selectedLabel:"Element",
+    selectedHint:"Click the TF, a target gene, a bar, or a curve marker.",
+    modes:[
+      {value:"perturbation", label:"Perturbation (GATA1-KO scene)"},
+      {value:"threshold",    label:"LFC threshold (precision / recall)"},
+      {value:"evidence",     label:"Evidence regimes (co-expr / ChIP / perturb)"},
+      {value:"sign",         label:"Sign-aware edge validation"}
+    ],
+    params:[
+      {key:"delta", label:"δ — LFC threshold",min:0.25,max:2.0,step:0.05,value:1.0,
+       fmt:v=>(+v).toFixed(2),modes:["perturbation","threshold"]},
+      {key:"alpha", label:"α — FDR threshold",min:0.01,max:0.20,step:0.01,value:0.05,
+       fmt:v=>(+v).toFixed(2),modes:["perturbation","threshold"]},
+      {key:"eps",   label:"ε — min expression",min:0.0,max:0.5,step:0.05,value:0.1,
+       fmt:v=>(+v).toFixed(2),modes:["perturbation"]},
+      {key:"koEff", label:"KO efficiency",min:0.2,max:1.0,step:0.05,value:0.95,
+       fmt:v=>(+v*100).toFixed(0)+"%",modes:["perturbation","sign"]}
+    ],
+    metrics:[
+      {key:"degDown",   label:"Activation DEGs (down)",accent:"green"},
+      {key:"degUp",     label:"Repression DEGs (up)",  accent:"rose"},
+      {key:"precision", label:"Precision vs ChIP",     accent:"cyan"},
+      {key:"recall",    label:"Recall vs ChIP",        accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"TF / targets / curve"},
+      {group:"bars",   label:"Evidence bars"},
+      {group:"aux",    label:"Gates / arrows / planes"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"δ = 1.0 (standard)",
+      on:api=>{api.setParam("delta",1.0);}
+    },
+    secondary:{
+      label:"δ = 2.0 (high-confidence)",
+      on:api=>{api.setParam("delta",2.0);}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:13},
+    hint:'<span style="color:#34d399">green</span>=activation target (LFC&lt;0) · <span style="color:#fb7185">rose</span>=repression target (LFC&gt;0) · <span style="color:#a78bfa">violet</span>=ChIP / current-δ · <span style="color:#fbbf24">amber</span>=co-expression / δ gate · <span style="color:#54667c">slate</span>=below threshold / non-edge.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="perturbation") api.frame([0,0.5,1.0],13);
+      else if(s.mode==="threshold") api.frame([1.0,0.5,0],13);
+      else if(s.mode==="evidence") api.frame([0,1.0,0],13);
+      else api.frame([0,0.5,1.2],12);
+    },
+    onSelect(api,d){
+      if(d.tf)     api.setSelected("TF "+d.tf.name+(d.tf.selfLFC!=null?" · self LFC "+(d.tf.selfLFC*(d.tf.koEff!=null?d.tf.koEff:1)).toFixed(2):""));
+      if(d.target) api.setSelected(d.target.g+" · LFC "+d.target.lfc.toFixed(2)+" · "+d.target.kind+(d.target.deg?" · DEG ✓":" · below δ"));
+      if(d.point)  api.setSelected(d.point.kind+" @ δ="+d.point.delta.toFixed(2)+" → "+(d.point.kind==="recall"?d.point.val.toFixed(3):d.point.val.toFixed(2)));
+      if(d.marker) api.setSelected("current δ "+d.marker.delta.toFixed(2)+" · "+d.marker.kind+" "+(d.marker.kind==="recall"?d.marker.val.toFixed(3):d.marker.val.toFixed(2)));
+      if(d.regime) api.setSelected(d.regime.name+" · precision "+(d.regime.prec*100).toFixed(0)+"%"+(d.regime.active?" · GOLD standard":""));
+      if(d.edge)   api.setSelected("GATA1→"+d.edge.tgt+" pred "+d.edge.pred+" · LFC "+d.edge.lfc.toFixed(2)+" · "+(d.edge.ok?"VALIDATED":"INVALIDATED")+" — "+d.edge.why);
+    },
+    build,
+    snapshot(s){
+      const delta=+s.delta, alpha=+s.alpha, eps=+s.eps, koEff=+s.koEff;
+      const cur=sweepAt(delta);
+      const degScaleHi=(delta<=1.0?1:(2.0-delta));
+      const degDown=Math.max(0,Math.round(F.degDown*Math.min(1,koEff/0.95)*degScaleHi));
+      const degUp  =Math.max(0,Math.round(F.degUp  *Math.min(1,koEff/0.95)*degScaleHi));
+      // sign-mode validity
+      const signCorrect=F.signEdges.filter(e=>e.ok).length;
+      return {
+        mode:s.mode,
+        delta:+delta.toFixed(2),
+        alpha:+alpha.toFixed(2),
+        eps:+eps.toFixed(2),
+        koEff:+koEff.toFixed(2),
+        degDown,
+        degUp,
+        precisionVsChip:+cur.prec.toFixed(3),
+        recallVsChip:+cur.rec.toFixed(3),
+        degCount:cur.deg,
+        coexprPrecision:F.coexprPrecision,
+        precisionGap:+(F.precisionChip-F.coexprPrecision).toFixed(3),
+        signEdgesCorrect:signCorrect,
+        signEdgesTotal:F.signEdges.length,
+        perturbationSupersedesCoexpr:(F.precisionChip-F.coexprPrecision)>0.2
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D04 · Disease-gene-drug knowledge graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — Section-5 worked example: a minimal 4-entity colorectal-cancer KG
+  //   v1 TP53 (Gene)            v2 Colorectal Cancer (Disease, DOID:9256)
+  //   v3 Nutlin-3a (Drug)       v4 MDM2 (Gene)
+  // 6 true triples; held-out target (Nutlin-3a, treats, Colorectal Cancer).
+  // ════════════════════════════════════════════════════════════════════════
+  const F={
+    entities:4, trueTriples:6, entityTypes:3,        // Gene, Disease, Drug
+    // type-constrained tail-corruption negatives (Disease type)
+    negDiseases:["Type 2 Diabetes","Alzheimer's","Breast Cancer"],
+    pathHops:2,                                       // Nutlin-binds-MDM2-associates-CRC
+    // temporal vs random split MRR (Section 6 / Exercise 4)
+    mrrTemporal:0.28, mrrRandom:0.52,
+    hits10:0.55, mrrTarget:0.30,                      // biomedical-KG targets
+    // basis decomposition (|R|=29, d=128, B=8) — Section 3
+    R:29, d:128, B:8,
+    fullPerLayer:475136, basisPerLayer:131304, basisSavings:0.72
+  };
+
+  // entity geometry (head positions for the worked-example KG)
+  const ENT=[
+    {id:0,name:"TP53",   type:"Gene",    col:"cyan",  p:[-3.4, 0.0, 2.4]},
+    {id:1,name:"CRC",    type:"Disease", col:"rose",  p:[ 3.4, 0.0, 2.4]},
+    {id:2,name:"Nutlin-3a",type:"Drug",  col:"green", p:[-3.4, 0.0,-2.4]},
+    {id:3,name:"MDM2",   type:"Gene",    col:"cyan",  p:[ 3.4, 0.0,-2.4]}
+  ];
+  // typed triples (h,r,t) — the 6 true KG edges
+  const TRIP=[
+    {h:0,r:"associates",t:1, c:"amber"},   // TP53 → CRC
+    {h:0,r:"regulates", t:3, c:"violet"},  // TP53 → MDM2
+    {h:3,r:"regulates", t:0, c:"violet"},  // MDM2 → TP53 (neg feedback)
+    {h:2,r:"binds",     t:3, c:"green"},   // Nutlin → MDM2  (path edge 1)
+    {h:2,r:"inhibits",  t:3, c:"green"},   // Nutlin ⊣ MDM2
+    {h:3,r:"associates",t:1, c:"amber"}    // MDM2 → CRC     (path edge 2)
+  ];
+  // the held-out target link Nutlin --treats--> CRC and its 2-hop justification
+  const PATH=[2,3,1]; // Nutlin → MDM2 → CRC
+
+  // ── deterministic DistMult-style score model ────────────────────────────
+  // A 2-hop binds→associates path through MDM2 is the repurposing rationale.
+  // pathStrength grows as depth reaches the 2-hop path and decays past it.
+  function distmult(depth,margin){
+    const reach=Math.min(1,depth/F.pathHops);          // 0..1, =1 at 2 hops
+    const over =Math.max(0,depth-F.pathHops)*0.06;     // mild over-smoothing
+    const pos=0.18+1.55*reach-over;                    // raw score of the true triple
+    // type-constrained negatives: closeness to the real path varies by disease
+    const negBase=[0.10,0.06,0.62];                    // T2D, Alz, Breast(partial)
+    const negs=negBase.map(b=>b*(0.55+0.45*reach));
+    const bestNeg=Math.max.apply(null,negs);
+    const sep=pos-bestNeg;                             // ranking margin
+    const ranked=sep>0;                                // top-1 correct?
+    const satisfied=sep>=margin;                       // margin-loss satisfied?
+    return {pos,negs,bestNeg,sep,ranked,satisfied,reach};
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const depth=Math.round(s.depth);
+    const margin=s.margin;
+    const split=Math.round(s.split);     // 0=temporal, 1=random
+    const bases=Math.round(s.bases);     // basis count B
+
+    const gKG    =api.group("kg");
+    const gMsg   =api.group("msg");
+    const gScore =api.group("score");
+    const gLabels=api.group("labels");
+
+    const CY="#4dd7ff", RO="#fb7185", AM="#fbbf24", VI="#a78bfa", GR="#34d399", SL="#54667c";
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // helper: draw the 4 typed entity nodes
+    function drawEntities(dim){
+      ENT.forEach(e=>{
+        const n=api.node(e.p,{color:e.col,r:0.42,group:"kg",
+          pick:{entity:{name:e.name,type:e.type}}});
+        if(dim&&dim(e)) n.children.forEach(ch=>{if(ch.material){ch.material.opacity=0.4;ch.material.transparent=true;}});
+        lbl(e.name,api.col(e.col),1.25,e.p[0],e.p[1]+0.9,e.p[2]);
+        lbl(e.type,SL,0.85,e.p[0],e.p[1]-0.85,e.p[2]);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: kg  — the heterogeneous worked-example KG + held-out treats link
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="kg"){
+      drawEntities(null);
+      // 6 true typed relations
+      TRIP.forEach(tr=>{
+        const a=ENT[tr.h].p, b=ENT[tr.t].p;
+        api.arrow(a,b,{color:tr.c,width:0.05,head:0.26,group:"kg",
+          pick:{triple:{h:ENT[tr.h].name,r:tr.r,t:ENT[tr.t].name}}});
+      });
+      // relation-type legend labels at edge midpoints (sparse, no clutter)
+      lbl("associates",AM,0.95,0,0.55,2.6);
+      lbl("regulates",VI,0.95,0,0.55,0.0);
+      lbl("binds·inhibits",GR,0.95,-3.4,0.55,0.0);
+      // the held-out (Nutlin, treats, CRC) candidate edge — dashed, unconfirmed
+      api.edge(ENT[2].p,ENT[1].p,{color:"#7f8da0",dashed:true,opacity:0.9,group:"kg"});
+      lbl("treats?  (held out)","#cfe0f0",1.15,0.4,1.6,0.0);
+
+      const triByType={associates:2,regulates:2,binds:1,inhibits:1};
+      sceneSnap={mode,entities:F.entities,trueTriples:F.trueTriples,relationTypes:5,
+        heldOut:1,pathHops:F.pathHops,mrr:null};
+      api.setMetric("mrr","—");
+      return {
+        badge:"KG · "+F.entities+" entities · "+F.trueTriples+" triples · 5 relation types",
+        formula:"KG=(V,E,T_V,T_E)  ·  triple (h,r,t)  ·  T_V={Gene,Disease,Drug}",
+        insight:"A biomedical KG is a heterogeneous, directed, typed multigraph. Four entities (TP53, MDM2 = Gene; CRC = Disease; Nutlin-3a = Drug) carry "+F.trueTriples+" true typed triples across 5 relation types (associates, regulates, binds, inhibits). The grey dashed edge (Nutlin-3a, treats, CRC) is the held-out target — absent under the open-world assumption, not false.",
+        state:"Entities "+F.entities+" · types "+F.entityTypes+" · true triples "+F.trueTriples+". Held-out link Nutlin-3a→CRC is what link prediction must recover.",
+        metrics:{entities:""+F.entities,trueTriples:""+F.trueTriples,relationTypes:"5",mrr:"—"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: rgcn — RGCN depth aggregates the 2-hop path; DistMult ranks
+    //              the held-out triple vs type-constrained negatives.
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="rgcn"){
+      drawEntities(e=>false);
+      // draw the supporting true edges faint
+      TRIP.forEach(tr=>{
+        api.edge(ENT[tr.h].p,ENT[tr.t].p,{color:"#22303f",width:0.03,opacity:0.5,group:"kg"});
+      });
+      // highlight the 2-hop reasoning path up to the current depth
+      const sc=distmult(depth,margin);
+      for(let k=0;k<Math.min(depth,PATH.length-1);k++){
+        const a=ENT[PATH[k]].p, b=ENT[PATH[k+1]].p;
+        api.arrow(a,b,{color:GR,width:0.08,head:0.32,group:"msg"});
+      }
+      const relName=["binds","associates"];
+      for(let k=0;k<Math.min(depth,PATH.length-1);k++){
+        const a=ENT[PATH[k]].p,b=ENT[PATH[k+1]].p;
+        lbl("L"+(k+1)+" · "+relName[k],GR,0.95,(a[0]+b[0])/2,1.1,(a[2]+b[2])/2);
+      }
+      // pulse halo on Nutlin showing how far its embedding has reached
+      api.halo(ENT[2].p,{color:GR,r:0.7+0.5*sc.reach,opacity:0.6,group:"msg"});
+
+      // DistMult ranking bars: true triple vs 3 type-constrained negatives
+      const labels=["treats CRC","T2D","Alzheimer","Breast Ca"];
+      const cols=[GR,SL,SL,AM];
+      const vals=[sc.pos,sc.negs[0],sc.negs[1],sc.negs[2]];
+      const xPos=[-3.6,-1.2,1.2,3.6];
+      const zBar=-5.2;
+      vals.forEach((v,i)=>{
+        const h=0.12+Math.max(0,v)*2.2;
+        const active=(i===0);
+        const c=new T.Color(cols[i]);
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.0),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(active?0.85:0.22),
+            emissiveIntensity:active?0.75:0.18,roughness:0.4,transparent:!active,opacity:active?1:0.5}));
+        bar.position.set(xPos[i],h/2,zBar);
+        gScore.add(bar);
+        api.pick(bar,{score:{which:labels[i],val:+v.toFixed(2),active}});
+        lbl(v.toFixed(2),cols[i],1.35,xPos[i],h+0.45,zBar);
+        lbl(labels[i],cols[i],0.8,xPos[i],-0.45,zBar);
+      });
+      // margin gate line
+      const yMargin=0.12+(sc.bestNeg+margin)*2.2;
+      gScore.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(-4.6,yMargin,zBar),new T.Vector3(4.6,yMargin,zBar)]),
+        new T.LineBasicMaterial({color:0xa78bfa})));
+      lbl("margin γ="+margin.toFixed(1),VI,0.9,4.8,yMargin,zBar);
+
+      api.setMetric("mrr",sc.ranked?"1.00":(1/2).toFixed(2));
+      sceneSnap={mode,depth,margin:+margin.toFixed(2),posScore:+sc.pos.toFixed(3),
+        bestNeg:+sc.bestNeg.toFixed(3),rankingMargin:+sc.sep.toFixed(3),
+        top1Correct:sc.ranked,marginSatisfied:sc.satisfied,pathReach:+sc.reach.toFixed(2)};
+      return {
+        badge:"RGCN · "+depth+(depth===1?" hop":" hops")+" · "+(sc.ranked?"top-1 ✓":"top-1 ✗"),
+        formula:"score(h,r,t)=h<sup>T</sup>diag(W_r)t  ·  Nutlin→MDM2→CRC ("+F.pathHops+" hops)",
+        insight:"RGCN aggregates over typed neighbours. At "+F.pathHops+" hops Nutlin-3a's embedding has absorbed the binds→MDM2→associates→CRC path, so DistMult scores (Nutlin, treats, CRC) above the type-constrained Disease negatives. Below "+F.pathHops+" hops the path is incomplete; far beyond it, over-smoothing erodes the margin.",
+        state:"pos="+sc.pos.toFixed(2)+" · best neg="+sc.bestNeg.toFixed(2)+" · margin="+sc.sep.toFixed(2)+" · "+(sc.ranked?"ranked #1":"out-ranked")+(sc.satisfied?" · loss satisfied":" · loss active"),
+        metrics:{entities:""+F.entities,trueTriples:""+F.trueTriples,relationTypes:"5",
+          mrr:sc.ranked?"1.00":"0.50"},
+        focus:{center:[0,0,-2],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: eval — temporal vs random split (MRR), + basis-decomposition cost
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="eval"){
+      // two split scenes side by side via MRR bars
+      const mrr= split===0 ? F.mrrTemporal : F.mrrRandom;
+      const other= split===0 ? F.mrrRandom : F.mrrTemporal;
+      const yS=6.0;
+      const bars=[
+        {x:-2.4,v:F.mrrTemporal,c:GR,lab:"temporal"},
+        {x: 2.4,v:F.mrrRandom,  c:AM,lab:"random"}
+      ];
+      bars.forEach(bd=>{
+        const active=(bd.lab==="temporal")===(split===0);
+        const h=0.12+bd.v*yS;
+        const c=new T.Color(bd.c);
+        const bar=new T.Mesh(new T.BoxGeometry(1.7,h,1.4),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(active?0.85:0.2),
+            emissiveIntensity:active?0.75:0.18,roughness:0.4,transparent:!active,opacity:active?1:0.5}));
+        bar.position.set(bd.x,h/2,0);
+        gScore.add(bar);
+        api.pick(bar,{split:{which:bd.lab,mrr:bd.v,active}});
+        lbl("MRR "+bd.v.toFixed(2),bd.c,1.5,bd.x,h+0.5,0);
+        lbl(bd.lab+" split",bd.c,1.0,bd.x,-0.5,0);
+      });
+      // target MRR threshold line + Hits@10 marker
+      const yT=0.12+F.mrrTarget*yS;
+      gScore.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(-4.2,yT,0),new T.Vector3(4.2,yT,0)]),
+        new T.LineBasicMaterial({color:0x4dd7ff})));
+      lbl("target MRR "+F.mrrTarget.toFixed(2),CY,0.9,4.4,yT,0);
+      // leakage warning glow when the random split is selected
+      if(split===1) api.halo([2.4,F.mrrRandom*yS*0.5,0],{color:RO,r:1.6,opacity:0.4,group:"score"});
+
+      // basis-decomposition cost bars (param-count savings) behind the split bars
+      const fullH=F.fullPerLayer/100000;          // scaled to scene units
+      const basisVar=(F.B/bases);                  // basis matrices scale with B
+      const basisH=(F.B*F.d*F.d*(bases/F.B)+F.R*bases)/100000;
+      const cz=-4.6;
+      [{x:-2.4,v:fullH,c:RO,lab:"full RGCN"},
+       {x: 2.4,v:basisH,c:VI,lab:"B="+bases}].forEach(bd=>{
+        const c=new T.Color(bd.c);
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,Math.max(0.15,bd.v),1.2),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.4),
+            emissiveIntensity:0.4,roughness:0.45}));
+        bar.position.set(bd.x,Math.max(0.15,bd.v)/2,cz);
+        gMsg.add(bar);
+      });
+      const basisParams=Math.round(F.B*F.d*F.d*(bases/F.B)+F.R*bases);
+      const savings=1-basisParams/F.fullPerLayer;
+      lbl("params / layer",SL,0.95,0,-0.5,cz);
+      lbl("full "+ (F.fullPerLayer/1000).toFixed(0)+"k",RO,0.85,-2.4,fullH+0.4,cz);
+      lbl("basis "+(basisParams/1000).toFixed(0)+"k",VI,0.85,2.4,basisH+0.4,cz);
+
+      api.setMetric("mrr",mrr.toFixed(2));
+      sceneSnap={mode,split,mrrTemporal:F.mrrTemporal,mrrRandom:F.mrrRandom,
+        mrrShown:+mrr.toFixed(3),leakageGap:+(F.mrrRandom-F.mrrTemporal).toFixed(3),
+        bases,basisParams,basisSavings:+savings.toFixed(3)};
+      return {
+        badge:"Eval · "+(split===0?"temporal":"random")+" split · MRR "+mrr.toFixed(2),
+        formula:"MRR=mean(1/rank_t)  ·  W_r=Σ_b a_{r,b}V_b  (B="+bases+" bases)",
+        insight:"Random splitting mixes past and future drug-disease edges, inflating MRR to "+F.mrrRandom.toFixed(2)+" — the model recovers well-known links trivially. A temporal split (train ≤2018, test 2019-21) is the honest test and yields MRR "+F.mrrTemporal.toFixed(2)+". Basis decomposition (rear bars) cuts per-layer parameters ~"+(savings*100).toFixed(0)+"% by sharing B="+bases+" basis matrices across "+F.R+" relations.",
+        state:"temporal MRR "+F.mrrTemporal.toFixed(2)+" < random MRR "+F.mrrRandom.toFixed(2)+" (gap "+(F.mrrRandom-F.mrrTemporal).toFixed(2)+"). Basis params/layer "+(basisParams/1000).toFixed(0)+"k vs full "+(F.fullPerLayer/1000).toFixed(0)+"k → "+(savings*100).toFixed(0)+"% saved.",
+        metrics:{entities:""+F.entities,trueTriples:""+F.trueTriples,relationTypes:"5",
+          mrr:mrr.toFixed(2)},
+        focus:{center:[0,1.5,-2],radius:14}
+      };
+    }
+
+    return {badge:"D04",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d04",
+    kind:"disease-gene-drug-kg",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D04 · Disease-gene-drug knowledge graphs",
+    subtitle:"A 4-entity colorectal-cancer KG (TP53·MDM2·Nutlin-3a·CRC). Build the heterogeneous graph, watch RGCN aggregate the 2-hop repurposing path, then contrast temporal vs random split evaluation.",
+    selectedLabel:"Element",
+    selectedHint:"Click an entity, relation arrow, or score bar.",
+    modes:[
+      {value:"kg",   label:"KG (entities · typed triples)"},
+      {value:"rgcn", label:"RGCN + DistMult (2-hop path → rank)"},
+      {value:"eval", label:"Evaluation (temporal vs random)"}
+    ],
+    params:[
+      {key:"depth", label:"RGCN depth (hops)",min:0,max:4,step:1,value:2,
+       fmt:v=>Math.round(v)+"-hop",modes:["rgcn"]},
+      {key:"margin",label:"ranking margin γ",min:0,max:2,step:0.1,value:1.0,
+       fmt:v=>v.toFixed(1),modes:["rgcn"]},
+      {key:"split", label:"split (0=temporal 1=random)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"temporal":"random",modes:["eval"]},
+      {key:"bases", label:"basis count B",min:1,max:29,step:1,value:8,
+       fmt:v=>"B="+Math.round(v),modes:["eval"]}
+    ],
+    metrics:[
+      {key:"entities",     label:"Entities",accent:"cyan"},
+      {key:"trueTriples",  label:"True triples",accent:"green"},
+      {key:"relationTypes",label:"Relation types",accent:"violet"},
+      {key:"mrr",          label:"MRR",accent:"amber"}
+    ],
+    layers:[
+      {group:"kg",     label:"KG entities / edges"},
+      {group:"msg",    label:"Message passing"},
+      {group:"score",  label:"Score / MRR bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"2-hop path",
+      on:api=>{api.setMode&&api.setMode("rgcn");api.setParam("depth",2);}
+    },
+    secondary:{
+      label:"Temporal split",
+      on:api=>{api.setMode&&api.setMode("eval");api.setParam("split",0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=Gene · <span style="color:#fb7185">rose</span>=Disease · <span style="color:#34d399">green</span>=Drug/path · <span style="color:#fbbf24">amber</span>=associates/random · <span style="color:#a78bfa">violet</span>=regulates/basis · grey dashed=held-out treats link.',
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="rgcn") api.frame([0,0,-2],14);
+      else if(s.mode==="eval") api.frame([0,1.5,-2],14);
+      else api.frame([0,0,0],13);
+    },
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="rgcn") api.frame([0,0,-2],14);
+      else if(s.mode==="eval") api.frame([0,1.5,-2],14);
+      else api.frame([0,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.entity) api.setSelected(d.entity.name+" · "+d.entity.type);
+      if(d.triple) api.setSelected("("+d.triple.h+", "+d.triple.r+", "+d.triple.t+")");
+      if(d.score)  api.setSelected(d.score.which+" · score "+d.score.val+(d.score.active?" · TRUE triple":" · negative"));
+      if(d.split)  api.setSelected(d.split.which+" split · MRR "+d.split.mrr.toFixed(2)+(d.split.active?" · active":""));
+    },
+    build,
+    snapshot(s){
+      const depth=Math.round(s.depth);
+      const margin=s.margin;
+      const split=Math.round(s.split);
+      const bases=Math.round(s.bases);
+      const sc=distmult(depth,margin);
+      const basisParams=Math.round(F.B*F.d*F.d*(bases/F.B)+F.R*bases);
+      return {
+        mode:s.mode,
+        entities:F.entities,
+        trueTriples:F.trueTriples,
+        relationTypes:5,
+        depth,
+        margin:+margin.toFixed(2),
+        posScore:+sc.pos.toFixed(3),
+        bestNeg:+sc.bestNeg.toFixed(3),
+        rankingMargin:+sc.sep.toFixed(3),
+        top1Correct:sc.ranked,
+        split,
+        mrrShown:+((split===0)?F.mrrTemporal:F.mrrRandom).toFixed(3),
+        leakageGap:+(F.mrrRandom-F.mrrTemporal).toFixed(3),
+        bases,
+        basisParams,
+        basisSavings:+(1-basisParams/F.fullPerLayer).toFixed(3)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

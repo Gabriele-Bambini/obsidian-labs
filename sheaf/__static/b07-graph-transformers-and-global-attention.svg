@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure B07 — Global attention works only when graph structure disciplines it</title>
+<desc id="d">Four-panel captioned figure: Global attention works only when graph structure disciplines it</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE B07 · BLOCK B · GNN ARCHITECTURES</text>
+<text x="40" y="62" fill="#e8eef6" font-size="21" font-weight="700">Global attention works only when graph structure disciplines it</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">TF1 scores a 5-node set</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">query</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">TF1</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">local edges</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">TF1-EnhA, TF1-GeneA</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">distant</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">GeneB (2-3 hops)</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">score = feature + B_graph</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">s_ij = q_i·k_j/√d + b(i,j)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">α = softmax(s / τ)</text>
+<text x="502" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">EnhA</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">1.20</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Attention weights (τ=1)</text>
+<rect x="56" y="292" width="12" height="64" rx="2" fill="#4dd7ff"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">En…</text>
+<rect x="72" y="300.92" width="12" height="55.08" rx="2" fill="#fbbf24"/>
+<text x="78" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">Ge…</text>
+<rect x="88" y="295.12" width="12" height="60.88" rx="2" fill="#34d399"/>
+<text x="94" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">Ge…</text>
+<rect x="104" y="312.96" width="12" height="43.04" rx="2" fill="#fb7185"/>
+<text x="110" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">St…</text>
+<text x="56" y="393" fill="#8a99ad" font-size="11">Distant GeneB (0.273) nearly ties the local enhancer; the</text>
+<text x="56" y="413" fill="#8a99ad" font-size="11">State hub still draws 0.193 — a warning if it is a batch</text>
+<text x="56" y="433" fill="#8a99ad" font-size="11">proxy.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Discipline the route</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">local MPNN</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">no long-range</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">global</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">+ hub risk</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">Graphormer</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">bias penalizes hub</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">GPS hybrid</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">local + global</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure B07. </text>
+<text x="140.59" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="156.71" y="538" fill="#c7d2dd" font-size="13">5-node </text>
+<text x="213.13" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="245.37" y="538" fill="#c7d2dd" font-size="13">(TF1, </text>
+<text x="293.73" y="538" fill="#c7d2dd" font-size="13">EnhA, </text>
+<text x="342.09" y="538" fill="#c7d2dd" font-size="13">GeneA, </text>
+<text x="398.51" y="538" fill="#c7d2dd" font-size="13">GeneB, </text>
+<text x="454.93" y="538" fill="#c7d2dd" font-size="13">State) </text>
+<text x="511.35" y="538" fill="#c7d2dd" font-size="13">shows </text>
+<text x="559.71" y="538" fill="#c7d2dd" font-size="13">why </text>
+<text x="591.95" y="538" fill="#c7d2dd" font-size="13">global </text>
+<text x="648.37" y="538" fill="#c7d2dd" font-size="13">attention </text>
+<text x="728.97" y="538" fill="#c7d2dd" font-size="13">needs </text>
+<text x="777.33" y="538" fill="#c7d2dd" font-size="13">graph </text>
+<text x="825.69" y="538" fill="#c7d2dd" font-size="13">bias.</text>
+<text x="40" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="73.53" y="559" fill="#c7d2dd" font-size="13">Query </text>
+<text x="121.89" y="559" fill="#c7d2dd" font-size="13">TF1 </text>
+<text x="154.13" y="559" fill="#c7d2dd" font-size="13">scores </text>
+<text x="210.55" y="559" fill="#c7d2dd" font-size="13">every </text>
+<text x="258.91" y="559" fill="#c7d2dd" font-size="13">node, </text>
+<text x="307.27" y="559" fill="#c7d2dd" font-size="13">reaching </text>
+<text x="379.81" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="412.05" y="559" fill="#c7d2dd" font-size="13">distant </text>
+<text x="476.53" y="559" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="524.89" y="559" fill="#c7d2dd" font-size="13">that </text>
+<text x="565.19" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="581.31" y="559" fill="#c7d2dd" font-size="13">1-layer </text>
+<text x="645.79" y="559" fill="#c7d2dd" font-size="13">MPNN </text>
+<text x="686.09" y="559" fill="#c7d2dd" font-size="13">cannot. </text>
+<text x="750.57" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="784.1" y="559" fill="#c7d2dd" font-size="13">Each </text>
+<text x="824.4" y="559" fill="#c7d2dd" font-size="13">score</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">adds </text>
+<text x="80.3" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="96.42" y="580" fill="#c7d2dd" font-size="13">structural </text>
+<text x="185.08" y="580" fill="#c7d2dd" font-size="13">bias </text>
+<text x="225.38" y="580" fill="#c7d2dd" font-size="13">b(i,j) </text>
+<text x="281.8" y="580" fill="#c7d2dd" font-size="13">to </text>
+<text x="305.98" y="580" fill="#c7d2dd" font-size="13">feature </text>
+<text x="370.46" y="580" fill="#c7d2dd" font-size="13">compatibility, </text>
+<text x="491.36" y="580" fill="#c7d2dd" font-size="13">then </text>
+<text x="531.66" y="580" fill="#c7d2dd" font-size="13">softmax </text>
+<text x="596.14" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="620.32" y="580" fill="#c7d2dd" font-size="13">τ. </text>
+<text x="644.5" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="678.03" y="580" fill="#c7d2dd" font-size="13">Weights </text>
+<text x="742.51" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="766.69" y="580" fill="#c7d2dd" font-size="13">τ=1 </text>
+<text x="798.93" y="580" fill="#c7d2dd" font-size="13">give </text>
+<text x="839.23" y="580" fill="#c7d2dd" font-size="13">GeneB</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">0.273, </text>
+<text x="96.42" y="601" fill="#c7d2dd" font-size="13">nearly </text>
+<text x="152.84" y="601" fill="#c7d2dd" font-size="13">matching </text>
+<text x="225.38" y="601" fill="#c7d2dd" font-size="13">EnhA </text>
+<text x="265.68" y="601" fill="#c7d2dd" font-size="13">0.287, </text>
+<text x="322.1" y="601" fill="#c7d2dd" font-size="13">while </text>
+<text x="370.46" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="402.7" y="601" fill="#c7d2dd" font-size="13">State </text>
+<text x="451.06" y="601" fill="#c7d2dd" font-size="13">hub </text>
+<text x="483.3" y="601" fill="#c7d2dd" font-size="13">keeps </text>
+<text x="531.66" y="601" fill="#c7d2dd" font-size="13">0.193. </text>
+<text x="588.08" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="621.61" y="601" fill="#c7d2dd" font-size="13">Local </text>
+<text x="669.97" y="601" fill="#c7d2dd" font-size="13">MPNN </text>
+<text x="710.27" y="601" fill="#c7d2dd" font-size="13">misses </text>
+<text x="766.69" y="601" fill="#c7d2dd" font-size="13">long-range,</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">pure </text>
+<text x="80.3" y="622" fill="#c7d2dd" font-size="13">global </text>
+<text x="136.72" y="622" fill="#c7d2dd" font-size="13">adds </text>
+<text x="177.02" y="622" fill="#c7d2dd" font-size="13">hub </text>
+<text x="209.26" y="622" fill="#c7d2dd" font-size="13">risk, </text>
+<text x="257.62" y="622" fill="#c7d2dd" font-size="13">Graphormer </text>
+<text x="346.28" y="622" fill="#c7d2dd" font-size="13">bias </text>
+<text x="386.58" y="622" fill="#c7d2dd" font-size="13">penalizes </text>
+<text x="467.18" y="622" fill="#c7d2dd" font-size="13">hubs, </text>
+<text x="515.54" y="622" fill="#c7d2dd" font-size="13">and </text>
+<text x="547.78" y="622" fill="#c7d2dd" font-size="13">GPS </text>
+<text x="580.02" y="622" fill="#c7d2dd" font-size="13">keeps </text>
+<text x="628.38" y="622" fill="#c7d2dd" font-size="13">a </text>
+<text x="644.5" y="622" fill="#c7d2dd" font-size="13">privileged </text>
+<text x="733.16" y="622" fill="#c7d2dd" font-size="13">local </text>
+<text x="781.52" y="622" fill="#c7d2dd" font-size="13">channel.</text>
+</svg>

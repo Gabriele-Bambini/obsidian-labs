@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C03 · Graphs as non-Euclidean domains</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash via sin; no RNG / clock calls) ─────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── canonical worked example (note Section 5) ────────────────────────────
+  // Five nodes A,B,C,D,E. Two graphs with the SAME node set, different geometry.
+  //   path:  A - B - C - D - E       (each interior node degree 2)
+  //   star:  A is the hub; B,C,D,E are leaves around it
+  // Node values: x_A = 10, x_B=x_C=x_D=x_E = 1
+  const VAL = {A:10, B:1, C:1, D:1, E:1};
+  const NAMES = ["A","B","C","D","E"];
+
+  // adjacency (undirected) as neighbour lists, keyed by node index 0..4 (A..E)
+  const PATH_ADJ = [[1],[0,2],[1,3],[2,4],[3]];            // A-B-C-D-E
+  const STAR_ADJ = [[1,2,3,4],[0],[0],[0],[0]];            // A center
+
+  // BFS shortest-path distances from `src` over an adjacency list
+  function bfs(adj,src){
+    const d=adj.map(()=>99); d[src]=0; const q=[src];
+    for(let i=0;i<q.length;i++){const u=q[i];
+      for(const v of adj[u]) if(d[v]>d[u]+1){d[v]=d[u]+1;q.push(v);}}
+    return d;
+  }
+  // k-hop ball B_k(src): node indices within graph distance <= k
+  function ball(adj,src,k){const d=bfs(adj,src);const out=[];
+    for(let i=0;i<d.length;i++) if(d[i]<=k) out.push(i); return out;}
+
+  // self-loop MEAN aggregation at node `v`: (x_v + Σ_{u∈N(v)} x_u)/(deg+1)
+  function selfMean(adj,v){
+    let sum=VAL[NAMES[v]], cnt=1;
+    for(const u of adj[v]){ sum+=VAL[NAMES[u]]; cnt++; }
+    return {val:sum/cnt, sum, cnt, deg:adj[v].length};
+  }
+
+  // ── 3D layouts (deterministic, lesson-faithful) ──────────────────────────
+  // path: a straight line in X so "graph distance == steps along the line"
+  const PATH_POS = [[-4.0,0,0],[-2.0,0,0],[0,0,0],[2.0,0,0],[4.0,0,0]];
+  // star: hub A at origin, four leaves on the axes (so degree is visible)
+  const STAR_POS = [[0,0,0],[0,0,-2.7],[-2.7,0,0],[2.7,0,0],[0,0,2.7]];
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const focusIdx=Math.round(s.focus);   // 0..4  → A..E
+    const hop=Math.round(s.hop);           // 1..2
+    const valA=s.valA;                     // hub value x_A (default 10)
+    const patchK=Math.round(s.patchK);     // grid patch half-width (mode: domain)
+
+    const gGraph =api.group("graph");
+    const gBall  =api.group("ball");
+    const gGrid  =api.group("grid");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const CY=api.col("cyan"), AM=api.col("amber"), VI=api.col("violet"),
+          GR=api.col("green"), RO=api.col("rose");
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // live value of node i (hub A overridable by slider)
+    const valOf=i=> i===0 ? valA : 1;
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: domain — grid patch  vs  graph k-hop ball (the path graph)
+    //   teaches: an image patch is a fixed square; a graph ball B_k(v) has a
+    //   node-dependent shape. Uses the path A-B-C-D-E and B_k around a node.
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="domain"){
+      const adj=PATH_ADJ, POS=PATH_POS;
+      const d=bfs(adj,focusIdx);
+      const inBall=ball(adj,focusIdx,hop);
+      const inSet=new Set(inBall);
+
+      // -- left: Euclidean grid intuition (a fixed (2k+1) square patch) --
+      const gx0=-9.5, gz0=-4.0, cell=0.95, N=5; // 5x5 reference grid
+      for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+        const px=gx0+c*cell, pz=gz0+r*cell;
+        const cr=Math.abs(r-2), cc=Math.abs(c-2);
+        const inPatch=(cr<=patchK && cc<=patchK);
+        const m=new T.Mesh(new T.BoxGeometry(cell*0.82,0.12,cell*0.82),
+          api.mat(inPatch?"amber":"#16283a",{emissive:inPatch?0.5:0.12,rough:0.6}));
+        m.position.set(px,0,pz); gGrid.add(m);
+      }
+      const cpx=gx0+2*cell, cpz=gz0+2*cell;
+      const cmark=new T.Mesh(new T.SphereGeometry(0.26,18,14),api.mat("white",{emissive:0.6}));
+      cmark.position.set(cpx,0.25,cpz); gGrid.add(cmark);
+      lbl("grid: same square patch","#fbbf24",1.15,gx0+2*cell,1.5,gz0-0.9);
+      lbl("(2k+1)×(2k+1)","#8a99ad",1.0,gx0+2*cell,0.0,gz0+N*cell+0.2);
+
+      // -- right: the path graph + the graph ball B_k(v) --
+      for(let i=0;i<adj.length;i++)
+        for(const j of adj[i]) if(j>i){
+          const both=inSet.has(i)&&inSet.has(j);
+          api.edge(POS[i],POS[j],{color:both?CY:"#26405a",width:both?0.07:0.04,
+            opacity:both?0.98:0.5,group:"graph"});
+        }
+      for(let i=0;i<adj.length;i++){
+        const on=inSet.has(i), isF=(i===focusIdx);
+        const col=isF?"white":(on?"cyan":"#2c4156");
+        const nd=api.node(POS[i],{color:col,r:on?0.34:0.24,
+          label:NAMES[i],labelColor:isF?"#ffffff":(on?"#bfe9ff":"#5c728a"),group:"graph"});
+        api.pick(nd.children[0],{node:{name:NAMES[i],dist:d[i],inBall:on,deg:adj[i].length}});
+      }
+      // translucent ball shell around the focus node
+      const sh=new T.Mesh(new T.SphereGeometry(0.6+hop*1.9,24,18),
+        new T.MeshBasicMaterial({color:new T.Color(CY),transparent:true,opacity:0.10,depthWrite:false}));
+      sh.position.set(POS[focusIdx][0],0,POS[focusIdx][2]); gBall.add(sh);
+      lbl("B"+hop+"("+NAMES[focusIdx]+") = {"+inBall.map(i=>NAMES[i]).join(",")+"}",
+        "#4dd7ff",1.25,POS[focusIdx][0],2.1,POS[focusIdx][2]);
+      lbl("graph: ball shape depends on node","#4dd7ff",1.1,1.0,0.0,3.4);
+
+      const ballSize=inBall.length;
+      const patchSize=(2*patchK+1)*(2*patchK+1);
+      sceneSnap={mode,focus:focusIdx,hop,ballSize,patchSize,patchK,
+        hubMean:null,leafMean:null,reachFrac:ballSize/5};
+
+      return {
+        badge:"Domain · B"+hop+"("+NAMES[focusIdx]+") on the path · |ball|="+ballSize,
+        formula:"B<sub>k</sub>(v) = { u ∈ V : d<sub>G</sub>(u,v) ≤ k }",
+        insight:"An image patch is a fixed (2k+1)×(2k+1) square — the same shape at every pixel (amber). A graph k-hop ball B_k(v) is the set of nodes within shortest-path distance k. On the path A-B-C-D-E it grows along the line, and its size depends on which node you stand on and on k. Move 'focus node' to an endpoint to see the ball shrink.",
+        state:"Patch = "+patchSize+" cells (always square). Graph ball |B"+hop+"("+NAMES[focusIdx]+")| = "+ballSize+" of 5 nodes. The drawing is not the domain: locality comes from edges, not coordinates.",
+        metrics:{ballSize:""+ballSize+" / 5",patchSize:patchSize+" cells",hubMean:"—",leafMean:"—"},
+        focus:{center:[-1,0,0],radius:15}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: topology — path  vs  star, SAME 5 nodes, 1-hop reach differs
+    //   teaches: one message-passing layer from the star centre reaches the
+    //   whole graph; one layer from the path middle reaches 3 nodes.
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="topology"){
+      // PATH on the left (z=-2.4), STAR on the right (z=+2.4), shifted in X
+      const shift=(p,dx,dz)=>[p[0]+dx,p[1],p[2]+dz];
+      const pathOff=[-5.0,-2.4], starOff=[5.0,2.4];
+
+      function drawGraph(adj,basePOS,off,srcIdx,tag){
+        const d=bfs(adj,srcIdx);
+        const inB=new Set(ball(adj,srcIdx,1)); // ONE message-passing layer = 1 hop
+        for(let i=0;i<adj.length;i++)
+          for(const j of adj[i]) if(j>i){
+            const both=inB.has(i)&&inB.has(j);
+            api.edge(shift(basePOS[i],off[0],off[1]),shift(basePOS[j],off[0],off[1]),
+              {color:both?AM:"#26405a",width:both?0.07:0.04,opacity:both?0.98:0.5,group:"graph"});
+          }
+        for(let i=0;i<adj.length;i++){
+          const on=inB.has(i), isS=(i===srcIdx);
+          const col=isS?"white":(on?"amber":"#2c4156");
+          const nd=api.node(shift(basePOS[i],off[0],off[1]),
+            {color:col,r:on?0.34:0.24,label:NAMES[i],
+             labelColor:isS?"#ffffff":(on?"#ffe2a6":"#5c728a"),group:"graph"});
+          api.pick(nd.children[0],{node:{name:NAMES[i],graph:tag,dist:d[i],inReach:on,deg:adj[i].length}});
+        }
+        const cP=shift(basePOS[srcIdx],off[0],off[1]);
+        lbl(tag+": |B1("+NAMES[srcIdx]+")|="+inB.size,
+          tag==="star"?"#fbbf24":"#4dd7ff",1.2,cP[0],2.2,cP[2]);
+        return inB.size;
+      }
+
+      // path: 1 layer from the MIDDLE node C (idx 2) reaches {B,C,D} = 3
+      const pathReach=drawGraph(PATH_ADJ,PATH_POS,pathOff,2,"path");
+      // star: 1 layer from the CENTRE A (idx 0) reaches all 5
+      const starReach=drawGraph(STAR_ADJ,STAR_POS,starOff,0,"star");
+
+      slbl("middle of path",  "#8aa6c0",0.42, pathOff[0]+PATH_POS[2][0], 0.05, pathOff[1]+PATH_POS[2][2]-1.4);
+      slbl("centre of star",  "#cdbb8a",0.42, starOff[0]+STAR_POS[0][0], 0.05, starOff[1]+STAR_POS[0][2]-1.4);
+
+      sceneSnap={mode,focus:focusIdx,hop:1,ballSize:starReach,patchSize:null,patchK:null,
+        hubMean:null,leafMean:null,reachFrac:starReach/5,pathReach,starReach};
+
+      return {
+        badge:"Topology · path reach "+pathReach+" vs star reach "+starReach+" (same 5 nodes)",
+        formula:"one layer  ⇒  B<sub>1</sub>(v) ;  |B<sub>1</sub>(C)<sub>path</sub>| = 3,  |B<sub>1</sub>(A)<sub>star</sub>| = 5",
+        insight:"Both graphs have five nodes, yet their geometry differs. One message-passing layer aggregates the 1-hop ball B_1(v). From the centre of the star it reaches the WHOLE graph (5 nodes); from the middle of the path it reaches only {B,C,D} (3 nodes). Same node count, same local rule — different reach, because the domain is non-Euclidean.",
+        state:"path B1(C) = {B,C,D} → reaches "+pathReach+" nodes. star B1(A) = {A,B,C,D,E} → reaches "+starReach+" nodes. Node order is arbitrary; structure lives in the edges.",
+        metrics:{ballSize:starReach+" / 5",patchSize:"path: "+pathReach+"/5",hubMean:"—",leafMean:"—"},
+        focus:{center:[0,0,0],radius:18}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: aggregation — degree drives the SAME mean rule (star)
+    //   teaches: self-loop mean at hub A = (10+1+1+1+1)/5 = 2.8,
+    //   at leaf B = (1+10)/2 = 5.5. Different degree ⇒ different behaviour.
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="aggregation"){
+      const adj=STAR_ADJ, POS=STAR_POS;
+      // live self-loop means with the slider-controlled hub value
+      const hubAgg=(function(){let sum=valA,cnt=1;for(const u of adj[0]){sum+=valOf(u);cnt++;}return {v:sum/cnt,sum,cnt};})();
+      const leafAgg=(function(){let sum=valOf(1),cnt=1;for(const u of adj[1]){sum+=valOf(u);cnt++;}return {v:sum/cnt,sum,cnt};})();
+
+      // draw star with node values as bar heights above each node
+      for(let i=0;i<adj.length;i++)
+        for(const j of adj[i]) if(j>i)
+          api.edge(POS[i],POS[j],{color:"#2c4a66",width:0.05,opacity:0.8,group:"graph"});
+
+      for(let i=0;i<adj.length;i++){
+        const v=valOf(i);
+        const isHub=(i===0);
+        const col=isHub?"violet":"cyan";
+        const nd=api.node(POS[i],{color:col,r:isHub?0.42:0.30,label:NAMES[i],
+          labelColor:isHub?"#d6c8ff":"#bfe9ff",group:"graph"});
+        api.pick(nd.children[0],{node:{name:NAMES[i],val:v,deg:adj[i].length,
+          selfMean:(isHub?hubAgg.v:leafAgg.v)}});
+        // value bar above node (height ∝ value, capped for layout)
+        const h=0.25+Math.min(v,12)/12*2.4;
+        const bar=new T.Mesh(new T.BoxGeometry(0.22,h,0.22),
+          api.mat(isHub?"violet":"cyan",{emissive:0.45}));
+        bar.position.set(POS[i][0],h/2+0.45,POS[i][2]); gBars.add(bar);
+        lbl("x="+(Number.isInteger(v)?v:v.toFixed(1)),isHub?"#c4b5fd":"#9fe0ff",
+          0.95,POS[i][0],h+0.95,POS[i][2]);
+      }
+
+      // result panel: hub mean vs leaf mean as two reference bars (right side)
+      const bx=4.6;
+      [["hub  A → h_A'",hubAgg.v,"violet",-1.1],
+       ["leaf B → h_B'",leafAgg.v,"green",1.1]].forEach(([t,val,c,dz])=>{
+        const hh=0.2+val/6*2.8;
+        const bb=new T.Mesh(new T.BoxGeometry(0.85,hh,0.85),api.mat(c,{emissive:0.6}));
+        bb.position.set(bx,hh/2,dz); gBars.add(bb);
+        lbl(val.toFixed(2),c==="violet"?"#c4b5fd":"#7fe7c0",1.4,bx,hh+0.55,dz);
+        slbl(t,c==="violet"?"#c4b5fd":"#7fe7c0",0.4,bx,0.05,dz);
+      });
+      lbl("same mean rule, different degree","#a78bfa",1.1,1.4,0.0,3.6);
+
+      sceneSnap={mode,focus:0,hop:1,ballSize:5,patchSize:null,patchK:null,
+        hubMean:+hubAgg.v.toFixed(3),leafMean:+leafAgg.v.toFixed(3),
+        valA:+valA.toFixed(2),reachFrac:1};
+
+      return {
+        badge:"Aggregation · hub h_A' = "+hubAgg.v.toFixed(2)+" · leaf h_B' = "+leafAgg.v.toFixed(2),
+        formula:"h<sub>A</sub>' = (x<sub>A</sub>+Σx<sub>leaf</sub>)/5 = "+hubAgg.v.toFixed(2)+" ;  h<sub>B</sub>' = (x<sub>B</sub>+x<sub>A</sub>)/2 = "+leafAgg.v.toFixed(2),
+        insight:"Self-loop mean aggregation uses the SAME local rule everywhere, yet the hub and a leaf behave differently because their degree differs. With x_A="+(Number.isInteger(valA)?valA:valA.toFixed(1))+" and leaves =1, the hub averages over 5 values (degree 4 + self) while a leaf averages over 2 (degree 1 + self). Degree normalization is not a technical detail — it is the graph's geometry showing up in the computation.",
+        state:"hub A: ("+hubAgg.sum.toFixed(0)+")/"+hubAgg.cnt+" = "+hubAgg.v.toFixed(2)+"   ·   leaf B: ("+leafAgg.sum.toFixed(0)+")/"+leafAgg.cnt+" = "+leafAgg.v.toFixed(2)+". A hub protein / master regulator dominates a one-hop layer the same way.",
+        metrics:{ballSize:"5 / 5",patchSize:"deg(A)=4, deg(B)=1",
+          hubMean:hubAgg.v.toFixed(2),leafMean:leafAgg.v.toFixed(2)},
+        focus:{center:[1,0.5,0],radius:14}
+      };
+    }
+
+    return {badge:"C03",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:14}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"c03",
+    kind:"graphs-non-euclidean-domains",
+    eyebrow:"Block C · Geometric & Topological DL",
+    title:"C03 · Graphs as non-Euclidean domains",
+    subtitle:"The drawing is not the domain. Same five nodes A–E: a grid patch is a fixed square, but a graph k-hop ball, the path-vs-star reach, and degree-weighted aggregation all reveal a non-Euclidean geometry built from edges.",
+    selectedLabel:"Node",
+    selectedHint:"Click a node to inspect its distance, degree, and ball membership.",
+    modes:[
+      {value:"domain",      label:"Domain (grid patch vs k-hop ball)"},
+      {value:"topology",    label:"Topology (path vs star reach)"},
+      {value:"aggregation", label:"Aggregation (degree-weighted mean)"}
+    ],
+    params:[
+      {key:"focus", label:"focus node (0=A … 4=E)", min:0,max:4,step:1,value:2,
+       fmt:v=>["A","B","C","D","E"][Math.round(v)], modes:["domain"]},
+      {key:"hop",   label:"hop radius k", min:1,max:2,step:1,value:1,
+       fmt:v=>"k="+Math.round(v), modes:["domain"]},
+      {key:"patchK",label:"grid patch half-width", min:1,max:2,step:1,value:1,
+       fmt:v=>(2*Math.round(v)+1)+"×"+(2*Math.round(v)+1), modes:["domain"]},
+      {key:"valA",  label:"hub value x_A", min:1,max:12,step:1,value:10,
+       fmt:v=>"x_A="+Math.round(v), modes:["aggregation"]}
+    ],
+    metrics:[
+      {key:"ballSize", label:"Graph ball reach",  accent:"cyan"},
+      {key:"patchSize",label:"Grid / contrast",   accent:"amber"},
+      {key:"hubMean",  label:"hub mean h_A'",      accent:"violet"},
+      {key:"leafMean", label:"leaf mean h_B'",     accent:"green"}
+    ],
+    layers:[
+      {group:"grid",  label:"Grid patch"},
+      {group:"graph", label:"Graph nodes/edges"},
+      {group:"ball",  label:"k-hop ball shell"},
+      {group:"bars",  label:"Value bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Star centre (A, k=1)",
+      on:api=>{api.setMode("topology");}
+    },
+    secondary:{
+      label:"Hub vs leaf mean",
+      on:api=>{api.setMode("aggregation");}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:15},
+    hint:'<span style="color:#4dd7ff">cyan</span>=in-ball / leaf · <span style="color:#fbbf24">amber</span>=grid patch / 1-hop reach · <span style="color:#a78bfa">violet</span>=hub A · <span style="color:#34d399">green</span>=leaf mean · white=focus node. One hop = one edge of the chosen evidence graph, not one unit of physical distance.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="domain") api.frame([-1,0,0],15);
+      else if(s.mode==="topology") api.frame([0,0,0],18);
+      else api.frame([1,0.5,0],14);
+    },
+    onSelect(api,d){
+      if(d.node){
+        const n=d.node;
+        let t="Node "+n.name+" · degree "+n.deg;
+        if(n.dist!=null) t+=" · d_G="+n.dist;
+        if(n.inBall!=null) t+=(n.inBall?" · IN ball":" · outside ball");
+        if(n.inReach!=null) t+=(n.inReach?" · reached (1 hop)":" · not reached");
+        if(n.graph) t+=" · "+n.graph;
+        if(n.val!=null) t+=" · x="+(Number.isInteger(n.val)?n.val:n.val.toFixed(1));
+        if(n.selfMean!=null) t+=" · self-mean "+n.selfMean.toFixed(2);
+        api.setSelected(t);
+      }
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const focusIdx=Math.round(s.focus);
+      const hop=Math.round(s.hop);
+      const patchK=Math.round(s.patchK);
+      const valA=s.valA;
+      // recompute the lesson-specific numbers deterministically
+      const ballPath=(function(){const d=bfs(PATH_ADJ,focusIdx);let c=0;for(const x of d)if(x<=hop)c++;return c;})();
+      const patchSize=(2*patchK+1)*(2*patchK+1);
+      const hubMean=(valA+4*1)/5;            // self-loop mean at star hub A
+      const leafMean=(1+valA)/2;             // self-loop mean at a leaf
+      const pathReach=3, starReach=5;        // 1-hop reaches: path C vs star A
+      return {
+        mode,
+        focusNode:focusIdx,
+        hop,
+        patchK,
+        valA:+(+valA).toFixed(2),
+        ballSizePath:ballPath,
+        patchSize,
+        hubMean:+hubMean.toFixed(3),
+        leafMean:+leafMean.toFixed(3),
+        pathReach1hop:pathReach,
+        starReach1hop:starReach,
+        starReachesWholeGraph:(starReach===5),
+        ballReach:(mode==="topology")?starReach:(mode==="aggregation"?5:ballPath)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

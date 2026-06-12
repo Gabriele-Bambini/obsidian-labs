@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F02 · Classical GRN inference — correlation, mutual information, trees</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no RNG, no clock) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  FACTS — the note's Section-5 worked example (4 genes × 5 cells).
+  //  True network: TF1 → Gene_A → Gene_B (cascade); TF2 represses TF1.
+  //  NO direct edges: TF1→Gene_B, TF2→Gene_A, TF2→Gene_B.
+  // ══════════════════════════════════════════════════════════════════════════
+  const X={                 // log-normalized expression, [cell][gene] TF1,TF2,A,B
+    TF1:[0.1,1.0,2.5,3.8,4.2],
+    TF2:[4.5,3.8,2.1,1.2,0.5],
+    A  :[0.2,1.1,2.6,3.9,4.1],
+    B  :[0.1,0.9,2.4,3.7,4.0]
+  };
+  const GENES=["TF1","TF2","A","B"];
+  // Pearson |r| matrix from the note (Step 1). All near-1.0 via single cascade.
+  const PEAR={             // |r|
+    "TF1-TF2":0.988,"TF1-A":0.999,"TF1-B":0.997,
+    "TF2-A":0.991,"TF2-B":0.990,"A-B":0.999
+  };
+  // Mutual information values from the note (Step 2).
+  const MI={
+    "TF1-TF2":0.975,"TF1-A":0.998,"TF1-B":0.994,
+    "TF2-A":0.969,"TF2-B":0.981,"A-B":0.998
+  };
+  // GENIE3 importances for target Gene_B (Step 3): TF features = [TF1,TF2].
+  const G3_B={TF1:0.75,TF2:0.25};
+  // True direct edges (for precision/recall scoring): TF1→A, A→B. (TF2⊣TF1 also.)
+  const TRUE_DIRECT={"TF1-A":1,"A-B":1,"TF1-TF2":1};
+
+  // pair key helper (unordered for symmetric methods)
+  function pk(a,b){return GENES.indexOf(a)<GENES.indexOf(b)?a+"-"+b:b+"-"+a;}
+  function pear(a,b){return PEAR[pk(a,b)];}
+  function mi(a,b){return MI[pk(a,b)];}
+
+  // node ring layout (stable). TF1,TF2,A,B placed for a readable cascade.
+  const POS={
+    TF1:[-3.6, 0.0,-2.2],
+    TF2:[-3.6, 0.0, 2.2],
+    A  :[ 0.4, 0.0,-1.2],
+    B  :[ 4.0, 0.0, 0.8]
+  };
+  const NCOL={TF1:"#4dd7ff",TF2:"#a78bfa",A:"#34d399",B:"#fbbf24"};
+
+  let sceneSnap={};
+
+  // ── build ──────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const tau=s.tau;            // correlation / score threshold 0..1
+    const eps=s.eps;            // ARACNE DPI epsilon 0..0.20
+    const lambda=s.lambda;      // GENIE3 importance gate 0..1
+    const ncells=Math.round(s.ncells); // 5..200 (estimator reliability)
+
+    const gNet  =api.group("net");
+    const gEdges=api.group("edges");
+    const gBars =api.group("bars");
+    const gLab  =api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);}
+    function S(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);}
+
+    // draw the 4 gene nodes (shared across all modes)
+    GENES.forEach(g=>{
+      const p=POS[g];
+      api.node(p,{color:NCOL[g],r:0.42,group:"net",label:(g.length<=2?"Gene_"+g:g),
+        pick:{gene:g}});
+    });
+    // truth scaffold: faint grey TRUE-direct backbone TF1→A→B and TF2⊣TF1
+    api.arrow(POS.TF1,POS.A,{color:"#24445e",width:0.03,head:0.18,group:"net"});
+    api.arrow(POS.A,POS.B,{color:"#24445e",width:0.03,head:0.18,group:"net"});
+    api.edge(POS.TF2,POS.TF1,{color:"#3a2c52",width:0.03,group:"net"});
+    L("true: TF1→A→B  ·  TF2⊣TF1","#5b6b80",0.95,0.2,-0.05,4.0);
+
+    // sample-size reliability factor (small N inflates / destabilises estimates)
+    // deterministic: shrinks separability when ncells small.
+    const rel=Math.min(1,Math.max(0,(ncells-5)/(120-5)));      // 0 at 5 cells, 1 at >=120
+    const noiseAmp=(1-rel)*0.06;                                // |r|/MI wobble
+
+    const ALLPAIRS=[["TF1","TF2"],["TF1","A"],["TF1","B"],["TF2","A"],["TF2","B"],["A","B"]];
+
+    // helper: draw a scored undirected edge with thickness ~ score, color by retained/pruned
+    function scoredEdge(a,b,score,retained,colHex){
+      const w=0.04+score*0.16;
+      const c=retained?colHex:"#3a4a5e";
+      const op=retained?0.95:0.30;
+      const e=api.edge(POS[a],POS[b],{color:c,width:w,opacity:op,group:"edges"});
+      // midpoint score chip
+      const mid=[(POS[a][0]+POS[b][0])/2,0.55,(POS[a][2]+POS[b][2])/2];
+      S(score.toFixed(2),retained?colHex:"#5a6a7e",0.34,mid[0],mid[1],mid[2]);
+      return e;
+    }
+
+    // collect scored edges + truth for precision/recall
+    let retainedPairs=[];
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: pearson  — symmetric linear |r|, threshold tau. Indirect-edge flood.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="pearson"){
+      ALLPAIRS.forEach(([a,b])=>{
+        const r=Math.min(0.999,Math.max(0,pear(a,b)+ (prand(GENES.indexOf(a)*5+GENES.indexOf(b))-0.5)*noiseAmp));
+        const retained=r>=tau;
+        scoredEdge(a,b,r,retained,"#4dd7ff");
+        if(retained)retainedPairs.push(pk(a,b));
+      });
+      L("Pearson |r| ≥ τ  (symmetric, undirected)","#4dd7ff",1.15,0.2,2.4,0.0);
+      L("τ = "+tau.toFixed(2),"#fbbf24",1.1,4.6,1.6,0.0);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: aracne  — MI + DPI pruning. Removes the spurious cascade chord.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="aracne"){
+      // start with MI-thresholded edges, then DPI-prune indirect chords.
+      const pruned={};
+      // DPI over every triple: prune (i,k) if MI(i,k) < min(MI(i,j),MI(j,k))*(1-eps)
+      for(let i=0;i<GENES.length;i++)for(let k=i+1;k<GENES.length;k++){
+        const gi=GENES[i],gk=GENES[k];
+        for(let j=0;j<GENES.length;j++){
+          if(j===i||j===k)continue;const gj=GENES[j];
+          const mik=mi(gi,gk),mij=mi(gi,gj),mjk=mi(gj,gk);
+          if(mik < Math.min(mij,mjk)*(1-eps)){pruned[pk(gi,gk)]=gj;break;}
+        }
+      }
+      ALLPAIRS.forEach(([a,b])=>{
+        const m=Math.min(0.999,Math.max(0,mi(a,b)+(prand(GENES.indexOf(a)*7+GENES.indexOf(b)+2)-0.5)*noiseAmp));
+        const passMI=m>=tau;
+        const isPruned=!!pruned[pk(a,b)];
+        const retained=passMI && !isPruned;
+        scoredEdge(a,b,m,retained,"#34d399");
+        if(isPruned && passMI){
+          const mid=[(POS[a][0]+POS[b][0])/2,1.05,(POS[a][2]+POS[b][2])/2];
+          S("DPI ✕ via "+pruned[pk(a,b)],"#f472b6",0.34,mid[0],mid[1],mid[2]);
+        }
+        if(retained)retainedPairs.push(pk(a,b));
+      });
+      L("MI ≥ τ then ARACNE DPI prune","#34d399",1.15,0.2,2.4,0.0);
+      L("ε = "+eps.toFixed(2)+"  ·  τ = "+tau.toFixed(2),"#fbbf24",1.05,4.4,1.6,0.0);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: genie3  — directed RF importance, TF→target, gate lambda. Bars.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="genie3"){
+      // directed importances: for target B, features TF1,TF2 (A excluded: not a TF).
+      // for target A, features TF1,TF2; for target TF1, feature TF2.
+      const imps=[
+        {tf:"TF1",g:"B",v:G3_B.TF1},
+        {tf:"TF2",g:"B",v:G3_B.TF2},
+        {tf:"TF1",g:"A",v:0.86},
+        {tf:"TF2",g:"A",v:0.14},
+        {tf:"TF2",g:"TF1",v:0.93}
+      ];
+      imps.forEach((e,idx)=>{
+        const v=Math.min(0.99,Math.max(0,e.v+(prand(idx*11+3)-0.5)*noiseAmp));
+        const retained=v>=lambda;
+        const colHex=retained?"#fbbf24":"#3a4a5e";
+        const op=retained?0.97:0.28;
+        // directed arrow TF -> gene
+        const w=0.04+v*0.16;
+        api.arrow(POS[e.tf],POS[e.g],{color:colHex,width:w,head:0.24,opacity:op,group:"edges"});
+        const mid=[(POS[e.tf][0]+POS[e.g][0])/2,0.7,(POS[e.tf][2]+POS[e.g][2])/2];
+        S(v.toFixed(2),retained?"#fbbf24":"#5a6a7e",0.34,mid[0],mid[1],mid[2]);
+        if(retained)retainedPairs.push(pk(e.tf,e.g));
+      });
+      // importance bars for target Gene_B (the headline contrast)
+      const bx=[-2.0,-0.2];
+      [["TF1",G3_B.TF1],["TF2",G3_B.TF2]].forEach(([tf,v],i)=>{
+        const h=0.2+v*3.2;
+        const bar=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),
+          new T.MeshStandardMaterial({color:new T.Color(NCOL[tf]),emissive:new T.Color(NCOL[tf]).multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+        bar.position.set(bx[i],h/2,4.6);gBars.add(bar);
+        L((v*100).toFixed(0)+"%",NCOL[tf],1.2,bx[i],h+0.5,4.6);
+        S(tf+"→B",NCOL[tf],0.36,bx[i],0.05,4.6);
+      });
+      L("imp(TF→B) into target Gene_B","#fbbf24",1.0,-1.1,3.9,4.6);
+      L("GENIE3 directed · imp ≥ λ","#fbbf24",1.15,0.2,2.4,0.0);
+      L("λ = "+lambda.toFixed(2),"#4dd7ff",1.1,4.6,1.6,0.0);
+    }
+
+    // ── precision / recall vs TRUE direct edges (cascade-aware) ──────────────
+    const truthSet=Object.keys(TRUE_DIRECT);
+    let tp=0;
+    retainedPairs.forEach(p=>{if(TRUE_DIRECT[p])tp++;});
+    const fp=retainedPairs.length-tp;
+    const prec=retainedPairs.length>0?tp/retainedPairs.length:0;
+    const rec=truthSet.length>0?tp/truthSet.length:0;
+    const f1=(prec+rec)>0?2*prec*rec/(prec+rec):0;
+
+    api.setMetric("edges",""+retainedPairs.length);
+    api.setMetric("falsePos",""+fp);
+    api.setMetric("precision",(prec*100).toFixed(0)+"%");
+    api.setMetric("f1",(f1*100).toFixed(0)+"%");
+
+    sceneSnap={
+      mode, tau:+tau.toFixed(3), eps:+eps.toFixed(3), lambda:+lambda.toFixed(3), ncells,
+      edgesRetained:retainedPairs.length, falsePositives:fp,
+      truePositives:tp, precision:+prec.toFixed(3), recall:+rec.toFixed(3), f1:+f1.toFixed(3),
+      spuriousTF1B_retained: retainedPairs.indexOf("TF1-B")>=0,
+      reliability:+rel.toFixed(3)
+    };
+
+    const modeName={pearson:"Pearson correlation",aracne:"ARACNE (MI + DPI)",genie3:"GENIE3 (tree importance)"}[mode];
+    const formula={
+      pearson:"S(i,j) = |r(x_i,x_j)| ≥ τ &nbsp;·&nbsp; symmetric, undirected",
+      aracne:"MI(i,j) = H(i)+H(j)−H(i,j) &nbsp;·&nbsp; prune (i,k) if MI(i,k) < min(MI(i,j),MI(j,k))·(1−ε)",
+      genie3:"S(t,g) = Σ ΔVar from TF_t splits / Σ_t' &nbsp;·&nbsp; directed TF→gene, S(t,g) ≥ λ"
+    }[mode];
+    const insight={
+      pearson:"Every gene co-varies through the single TF1→A→B cascade, so the |r| matrix is uniformly ≈0.99. At any usable threshold τ, Pearson floods the network with indirect edges — including the spurious TF1→Gene_B chord (|r|=0.997). No pruning mechanism exists. Precision collapses.",
+      aracne:"Mutual information sees the same near-1.0 dependence, but the Data Processing Inequality compares each chord to its detour. At ε=0 the strict rule MI(TF1,Gene_B)=0.994 < min(0.998,0.998) fires, so the cascade chord TF1–Gene_B is pruned as indirect (via Gene_A); TF2–Gene_A is pruned too. DPI cleans tree-structured cascades — its strength. But the MI values are razor-close: raise ε past ~0.01 and pruning stops entirely (the note's failure mode), and even at ε=0 DPI over-prunes the true TF2–TF1 edge.",
+      genie3:"GENIE3 regresses each target on the TF set, giving directed TF→gene edges. For target Gene_B, imp(TF1)=0.75 ≫ imp(TF2)=0.25 — but TF1 has NO direct edge to Gene_B. The importance is real (TF1 predicts the cascade) yet indirect: GENIE3 keeps the spurious edge because the true intermediate Gene_A is not in the TF feature set."
+    }[mode];
+
+    const focusC={pearson:[0.2,1,0.2],aracne:[0.2,1,0.2],genie3:[0,1.4,2.2]}[mode];
+    return {
+      badge:modeName+" · "+retainedPairs.length+" edges · "+fp+" false-pos",
+      formula:formula,
+      insight:insight,
+      insightLabel:"What this method does to the cascade",
+      state:"Retained "+retainedPairs.length+" edges, "+fp+" false positive(s). Precision "+(prec*100).toFixed(0)+"%, recall "+(rec*100).toFixed(0)+"%. Spurious TF1→Gene_B "+(sceneSnap.spuriousTF1B_retained?"RETAINED (artifact)":"removed")+". N="+ncells+" cells → estimator reliability "+(rel*100).toFixed(0)+"%.",
+      metrics:{
+        edges:""+retainedPairs.length,
+        falsePos:""+fp,
+        precision:(prec*100).toFixed(0)+"%",
+        f1:(f1*100).toFixed(0)+"%"
+      },
+      focus:{center:focusC,radius:13}
+    };
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f02",
+    kind:"classical-grn-inference",
+    eyebrow:"Block F · GRN Inference",
+    title:"F02 · Classical GRN inference — correlation, mutual information, trees",
+    subtitle:"One 4-gene × 5-cell cascade (TF1→Gene_A→Gene_B; TF2⊣TF1) judged by three classical methods. Each draws a different network from the SAME co-variation — and only ARACNE removes the spurious indirect chord.",
+    selectedLabel:"Gene / edge",
+    selectedHint:"Click a gene node.",
+    modes:[
+      {value:"pearson", label:"Pearson |r| (symmetric, no pruning)"},
+      {value:"aracne",  label:"ARACNE — MI + DPI pruning"},
+      {value:"genie3",  label:"GENIE3 — directed tree importance"}
+    ],
+    params:[
+      {key:"tau",   label:"score threshold τ (|r| / MI)",min:0.90,max:1.00,step:0.005,value:0.95,
+       fmt:v=>v.toFixed(3),modes:["pearson","aracne"]},
+      {key:"eps",   label:"DPI tolerance ε (0 = strict prune)",min:0.00,max:0.20,step:0.005,value:0.00,
+       fmt:v=>v.toFixed(3),modes:["aracne"]},
+      {key:"lambda",label:"GENIE3 importance gate λ",min:0.05,max:0.90,step:0.01,value:0.30,
+       fmt:v=>v.toFixed(2),modes:["genie3"]},
+      {key:"ncells",label:"# cells N (estimator reliability)",min:5,max:200,step:5,value:120,
+       fmt:v=>Math.round(v).toString()}
+    ],
+    metrics:[
+      {key:"edges",    label:"Edges retained",accent:"cyan"},
+      {key:"falsePos", label:"False positives",accent:"rose"},
+      {key:"precision",label:"Precision (vs direct)",accent:"green"},
+      {key:"f1",       label:"F1",accent:"amber"}
+    ],
+    layers:[
+      {group:"net",    label:"Gene nodes / truth"},
+      {group:"edges",  label:"Inferred edges"},
+      {group:"bars",   label:"GENIE3 importance bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Strict τ (0.999)",
+      on:api=>{api.setParam("tau",0.999);}
+    },
+    secondary:{
+      label:"Loose τ (0.90)",
+      on:api=>{api.setParam("tau",0.90);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF1 · <span style="color:#a78bfa">violet</span>=TF2 · <span style="color:#34d399">green</span>=Gene_A · <span style="color:#fbbf24">amber</span>=Gene_B · <span style="color:#f472b6">pink</span>=DPI-pruned · dim=below threshold. Grey backbone = TRUE direct edges.',
+    onParam(api){
+      const m=api.state.mode;
+      if(m==="genie3")api.frame([0,1.4,2.2],13);else api.frame([0.2,1,0.2],13);
+    },
+    onMode(api){
+      const m=api.state.mode;
+      if(m==="genie3")api.frame([0,1.4,2.2],13);else api.frame([0.2,1,0.2],13);
+    },
+    onSelect(api,d){
+      if(d.gene){
+        const nm=d.gene.length<=2?"Gene_"+d.gene:d.gene;
+        const role={TF1:"transcription factor (cascade root)",TF2:"transcription factor (represses TF1)",A:"intermediate target (TF1→A)",B:"terminal readout (A→B; NO direct TF edge)"}[d.gene];
+        api.setSelected(nm+" · "+role);
+      }
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode, tau=s.tau, eps=s.eps, lambda=s.lambda, ncells=Math.round(s.ncells);
+      const rel=Math.min(1,Math.max(0,(ncells-5)/(120-5)));
+      // recompute retained edges deterministically (mirror build, no noise term for stability)
+      const GG=["TF1","TF2","A","B"];
+      const PAIRS=[["TF1","TF2"],["TF1","A"],["TF1","B"],["TF2","A"],["TF2","B"],["A","B"]];
+      const _PEAR={"TF1-TF2":0.988,"TF1-A":0.999,"TF1-B":0.997,"TF2-A":0.991,"TF2-B":0.990,"A-B":0.999};
+      const _MI={"TF1-TF2":0.975,"TF1-A":0.998,"TF1-B":0.994,"TF2-A":0.969,"TF2-B":0.981,"A-B":0.998};
+      const _TRUE={"TF1-A":1,"A-B":1,"TF1-TF2":1};
+      const _pk=(a,b)=>GG.indexOf(a)<GG.indexOf(b)?a+"-"+b:b+"-"+a;
+      let retained=[];
+      if(mode==="pearson"){
+        PAIRS.forEach(([a,b])=>{if(_PEAR[_pk(a,b)]>=tau)retained.push(_pk(a,b));});
+      }else if(mode==="aracne"){
+        const pruned={};
+        for(let i=0;i<4;i++)for(let k=i+1;k<4;k++){const gi=GG[i],gk=GG[k];
+          for(let j=0;j<4;j++){if(j===i||j===k)continue;const gj=GG[j];
+            if(_MI[_pk(gi,gk)]<Math.min(_MI[_pk(gi,gj)],_MI[_pk(gj,gk)])*(1-eps)){pruned[_pk(gi,gk)]=1;break;}}}
+        PAIRS.forEach(([a,b])=>{if(_MI[_pk(a,b)]>=tau && !pruned[_pk(a,b)])retained.push(_pk(a,b));});
+      }else{
+        const imps=[["TF1","B",0.75],["TF2","B",0.25],["TF1","A",0.86],["TF2","A",0.14],["TF2","TF1",0.93]];
+        imps.forEach(([tf,g,v])=>{if(v>=lambda)retained.push(_pk(tf,g));});
+      }
+      let tp=0;retained.forEach(p=>{if(_TRUE[p])tp++;});
+      const fp=retained.length-tp;
+      const prec=retained.length>0?tp/retained.length:0;
+      const rec=tp/3;
+      const f1=(prec+rec)>0?2*prec*rec/(prec+rec):0;
+      return {
+        mode,
+        tau:+tau.toFixed(3),
+        eps:+eps.toFixed(3),
+        lambda:+lambda.toFixed(3),
+        ncells,
+        edgesRetained:retained.length,
+        falsePositives:fp,
+        truePositives:tp,
+        precision:+prec.toFixed(3),
+        recall:+rec.toFixed(3),
+        f1:+f1.toFixed(3),
+        spuriousTF1B_retained:retained.indexOf("TF1-B")>=0,
+        reliability:+rel.toFixed(3),
+        directional:mode==="genie3"
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

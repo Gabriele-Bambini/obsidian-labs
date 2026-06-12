@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D09 · Drug-target interaction graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; fully reproducible) ────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── lesson FACTS (note Section 5, aspirin worked example) ────────────────
+  // Aspirin (acetylsalicylic acid, CID 2244), DMPNN 256-dim embedding.
+  // COX-1 (PTGS1,P23219): IC50=1.6 µM  -> pIC50 = -log10(1.6e-6)  = 5.80
+  // COX-2 (PTGS2,P35354): IC50=278 µM  -> pIC50 = -log10(278e-6)  = 3.56
+  // CDK2 (negative control): untested, expected pIC50 < 3.0 (OWA).
+  // AMPK: indirect pharmacology -> no direct binding edge, DTI score ~0.
+  // Diflunisal: Tanimoto(aspirin)=0.51; threshold 0.4 -> sim edge exists.
+  //   augmented prediction aspirin-COX2 lifts 3.52 -> ~4.0 (true 3.56).
+  // Activity threshold pIC50 = 6.0.
+  const F={
+    pAspirinCOX1: 5.80,   // primary on-target
+    pAspirinCOX2: 3.56,   // secondary off-target (true)
+    pAspirinCDK2: 2.6,    // OWA negative control (expected < 3.0)
+    pAspirinAMPK: 0.0,    // indirect — no direct binding edge
+    tanimoto:     0.51,   // aspirin <-> diflunisal
+    tanThresh:    0.40,   // augmentation similarity threshold
+    cox2Bipart:   3.52,   // bipartite-only predicted aspirin-COX2
+    cox2Augment:  4.00,   // augmented predicted aspirin-COX2 (closer to 3.56)
+    actThresh:    6.0,    // pIC50 activity threshold
+    // split AUROC bands (note Section 3)
+    aurocRandom:  0.90, aurocScaffold: 0.79, aurocTarget: 0.74, aurocBoth: 0.68
+  };
+
+  // proteins (targets) — fixed ring around aspirin
+  const TARGETS=[
+    {id:"COX1", uniprot:"P23219", p:F.pAspirinCOX1, role:"primary",  tested:true,  fam:"oxidoreductase"},
+    {id:"COX2", uniprot:"P35354", p:F.pAspirinCOX2, role:"secondary",tested:true,  fam:"oxidoreductase"},
+    {id:"CDK2", uniprot:"P24941", p:F.pAspirinCDK2, role:"negctrl",  tested:false, fam:"kinase"},
+    {id:"AMPK", uniprot:"Q13131", p:F.pAspirinAMPK, role:"indirect", tested:false, fam:"kinase"}
+  ];
+
+  let sceneSnap={};
+
+  // confidence weight applied to an edge given evidence-tier slider (0..3)
+  // tiers: 0 HTS hit, 1 assay positive, 2 experimental, 3 clinical
+  function tierWeight(tier){return [0.30,0.55,0.80,1.0][Math.max(0,Math.min(3,Math.round(tier)))];}
+
+  // bilinear-style affinity readout used for the ranking bars (mode bipartite)
+  function affinity(target,tier,owaWeight){
+    if(!target.tested){
+      // untested pair: OWA — score is an uncertain low estimate, scaled by owaWeight
+      return target.p*owaWeight*0.5;
+    }
+    return target.p*tierWeight(tier);
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const tier=Math.round(s.tier);              // evidence tier 0..3
+    const owaWeight=s.owaWeight;                 // PU loss weight on absent edges 0..1
+    const tanimoto=s.tanimoto;                   // augmentation threshold 0.2..0.9
+    const splitIdx=Math.round(s.split);          // 0 random 1 scaffold 2 target 3 both
+
+    const gGraph =api.group("graph");
+    const gEdges =api.group("edges");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // drug / pretrained-good
+    const GR=new T.Color("#34d399");   // confirmed / on-target
+    const AM=new T.Color("#fbbf24");   // secondary / warning
+    const VI=new T.Color("#a78bfa");   // similarity / transfer
+    const RO=new T.Color("#fb7185");   // OWA / untested / memorization
+    const SL=new T.Color("#54667c");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const tierNames=["HTS hit","assay+","experimental","clinical"];
+    const splitNames=["random","scaffold","target","both"];
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: bipartite — the DTI bipartite graph + OWA + bilinear ranking
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="bipartite"){
+      // aspirin drug node at center-left
+      const drugPos=new T.Vector3(-3.4,0,0);
+      const drug=new T.Mesh(new T.SphereGeometry(0.62,28,20),
+        new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.6,roughness:0.3}));
+      drug.position.copy(drugPos);
+      gGraph.add(drug);
+      api.pick(drug,{drug:{id:"aspirin",cid:2244}});
+      addLbl("aspirin","#4dd7ff",1.5,-3.4,1.25,0);
+      addSlbl("CID 2244 · DMPNN 256-d","#7f93a8",0.34,-3.4,-1.05,0);
+
+      // protein targets stacked on the right partition
+      const yPos=[2.4,0.8,-0.8,-2.4];
+      TARGETS.forEach((tg,idx)=>{
+        const pos=new T.Vector3(3.0,yPos[idx],0);
+        const confirmed=tg.tested;
+        const baseCol=tg.role==="primary"?GR:(tg.role==="secondary"?AM:RO);
+        const sph=new T.Mesh(new T.SphereGeometry(confirmed?0.46:0.36,24,18),
+          new T.MeshStandardMaterial({
+            color:confirmed?baseCol:baseCol.clone(),
+            emissive:baseCol.clone().multiplyScalar(confirmed?0.6:0.25),
+            emissiveIntensity:confirmed?0.6:0.25,roughness:0.4,
+            transparent:!confirmed,opacity:confirmed?1.0:0.55}));
+        sph.position.copy(pos);
+        gGraph.add(sph);
+        api.pick(sph,{target:{id:tg.id,uniprot:tg.uniprot,p:tg.p,tested:confirmed,role:tg.role}});
+        addLbl(tg.id,baseCol.getStyle(),1.2,3.95,yPos[idx]+0.05,0);
+        addSlbl(tg.uniprot,"#6b7a8d",0.30,3.95,yPos[idx]-0.45,0);
+
+        // DTI edge: solid for confirmed binding, dashed-faint for OWA untested
+        const w=tierWeight(tier);
+        if(confirmed){
+          const edgeCol=baseCol.clone().lerp(new T.Color("#0c1322"),1-Math.min(1,tg.p/6));
+          const ep=[drugPos.clone(),pos.clone()];
+          const ln=new T.Line(new T.BufferGeometry().setFromPoints(ep),
+            new T.LineBasicMaterial({color:edgeCol.getHex(),transparent:true,opacity:0.35+0.55*w}));
+          gEdges.add(ln);
+          // pIC50 tag mid-edge
+          const mid=drugPos.clone().add(pos).multiplyScalar(0.5);
+          addSlbl("pIC50 "+tg.p.toFixed(2),baseCol.getStyle(),0.34,mid.x,mid.y+0.28,0);
+        }else{
+          // OWA: untested pair, only present as low-weight (PU) hypothesis
+          const ep=[drugPos.clone(),pos.clone()];
+          const lm=new T.LineDashedMaterial({color:RO.getHex(),dashSize:0.22,gapSize:0.18,transparent:true,opacity:0.18+0.5*owaWeight});
+          const ln=new T.Line(new T.BufferGeometry().setFromPoints(ep),lm);ln.computeLineDistances();
+          gEdges.add(ln);
+          const mid=drugPos.clone().add(pos).multiplyScalar(0.5);
+          addSlbl("OWA w="+owaWeight.toFixed(2),"#fb7185",0.30,mid.x,mid.y+0.26,0);
+        }
+      });
+
+      // partition labels
+      addLbl("V_D  drug","#4dd7ff",1.05,-3.4,3.0,0);
+      addLbl("V_P  proteins","#9fb4cc",1.05,3.4,3.4,0);
+
+      // affinity ranking bars (foreground, on the floor) — bilinear score
+      const ranked=TARGETS.map(tg=>({tg,a:affinity(tg,tier,owaWeight)}));
+      const maxA=Math.max(0.5,...ranked.map(r=>r.a));
+      ranked.forEach((r,idx)=>{
+        const x=-3.0+idx*2.0;
+        const h=0.12+(r.a/6)*3.2;
+        const col=r.tg.role==="primary"?GR:(r.tg.role==="secondary"?AM:RO);
+        const bar=new T.Mesh(new T.BoxGeometry(1.1,h,1.1),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),emissiveIntensity:0.4,roughness:0.45}));
+        bar.position.set(x,h/2,4.0);
+        gBars.add(bar);
+        api.pick(bar,{score:{id:r.tg.id,a:r.a}});
+        addSlbl(r.tg.id,col.getStyle(),0.34,x,0.05,4.0);
+        addSlbl(r.a.toFixed(2),col.getStyle(),0.34,x,h+0.35,4.0);
+      });
+      addLbl("bilinear ranking  hᵀWh","#8a99ad",1.0,-1.0,0.05,5.4);
+
+      const aCOX1=affinity(TARGETS[0],tier,owaWeight);
+      const aCOX2=affinity(TARGETS[1],tier,owaWeight);
+      const margin=aCOX1-aCOX2;
+      const cox1Active=F.pAspirinCOX1>=F.actThresh;   // false at thresh 6.0 (5.80)
+      sceneSnap={mode,tier,owaWeight:+owaWeight.toFixed(2),tanimoto:+tanimoto.toFixed(2),split:splitIdx,
+        primaryAffinity:+aCOX1.toFixed(2),secondaryAffinity:+aCOX2.toFixed(2),
+        rankingMargin:+margin.toFixed(2),predCOX2:+F.pAspirinCOX2.toFixed(2),
+        scaffoldGap:+(F.aurocRandom-F.aurocScaffold).toFixed(2),activeAtThresh:cox1Active};
+
+      return {
+        badge:"Bipartite DTI · evidence: "+tierNames[tier]+" · OWA w="+owaWeight.toFixed(2),
+        formula:"score(d,p) = h_d<sup>T</sup> W h_p &nbsp;·&nbsp; e(d,p)∈E ⟺ pIC50 ≥ 6.0",
+        insight:"Aspirin (cyan, V_D) binds proteins (V_P) only through confirmed edges. COX-1 (green, pIC50 "+F.pAspirinCOX1.toFixed(2)+") ranks above COX-2 (amber, "+F.pAspirinCOX2.toFixed(2)+"). CDK2 and AMPK are untested — under the Open-World Assumption their dashed edges are NOT confirmed negatives; PU learning gives them a low loss weight, not zero.",
+        state:"Bilinear ranking: COX-1 "+aCOX1.toFixed(2)+" ≫ COX-2 "+aCOX2.toFixed(2)+" ≫ CDK2/AMPK. Margin "+margin.toFixed(2)+". At the 6.0 activity threshold even COX-1 ("+F.pAspirinCOX1.toFixed(2)+") classifies inactive — a known threshold pitfall.",
+        metrics:{
+          primaryAffinity:aCOX1.toFixed(2),
+          secondaryAffinity:aCOX2.toFixed(2),
+          rankingMargin:margin.toFixed(2)+" pIC50",
+          scaffoldGap:"—"
+        },
+        focus:{center:[0,0.5,2.0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: augment — drug-drug Tanimoto edge enables 2-hop transfer
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="augment"){
+      const edgeOn=(F.tanimoto>=tanimoto); // sim edge exists iff Tanimoto >= threshold
+      const aspirinPos=new T.Vector3(-3.2,0.8,0);
+      const difluPos  =new T.Vector3(-3.2,-2.0,0);
+      const cox2Pos   =new T.Vector3(3.0,-0.4,0);
+
+      // aspirin
+      const aspirin=new T.Mesh(new T.SphereGeometry(0.58,28,20),
+        new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.6,roughness:0.3}));
+      aspirin.position.copy(aspirinPos);gGraph.add(aspirin);
+      api.pick(aspirin,{drug:{id:"aspirin"}});
+      addLbl("aspirin","#4dd7ff",1.35,-3.2,2.0,0);
+
+      // diflunisal (structural analog)
+      const diflu=new T.Mesh(new T.SphereGeometry(0.5,24,18),
+        new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.55,roughness:0.35}));
+      diflu.position.copy(difluPos);gGraph.add(diflu);
+      api.pick(diflu,{drug:{id:"diflunisal"}});
+      addLbl("diflunisal","#a78bfa",1.2,-3.2,-3.05,0);
+      addSlbl("strong COX-2 binder","#7f93a8",0.32,-3.2,-3.55,0);
+
+      // COX-2 target
+      const cox2=new T.Mesh(new T.SphereGeometry(0.5,24,18),
+        new T.MeshStandardMaterial({color:AM,emissive:AM.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+      cox2.position.copy(cox2Pos);gGraph.add(cox2);
+      api.pick(cox2,{target:{id:"COX2",p:F.pAspirinCOX2}});
+      addLbl("COX-2","#fbbf24",1.25,3.95,-0.35,0);
+      addSlbl("P35354","#6b7a8d",0.30,3.95,-0.85,0);
+
+      // r0 DTI edges: diflunisal -> COX2 (strong), aspirin -> COX2 (weak)
+      const dfEdge=new T.Line(new T.BufferGeometry().setFromPoints([difluPos.clone(),cox2Pos.clone()]),
+        new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.85}));
+      gEdges.add(dfEdge);
+      addSlbl("binds COX-2","#a78bfa",0.32,0.0,-1.35,0);
+
+      const asWeak=new T.Line(new T.BufferGeometry().setFromPoints([aspirinPos.clone(),cox2Pos.clone()]),
+        new T.LineBasicMaterial({color:AM.getHex(),transparent:true,opacity:0.4}));
+      gEdges.add(asWeak);
+
+      // r1 drug-drug Tanimoto similarity edge (the augmentation)
+      if(edgeOn){
+        const simPts=[aspirinPos.clone(),difluPos.clone()];
+        const lm=new T.LineDashedMaterial({color:GR.getHex(),dashSize:0.2,gapSize:0.14,transparent:true,opacity:0.9});
+        const sim=new T.Line(new T.BufferGeometry().setFromPoints(simPts),lm);sim.computeLineDistances();
+        gEdges.add(sim);
+        addSlbl("Tanimoto "+F.tanimoto.toFixed(2)+" ≥ "+tanimoto.toFixed(2),"#34d399",0.34,-3.2,-0.6,0);
+        // 2-hop transfer arrow (curved hint): cone over aspirin pointing in
+        const cone=new T.Mesh(new T.ConeGeometry(0.14,0.42,10),new T.MeshBasicMaterial({color:GR.getHex()}));
+        cone.position.set(-3.2,-0.45,0);cone.rotation.x=Math.PI;gGraph.add(cone);
+      }else{
+        addSlbl("Tanimoto "+F.tanimoto.toFixed(2)+" < "+tanimoto.toFixed(2)+" — no edge","#fb7185",0.34,-3.2,-0.6,0);
+      }
+
+      // predicted aspirin-COX2 pIC50: bipartite vs augmented
+      const pred=edgeOn?F.cox2Augment:F.cox2Bipart;
+      const trueP=F.pAspirinCOX2;
+      // two bars: predicted (cyan if augmented else amber) and TRUE (green)
+      const bx=0.4;
+      const barH=p=> 0.12+(p/5)*3.2;
+      [["pred",pred,edgeOn?CY:AM],["true",trueP,GR]].forEach((b,i)=>{
+        const x=bx+i*1.6;
+        const h=barH(b[1]);
+        const col=b[2];
+        const bar=new T.Mesh(new T.BoxGeometry(1.0,h,1.0),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),emissiveIntensity:0.45,roughness:0.45}));
+        bar.position.set(x,h/2,3.6);gBars.add(bar);
+        addSlbl(b[0],col.getStyle(),0.34,x,0.05,3.6);
+        addSlbl(b[1].toFixed(2),col.getStyle(),0.36,x,h+0.35,3.6);
+      });
+      addLbl("aspirin-COX2 pIC50","#8a99ad",1.0,1.2,0.05,5.0);
+
+      const err=Math.abs(pred-trueP);
+      const errBipart=Math.abs(F.cox2Bipart-trueP);
+      sceneSnap={mode,tier,owaWeight:+owaWeight.toFixed(2),tanimoto:+tanimoto.toFixed(2),split:splitIdx,
+        simEdgeActive:edgeOn,predCOX2:+pred.toFixed(2),trueCOX2:+trueP.toFixed(2),
+        predError:+err.toFixed(2),errorReduction:+(errBipart-err).toFixed(2),
+        scaffoldGap:+(F.aurocRandom-F.aurocScaffold).toFixed(2)};
+
+      return {
+        badge:"Augmented DTI · sim edge "+(edgeOn?"ON":"OFF")+" · |err| "+err.toFixed(2),
+        formula:"r1: e(d_i,d_j) ⟺ Tanimoto ≥ τ &nbsp;→&nbsp; 2-hop: aspirin ← diflunisal ← COX-2",
+        insight:"Pure bipartite message passing leaves aspirin's weak COX-2 prediction at "+F.cox2Bipart.toFixed(2)+". Adding a drug-drug Tanimoto edge (aspirin↔diflunisal = "+F.tanimoto.toFixed(2)+") lets aspirin inherit its analog's COX-2 binding signal in two hops, lifting the prediction to "+F.cox2Augment.toFixed(2)+" — closer to the true "+trueP.toFixed(2)+".",
+        state:edgeOn
+          ?("Similarity edge ACTIVE (τ="+tanimoto.toFixed(2)+"). Predicted aspirin-COX2 = "+pred.toFixed(2)+", |err| "+err.toFixed(2)+" (was "+errBipart.toFixed(2)+" bipartite). Transfer recovered "+(errBipart-err).toFixed(2)+" pIC50.")
+          :("Similarity edge OFF: τ="+tanimoto.toFixed(2)+" exceeds Tanimoto "+F.tanimoto.toFixed(2)+". Prediction stuck at bipartite "+F.cox2Bipart.toFixed(2)+", |err| "+errBipart.toFixed(2)+"."),
+        metrics:{
+          primaryAffinity:pred.toFixed(2),
+          secondaryAffinity:trueP.toFixed(2),
+          rankingMargin:err.toFixed(2)+" |err|",
+          scaffoldGap:"—"
+        },
+        focus:{center:[0,-0.3,1.8],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: split — evaluation honesty (random vs scaffold vs target vs both)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="split"){
+      const aurocs=[F.aurocRandom,F.aurocScaffold,F.aurocTarget,F.aurocBoth];
+      const cols=[RO,GR,AM,VI];
+      const xPos=[-4.2,-1.4,1.4,4.2];
+
+      aurocs.forEach((au,idx)=>{
+        const x=xPos[idx];
+        const h=0.12+(au-0.5)/0.5*4.2;        // map 0.5..1.0 to bar height
+        const active=(idx===splitIdx);
+        const col=cols[idx];
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.4),
+          new T.MeshStandardMaterial({
+            color:col,emissive:col.clone().multiplyScalar(active?0.85:0.2),
+            emissiveIntensity:active?0.7:0.18,roughness:0.4,
+            transparent:!active,opacity:active?1.0:0.45}));
+        bar.position.set(x,h/2,-0.6);gBars.add(bar);
+        api.pick(bar,{split:{name:splitNames[idx],auroc:au,active}});
+        addLbl(au.toFixed(2),col.getStyle(),1.55,x,h+0.5,-0.6);
+        addSlbl(splitNames[idx],col.getStyle(),0.38,x,0.06,-0.6);
+      });
+
+      // active indicator cone
+      const aH=0.12+(aurocs[splitIdx]-0.5)/0.5*4.2;
+      const cone=new T.Mesh(new T.ConeGeometry(0.18,0.5,10),new T.MeshBasicMaterial({color:0xfde68a}));
+      cone.position.set(xPos[splitIdx],aH+0.95,-0.6);gGraph.add(cone);
+
+      // memorization gap bracket: random -> scaffold
+      const gap=F.aurocRandom-F.aurocScaffold;
+      const hR=0.12+(F.aurocRandom-0.5)/0.5*4.2;
+      const hS=0.12+(F.aurocScaffold-0.5)/0.5*4.2;
+      const gapPts=[new T.Vector3(xPos[0],hR,1.4),new T.Vector3(xPos[1],hS,1.4)];
+      gEdges.add(new T.Line(new T.BufferGeometry().setFromPoints(gapPts),
+        new T.LineBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.85})));
+      addLbl("memorization gap +"+gap.toFixed(2),"#fb7185",1.15,-2.8,(hR+hS)/2+0.4,1.4);
+
+      // baseline at AUROC 0.5 (random classifier)
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-5.6,0,-0.6),new T.Vector3(5.6,0,-0.6)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+      addLbl("AUROC","#8a99ad",1.0,-5.9,2.2,-0.6);
+
+      // test-drug scatter: how much chemical novelty each split injects
+      const novelty=[0.18,0.95,0.3,1.0][splitIdx]; // scaffold/both = novel test drugs
+      for(let d=0;d<16;d++){
+        const isNovel=prand(d*13+splitIdx*70)<novelty;
+        const cx=(prand(d*17+splitIdx*30)-0.5)*5.4;
+        const cz=3.4+(prand(d*23+splitIdx*55)-0.5)*1.6;
+        const dotCol=isNovel?VI.clone():CY.clone();
+        const dot=new T.Mesh(new T.SphereGeometry(0.11,8,8),
+          new T.MeshStandardMaterial({color:dotCol,emissive:dotCol,emissiveIntensity:0.6,roughness:0.4}));
+        dot.position.set(cx,0,cz);gGraph.add(dot);
+      }
+      addLbl("test drugs (violet = novel scaffold)","#6b7a8d",1.0,0,0.1,5.0);
+
+      const au=aurocs[splitIdx];
+      sceneSnap={mode,tier,owaWeight:+owaWeight.toFixed(2),tanimoto:+tanimoto.toFixed(2),split:splitIdx,
+        activeAUROC:+au.toFixed(2),scaffoldGap:+gap.toFixed(2),
+        predCOX2:+F.pAspirinCOX2.toFixed(2),honest:(splitIdx!==0)};
+
+      return {
+        badge:"Split honesty · "+splitNames[splitIdx]+" · AUROC "+au.toFixed(2),
+        formula:"gap = AUROC_random − AUROC_scaffold = "+F.aurocRandom.toFixed(2)+" − "+F.aurocScaffold.toFixed(2)+" = +"+gap.toFixed(2),
+        insight:"Random split (rose) lets train/test drugs share scaffolds, so chemical similarity inflates AUROC to "+F.aurocRandom.toFixed(2)+". Scaffold split (green) forces new Murcko scaffolds at test → "+F.aurocScaffold.toFixed(2)+". Target split holds out proteins; 'both' holds out both. The "+gap.toFixed(2)+" drop is pure memorization — report scaffold split, not random.",
+        state:"Active split: "+splitNames[splitIdx]+" → AUROC "+au.toFixed(2)+". Violet dots = test drugs with unseen scaffolds. The random→scaffold drop of "+gap.toFixed(2)+" measures how much the model memorized training chemistry.",
+        metrics:{
+          primaryAffinity:au.toFixed(2),
+          secondaryAffinity:F.aurocScaffold.toFixed(2),
+          rankingMargin:"—",
+          scaffoldGap:"+"+gap.toFixed(2)
+        },
+        focus:{center:[0,2,1.0],radius:14}
+      };
+    }
+
+    return {badge:"D09",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d09",
+    kind:"drug-target-interaction-graphs",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D09 · Drug-target interaction graphs",
+    subtitle:"Aspirin's DTI bipartite graph, worked end-to-end. Three views: the confirmed-binding bipartite graph under the Open-World Assumption, similarity-edge transfer to a structural analog, and the random-vs-scaffold split honesty gap.",
+    selectedLabel:"Element",
+    selectedHint:"Click the drug, a protein, an edge bar, or a split bar.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"bipartite", label:"Bipartite DTI (OWA + bilinear ranking)"},
+      {value:"augment",   label:"Augmented (Tanimoto transfer)"},
+      {value:"split",     label:"Split honesty (random vs scaffold)"}
+    ],
+    params:[
+      {key:"tier",     label:"evidence tier (0=HTS 1=assay 2=exp 3=clinical)",min:0,max:3,step:1,value:2,
+       fmt:v=>["HTS hit","assay+","experimental","clinical"][Math.round(v)],modes:["bipartite"]},
+      {key:"owaWeight",label:"PU loss weight on absent edges",min:0,max:1,step:0.05,value:0.2,
+       fmt:v=>(+v).toFixed(2),modes:["bipartite"]},
+      {key:"tanimoto", label:"Tanimoto threshold τ (augmentation)",min:0.2,max:0.9,step:0.01,value:0.40,
+       fmt:v=>(+v).toFixed(2),modes:["augment"]},
+      {key:"split",    label:"eval split (0=rand 1=scaffold 2=target 3=both)",min:0,max:3,step:1,value:1,
+       fmt:v=>["random","scaffold","target","both"][Math.round(v)],modes:["split"]}
+    ],
+    metrics:[
+      {key:"primaryAffinity",  label:"Primary / pred pIC50",accent:"green"},
+      {key:"secondaryAffinity",label:"Secondary / true pIC50",accent:"amber"},
+      {key:"rankingMargin",    label:"Margin / error",accent:"cyan"},
+      {key:"scaffoldGap",      label:"Scaffold gap (AUROC)",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph", label:"Drug / protein nodes"},
+      {group:"edges", label:"Edges / similarity"},
+      {group:"bars",  label:"Score / AUROC bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Aspirin-COX example",
+      on:api=>{api.setMode("bipartite");api.setParam("tier",2);api.setParam("owaWeight",0.2);}
+    },
+    secondary:{
+      label:"Show scaffold gap",
+      on:api=>{api.setMode("split");api.setParam("split",1);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=drug · <span style="color:#34d399">green</span>=on-target/confirmed · <span style="color:#fbbf24">amber</span>=secondary off-target · <span style="color:#a78bfa">violet</span>=analog / novel scaffold · <span style="color:#fb7185">rose</span>=OWA-untested / memorization gap.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="bipartite") api.frame([0,0.5,2.0],13);
+      else if(s.mode==="augment") api.frame([0,-0.3,1.8],13);
+      else api.frame([0,2,1.0],14);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="bipartite") api.frame([0,0.5,2.0],13);
+      else if(s.mode==="augment") api.frame([0,-0.3,1.8],13);
+      else api.frame([0,2,1.0],14);
+    },
+    onSelect(api,d){
+      if(d.drug)   api.setSelected("Drug "+d.drug.id+(d.drug.cid?" · CID "+d.drug.cid:""));
+      if(d.target) api.setSelected(d.target.id+" ("+d.target.uniprot+") · pIC50 "+d.target.p.toFixed(2)+" · "+(d.target.tested?d.target.role:"UNTESTED (OWA)"));
+      if(d.score)  api.setSelected(d.score.id+" · bilinear score "+d.score.a.toFixed(2));
+      if(d.split)  api.setSelected(d.split.name+" split → AUROC "+d.split.auroc.toFixed(2)+(d.split.active?" · ACTIVE":""));
+    },
+    build,
+    snapshot(s){
+      const tier=Math.round(s.tier);
+      const splitIdx=Math.round(s.split);
+      const aurocs=[F.aurocRandom,F.aurocScaffold,F.aurocTarget,F.aurocBoth];
+      const edgeOn=(F.tanimoto>=s.tanimoto);
+      const pred=edgeOn?F.cox2Augment:F.cox2Bipart;
+      return {
+        mode:s.mode,
+        tier,
+        owaWeight:+(+s.owaWeight).toFixed(2),
+        tanimoto:+(+s.tanimoto).toFixed(2),
+        split:splitIdx,
+        primaryAffinity:+affinity(TARGETS[0],tier,s.owaWeight).toFixed(2),
+        secondaryAffinity:+affinity(TARGETS[1],tier,s.owaWeight).toFixed(2),
+        predCOX2:+pred.toFixed(2),
+        trueCOX2:+F.pAspirinCOX2.toFixed(2),
+        simEdgeActive:edgeOn,
+        activeAUROC:+aurocs[splitIdx].toFixed(2),
+        scaffoldGap:+(F.aurocRandom-F.aurocScaffold).toFixed(2)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure E05 — A 5-spot Visium cross: coordinates make the graph, Moran's I scores it</title>
+<desc id="d">Four-panel captioned figure: A 5-spot Visium cross: coordinates make the graph, Moran's I scores it</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE E05 · BLOCK E · SINGLE-CELL &amp; MULTI-OMICS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="18" font-weight="700">A 5-spot Visium cross: coordinates make the graph, Moran's I scores it</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Tissue graph from coordinates</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">spots</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">hex edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">spot μm</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">55</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">hub</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">S3</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Moran's I for VEGFA</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">I = (N/W)·Σ w_ij·dev_i·dev_j / Σ dev_i²</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">= (5/8)·(-3.48/25.79) = -0.084</text>
+<text x="502" y="187.5" fill="#fb7185" font-size="11.5" font-weight="700">numerator</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">-3.48</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">VEGFA gradient S1 → S5</text>
+<rect x="56" y="292" width="12" height="64" rx="2" fill="#fbbf24"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">S1</text>
+<rect x="74" y="298.22" width="12" height="57.78" rx="2" fill="#fbbf24"/>
+<text x="80" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">S3</text>
+<rect x="92" y="345.33" width="12" height="10.67" rx="2" fill="#fb7185"/>
+<text x="98" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">S5</text>
+<line x1="56" y1="309.96" x2="110" y2="309.96" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393" fill="#8a99ad" font-size="11">S1-S3 high (core), S5 low (stroma). The dashed line is</text>
+<text x="56" y="413" fill="#8a99ad" font-size="11">the mean 5.18; S5 below it drags I negative.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Domain segmentation</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">STAGATE</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">GAT attention</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">BANKSY</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">λ-mix 0.4</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">GraphST</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">contrastive</text>
+<text x="502" y="369" fill="#8a99ad" font-size="11">All smooth over the tissue graph. GAT attends</text>
+<text x="502" y="389" fill="#8a99ad" font-size="11">within-domain, keeping the tumor-stroma boundary sharp.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure E05. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">5-spot </text>
+<text x="216.85" y="538" fill="#c7d2dd" font-size="13">Visium </text>
+<text x="274.48" y="538" fill="#c7d2dd" font-size="13">cross </text>
+<text x="322.84" y="538" fill="#c7d2dd" font-size="13">(S1-S5), </text>
+<text x="397.8" y="538" fill="#c7d2dd" font-size="13">spacing </text>
+<text x="462.28" y="538" fill="#c7d2dd" font-size="13">55 </text>
+<text x="486.46" y="538" fill="#c7d2dd" font-size="13">μm. </text>
+<text x="518.7" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="552.23" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="585.68" y="538" fill="#c7d2dd" font-size="13">tissue </text>
+<text x="642.1" y="538" fill="#c7d2dd" font-size="13">graph's </text>
+<text x="706.58" y="538" fill="#c7d2dd" font-size="13">4 </text>
+<text x="722.7" y="538" fill="#c7d2dd" font-size="13">edges </text>
+<text x="771.06" y="538" fill="#c7d2dd" font-size="13">come </text>
+<text x="811.36" y="538" fill="#c7d2dd" font-size="13">from</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">coordinates </text>
+<text x="136.72" y="559" fill="#c7d2dd" font-size="13">alone </text>
+<text x="185.08" y="559" fill="#c7d2dd" font-size="13">(S3 </text>
+<text x="218.53" y="559" fill="#c7d2dd" font-size="13">hub) </text>
+<text x="258.83" y="559" fill="#c7d2dd" font-size="13">— </text>
+<text x="281.4" y="559" fill="#c7d2dd" font-size="13">adjacency, </text>
+<text x="370.06" y="559" fill="#c7d2dd" font-size="13">not </text>
+<text x="402.3" y="559" fill="#c7d2dd" font-size="13">expression. </text>
+<text x="499.02" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="532.55" y="559" fill="#c7d2dd" font-size="13">VEGFA </text>
+<text x="586.95" y="559" fill="#c7d2dd" font-size="13">Moran's </text>
+<text x="652.64" y="559" fill="#c7d2dd" font-size="13">I </text>
+<text x="669.97" y="559" fill="#c7d2dd" font-size="13">= </text>
+<text x="686.09" y="559" fill="#c7d2dd" font-size="13">(5/8)·(-3.48/25.79) </text>
+<text x="853.74" y="559" fill="#c7d2dd" font-size="13">=</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">-0.084; </text>
+<text x="104.48" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="120.6" y="580" fill="#c7d2dd" font-size="13">full </text>
+<text x="160.9" y="580" fill="#c7d2dd" font-size="13">section </text>
+<text x="225.38" y="580" fill="#c7d2dd" font-size="13">reaches </text>
+<text x="289.86" y="580" fill="#c7d2dd" font-size="13">I </text>
+<text x="307.19" y="580" fill="#c7d2dd" font-size="13">≈ </text>
+<text x="329.76" y="580" fill="#c7d2dd" font-size="13">0.5-0.8. </text>
+<text x="402.3" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="435.83" y="580" fill="#c7d2dd" font-size="13">VEGFA </text>
+<text x="490.23" y="580" fill="#c7d2dd" font-size="13">drops </text>
+<text x="538.59" y="580" fill="#c7d2dd" font-size="13">7.2 </text>
+<text x="570.83" y="580" fill="#c7d2dd" font-size="13">→ </text>
+<text x="593.4" y="580" fill="#c7d2dd" font-size="13">1.2; </text>
+<text x="633.7" y="580" fill="#c7d2dd" font-size="13">S5 </text>
+<text x="659.09" y="580" fill="#c7d2dd" font-size="13">below </text>
+<text x="707.45" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="739.69" y="580" fill="#c7d2dd" font-size="13">mean </text>
+<text x="779.99" y="580" fill="#c7d2dd" font-size="13">5.18 </text>
+<text x="820.29" y="580" fill="#c7d2dd" font-size="13">makes</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="72.24" y="601" fill="#c7d2dd" font-size="13">numerator </text>
+<text x="152.84" y="601" fill="#c7d2dd" font-size="13">negative. </text>
+<text x="233.44" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="266.97" y="601" fill="#c7d2dd" font-size="13">STAGATE </text>
+<text x="339.91" y="601" fill="#c7d2dd" font-size="13">/ </text>
+<text x="356.03" y="601" fill="#c7d2dd" font-size="13">BANKSY </text>
+<text x="419.71" y="601" fill="#c7d2dd" font-size="13">/ </text>
+<text x="435.83" y="601" fill="#c7d2dd" font-size="13">GraphST </text>
+<text x="503.93" y="601" fill="#c7d2dd" font-size="13">segment </text>
+<text x="568.41" y="601" fill="#c7d2dd" font-size="13">domains </text>
+<text x="632.89" y="601" fill="#c7d2dd" font-size="13">over </text>
+<text x="673.19" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="705.43" y="601" fill="#c7d2dd" font-size="13">graph; </text>
+<text x="761.85" y="601" fill="#c7d2dd" font-size="13">GAT </text>
+<text x="797.72" y="601" fill="#c7d2dd" font-size="13">keeps</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">boundaries </text>
+<text x="128.66" y="622" fill="#c7d2dd" font-size="13">sharp.</text>
+</svg>

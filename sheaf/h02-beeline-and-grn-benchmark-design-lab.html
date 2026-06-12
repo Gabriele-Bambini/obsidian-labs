@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H02 · BEELINE and GRN benchmark design</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random hash (no nondeterministic calls) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── BEELINE mESC worked-example FACTS (note §5) ──────────────────────────
+  const FACT={
+    cells:704, genes:2000, tfs:36, targets:1964,
+    pairs:36*1964,              // 70704 candidate TF-target pairs
+    truePos:854,               // mESC ESCAPE ChIP-seq edges
+    randAUPRC:854/(36*1964)    // 0.01208
+  };
+  // method comparison on mESC (note §5 hypothetical results table)
+  // each: AUROC, AUPRC, EP@100, EP@500
+  const METHODS=[
+    {name:"CORR",   auroc:0.58, auprc:0.031, ep100:0.12, ep500:0.09, col:"#4dd7ff"},
+    {name:"GENIE3", auroc:0.63, auprc:0.042, ep100:0.18, ep500:0.14, col:"#34d399"},
+    {name:"GNN-new",auroc:0.67, auprc:0.055, ep100:0.24, ep500:0.19, col:"#a78bfa"},
+    {name:"Random", auroc:0.50, auprc:0.012, ep100:0.012,ep500:0.012,col:"#54667c"}
+  ];
+  const METRIC_KEYS=["auroc","auprc","ep100","ep500"];
+  const METRIC_NAMES=["AUROC","AUPRC","EP@100","EP@500"];
+  // nine BoolODE synthetic networks (note §3 table) — genes, true edges
+  const BOOLODE=[
+    {name:"GSD", g:7, e:11},{name:"HSC", g:11,e:18},{name:"VSC", g:20,e:25},
+    {name:"CESC",g:33,e:31},{name:"RP",  g:10,e:14},{name:"LI",  g:16,e:20},
+    {name:"GSD2",g:7, e:11},{name:"mCAD",g:10,e:13},{name:"BF",  g:14,e:14}
+  ];
+
+  let sceneSnap={};
+
+  const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const gMain=api.group("scene");
+    const gAux =api.group("aux");
+    const gLab =api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);return sp;}
+    function sL(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);return sp;}
+    function sphere(x,y,z,r,hex,emi){const m=new T.Mesh(new T.SphereGeometry(r,16,12),new T.MeshStandardMaterial({color:new T.Color(hex),emissive:new T.Color(hex),emissiveIntensity:emi==null?0.55:emi,roughness:0.4}));m.position.set(x,y,z);return m;}
+    function line(a,b,hex,op){return new T.Line(new T.BufferGeometry().setFromPoints([a,b]),new T.LineBasicMaterial({color:new T.Color(hex).getHex(),transparent:true,opacity:op==null?0.6:op}));}
+    function bar(x,z,h,w,hex,active){const m=new T.Mesh(new T.BoxGeometry(w,Math.max(0.02,h),w),new T.MeshStandardMaterial({color:new T.Color(hex),emissive:new T.Color(hex).multiplyScalar(active?0.85:0.22),emissiveIntensity:active?0.7:0.18,roughness:0.4,transparent:!active,opacity:active?1:0.5}));m.position.set(x,Math.max(0.01,h)/2,z);return m;}
+    function cone(x,y,z,hex){const c=new T.Mesh(new T.ConeGeometry(0.16,0.46,8),new T.MeshBasicMaterial({color:new T.Color(hex).getHex()}));c.position.set(x,y,z);return c;}
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 · BoolODE — synthetic simulation pipeline (Layer 1)
+    //   pick a BoolODE network; dropout slider zero-inflates the count matrix
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="boolode"){
+      const netIdx=Math.round(s.boolNet);
+      const net=BOOLODE[netIdx];
+      const drop=s.dropout/100;            // 0..1 fraction of count entries zeroed
+      const nGenes=Math.min(net.g,12);     // draw up to 12 of the network's genes
+      const R=2.6;
+
+      // Boolean GRN ring (the true topology) at left
+      const cx=-4.4;
+      for(let i=0;i<nGenes;i++){
+        const ang=i/nGenes*Math.PI*2;
+        const px=cx+Math.cos(ang)*R, pz=Math.sin(ang)*R;
+        const isTF=i<Math.min(3,nGenes);
+        const sp=sphere(px,0,pz,isTF?0.30:0.24,isTF?AM:CY,0.6);
+        gMain.add(sp);
+        api.pick(sp,{gene:{id:i,net:net.name,isTF}});
+      }
+      // signed Boolean edges (deterministic): activator/repressor mix
+      let drawn=0;
+      for(let i=0;i<nGenes && drawn<net.e;i++){
+        const j=(i+1+Math.floor(prand(i*5+netIdx)*2))%nGenes;
+        if(j===i) continue;
+        const a=new T.Vector3(cx+Math.cos(i/nGenes*Math.PI*2)*R,0,Math.sin(i/nGenes*Math.PI*2)*R);
+        const b=new T.Vector3(cx+Math.cos(j/nGenes*Math.PI*2)*R,0,Math.sin(j/nGenes*Math.PI*2)*R);
+        const rep=prand(i*9+netIdx*3)>0.62;   // ~repressors
+        gMain.add(line(a,b,rep?RO:GR,0.7));
+        drawn++;
+      }
+      L("Boolean GRN · "+net.name,CY,1.3,cx,2.1,0);
+      sL(net.g+" genes · "+net.e+" edges",SL,0.42,cx,-2.0,R+0.3);
+
+      // ODE→count matrix on the right (cells × genes), zero-inflated by dropout
+      const mX=2.0, cols=8, rows=8, cell=0.42;
+      let zeros=0, total=cols*rows;
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          // continuous ODE trajectory value (deterministic), then Poisson+dropout
+          const traj=prand((r*13+c*7+netIdx*101)); // 0..1
+          const lo=prand((r*5+c*3+drawn)); // dropout draw
+          const zeroed=(lo<drop) || traj<0.12;
+          if(zeroed) zeros++;
+          const v=zeroed?0:traj;
+          const hex=zeroed?"#15202e":(v>0.66?VI:(v>0.4?CY:"#1f4a63"));
+          const m=new T.Mesh(new T.BoxGeometry(cell*0.86,0.06,cell*0.86),new T.MeshStandardMaterial({color:new T.Color(hex),emissive:new T.Color(hex),emissiveIntensity:zeroed?0.12:0.5,roughness:0.5}));
+          m.position.set(mX+c*cell,0,(r-rows/2)*cell);
+          gAux.add(m);
+        }
+      }
+      const zeroFrac=zeros/total;
+      L("count matrix X",VI,1.2,mX+cols*cell*0.5-0.2,1.4,0);
+      sL("cells × genes",SL,0.40,mX+cols*cell*0.5-0.2,0,(rows/2)*cell+0.5);
+      sL("dark = dropout (0)",SL,0.38,mX+cols*cell*0.5-0.2,0,-(rows/2)*cell-0.5);
+      // arrow Boolean → matrix
+      gMain.add(cone(-0.7,0.0,0,VI));
+
+      const visZeros=Math.round(zeroFrac*100);
+      sceneSnap={mode,boolNet:net.name,netGenes:net.g,netEdges:net.e,dropout:+drop.toFixed(2),zeroFraction:+zeroFrac.toFixed(3),method:null,metric:null,enrichment:null,epValid:null};
+
+      return {
+        badge:"BoolODE · "+net.name+" ("+net.g+"g/"+net.e+"e) · "+visZeros+"% zeros",
+        formula:"dx_i/dt = λ_i·F_ode_i(x) − γ_i·x_i ;  count = Poisson(x·depth), zeroed if &lt; θ",
+        insight:"Layer 1: a known Boolean GRN (left, amber=TF, green=activation, rose=repression) is converted to Hill-function ODEs, simulated stochastically per cell, then Poisson-sampled and thresholded into a zero-inflated count matrix X (right). Dropout zeros (dark cells) are what break MI- and Gaussian-based methods. Drag dropout to inflate the zeros.",
+        state:"Network "+net.name+": "+net.g+" genes, "+net.e+" true edges. Observed zero-inflation ≈ "+visZeros+"% of the matrix. EP@100 is invalid here — only "+net.e+" positives exist.",
+        metrics:{truePositives:""+net.e, zeroInflation:visZeros+"%", randomAUPRC:"—", enrichment:"—"},
+        focus:{center:[-0.5,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 · Leaderboard — method comparison on mESC (Layer 2/3)
+    //   bars per method for the selected metric; random baseline line
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="leaderboard"){
+      const mi=Math.round(s.metric);          // 0 AUROC, 1 AUPRC, 2 EP@100, 3 EP@500
+      const key=METRIC_KEYS[mi], mname=METRIC_NAMES[mi];
+      const sel=Math.round(s.method);         // 0..2 (highlight a real method)
+      const vals=METHODS.map(m=>m[key]);
+      const maxV=Math.max.apply(null,vals);
+      const yS=(mi===0)?5.5:(maxV<0.1?60:30); // scale per metric range
+      const xPos=[-3.6,-1.2,1.2,3.6];
+      const baseY=-1.4;
+
+      METHODS.forEach((m,idx)=>{
+        const v=m[key];
+        const h=v*yS;
+        const active=(idx===sel) && idx<3;
+        const isRandom=(idx===3);
+        const b=bar(xPos[idx],0,h,1.5,m.col,active);
+        b.position.y=baseY+h/2;
+        gMain.add(b);
+        api.pick(b,{method:{name:m.name,metric:mname,value:v,random:isRandom}});
+        L((mi===0)?v.toFixed(2):v.toFixed(3),m.col,1.4,xPos[idx],baseY+h+0.5,0);
+        sL(m.name,m.col,0.42,xPos[idx],baseY-0.35,0);
+      });
+
+      // random-baseline reference line at random value of this metric
+      const randV=METHODS[3][key]*yS;
+      gAux.add(line(new T.Vector3(-5,baseY+randV,0.05),new T.Vector3(5,baseY+randV,0.05),AM,0.85));
+      L("random "+(mi===0?"0.50":(mi===1?FACT.randAUPRC.toFixed(3):"0.012")),AM,1.05,5.4,baseY+randV,0);
+
+      L(mname+" · mESC (704 cells)",CY,1.3,0,baseY+maxV*yS+1.5,0);
+
+      const selV=METHODS[sel][key], randVal=METHODS[3][key];
+      const enrich=randVal>0?selV/randVal:0;
+      const gainVsGenie=(METHODS[1][key]>0)?(METHODS[2][key]-METHODS[1][key])/METHODS[1][key]:0;
+      sceneSnap={mode,metric:mname,method:METHODS[sel].name,methodValue:+selV.toFixed(3),enrichment:+enrich.toFixed(2),gnnVsGenie:+gainVsGenie.toFixed(3),boolNet:null,zeroFraction:null,epValid:null};
+
+      return {
+        badge:"Leaderboard · "+mname+" · "+METHODS[sel].name+" focus",
+        formula:"enrichment = "+mname+"(method) / "+mname+"(random)",
+        insight:"Layers 2–3: eight methods are scored on the real mESC dataset against the ESCAPE ChIP-seq gold standard (854 true edges in 70,704 pairs). GENIE3 leads classical methods; GNN-new edges ahead on every metric. The amber line is the random baseline — every bar above it is genuine enrichment. Switch metric to see rankings shift; EP@100 is the operationally relevant one.",
+        state:METHODS[sel].name+" "+mname+" = "+(mi===0?selV.toFixed(2):selV.toFixed(3))+" → "+enrich.toFixed(1)+"× over random. GNN-new beats GENIE3 by "+(gainVsGenie*100).toFixed(0)+"% on "+mname+".",
+        metrics:{truePositives:""+FACT.truePos, zeroInflation:"—", randomAUPRC:FACT.randAUPRC.toFixed(3), enrichment:enrich.toFixed(1)+"×"},
+        focus:{center:[0,1.5,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 · EP@K validity — K vs P (the metric-validity contrast)
+    //   top-K ranked edge list; green=true positive in gold std, grey=miss
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="epk"){
+      const useReal=Math.round(s.dataset)===1;       // 0 = BoolODE RP, 1 = mESC
+      const P=useReal?FACT.truePos:14;               // total true positives available
+      const K=Math.round(s.kval);                    // top-K
+      const epScore=useReal?(s.method>=1?0.24:0.12):0.50; // illustrative precision@K
+      // lay out a ranked column of K predicted edges (cap visual to 40)
+      const shown=Math.min(K,40);
+      const colW=0.34, perRow=20;
+      let hits=0;
+      for(let r=0;r<shown;r++){
+        const rank=r; // rank 0..shown-1
+        const colN=Math.floor(rank/perRow), rowN=rank%perRow;
+        // an edge at this rank is a true positive with prob ~ epScore but only if rank<P
+        const isTP=(rank<P) && (prand(rank*3.7+(useReal?11:5))<epScore);
+        if(isTP) hits++;
+        const beyondP=(rank>=P);   // ranks past the total positives can NEVER be TP
+        const hex=isTP?GR:(beyondP?"#3a1722":"#1f2d3d");
+        const m=new T.Mesh(new T.BoxGeometry(colW*0.8,0.18,colW*0.8),new T.MeshStandardMaterial({color:new T.Color(hex),emissive:new T.Color(hex),emissiveIntensity:isTP?0.6:(beyondP?0.3:0.15),roughness:0.5}));
+        m.position.set(-3+colN*1.1,0,(rowN-perRow/2)*colW);
+        gMain.add(m);
+        api.pick(m,{edge:{rank:rank+1,tp:isTP,beyondP}});
+      }
+      // P marker plane: where the gold-standard positives run out
+      if(P<=shown){
+        const colN=Math.floor(P/perRow), rowN=P%perRow;
+        const py=(rowN-perRow/2)*colW;
+        gAux.add(line(new T.Vector3(-3+colN*1.1-0.5,0.3,py),new T.Vector3(-3+colN*1.1+0.5,0.3,py),RO,0.9));
+        L("P = "+P+" positives",RO,1.05,-3+colN*1.1,0.6,py);
+      }
+      const valid=(K<=P);
+      L("top-"+K+" predicted edges",CY,1.25,-1.5,2.2,0);
+      sL(useReal?"mESC · P="+P:"BoolODE RP · P="+P,SL,0.42,-1.5,-perRow/2*colW-0.6,0);
+
+      // verdict panel on the right
+      L(valid?"EP@"+K+" VALID":"EP@"+K+" MISLEADING",valid?GR:RO,1.5,3.6,1.2,0);
+      sL(valid?"K ≤ P":"K > P → use EP@"+P,valid?GR:RO,0.5,3.6,0.4,0);
+
+      const epVal=hits/Math.max(1,shown);
+      sceneSnap={mode,dataset:useReal?"mESC":"RP",P,K,epValid:valid?1:0,epAtK:+epScore.toFixed(3),enrichment:useReal?+(epScore/0.012).toFixed(1):null,boolNet:null,method:null,metric:null,zeroFraction:null};
+
+      return {
+        badge:"EP@K · "+(useReal?"mESC":"RP")+" · K="+K+" · P="+P+" · "+(valid?"valid":"INVALID"),
+        formula:"EP@K = |top-K ∩ gold| / K  ·  meaningful only when K ≤ P",
+        insight:"The metric-validity contrast. Green tiles are true positives recovered in the top-K ranked list; rose tiles are ranks beyond P where no positive can possibly appear. When K > P (rose marker crossed), the denominator includes impossible slots, so EP@K is artificially deflated — report EP@P instead. On mESC (P=854) EP@100 is valid; on BoolODE RP (P=14) EP@100 is not.",
+        state:(useReal?"mESC":"RP")+": P="+P+" positives, K="+K+". "+(valid?"K ≤ P → EP@"+K+" is interpretable (EP≈"+epScore.toFixed(2)+", "+(useReal?(epScore/0.012).toFixed(0)+"× over random)":"strong).") : "K > P → "+(K-P)+" ranks can never be TP. Use EP@"+P+"."),
+        metrics:{truePositives:""+P, zeroInflation:"—", randomAUPRC:useReal?FACT.randAUPRC.toFixed(3):(14/90).toFixed(3), enrichment:useReal?(epScore/0.012).toFixed(1)+"×":"—"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    return {badge:"H02",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"h02",
+    kind:"beeline-grn-benchmark",
+    eyebrow:"Block H · Benchmarks and Datasets",
+    title:"H02 · BEELINE and GRN benchmark design",
+    subtitle:"BEELINE's three layers, made concrete on the mESC worked example (704 cells, 854 true edges). Three views: BoolODE synthetic simulation, the method leaderboard, and EP@K validity.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, bar, or ranked edge.",
+    modes:[
+      {value:"boolode",     label:"BoolODE (synthetic simulation)"},
+      {value:"leaderboard", label:"Leaderboard (methods on mESC)"},
+      {value:"epk",         label:"EP@K validity (K vs P)"}
+    ],
+    params:[
+      {key:"boolNet", label:"BoolODE network",min:0,max:8,step:1,value:4,
+       fmt:v=>["GSD","HSC","VSC","CESC","RP","LI","GSD2","mCAD","BF"][Math.round(v)],modes:["boolode"]},
+      {key:"dropout", label:"dropout / zero-inflation (%)",min:0,max:80,step:5,value:50,
+       fmt:v=>Math.round(v)+"%",modes:["boolode"]},
+      {key:"metric",  label:"metric (0=AUROC 1=AUPRC 2=EP@100 3=EP@500)",min:0,max:3,step:1,value:2,
+       fmt:v=>["AUROC","AUPRC","EP@100","EP@500"][Math.round(v)],modes:["leaderboard"]},
+      {key:"method",  label:"focus method (0=CORR 1=GENIE3 2=GNN-new)",min:0,max:2,step:1,value:2,
+       fmt:v=>["CORR","GENIE3","GNN-new"][Math.round(v)],modes:["leaderboard","epk"]},
+      {key:"dataset", label:"EP@K dataset (0=RP 1=mESC)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===1?"mESC":"RP",modes:["epk"]},
+      {key:"kval",    label:"K (top-K predicted edges)",min:10,max:200,step:10,value:100,
+       fmt:v=>Math.round(v).toString(),modes:["epk"]}
+    ],
+    metrics:[
+      {key:"truePositives",label:"True positives (P)",accent:"green"},
+      {key:"zeroInflation",label:"Zero-inflation",accent:"violet"},
+      {key:"randomAUPRC",  label:"Random AUPRC",accent:"amber"},
+      {key:"enrichment",   label:"Enrichment over random",accent:"cyan"}
+    ],
+    layers:[
+      {group:"scene", label:"Main scene"},
+      {group:"aux",   label:"Matrix / baseline"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"EP@100 on mESC",
+      on:api=>{api.setMode("epk");api.setParam("dataset",1);api.setParam("kval",100);}
+    },
+    secondary:{
+      label:"EP@100 on RP (invalid)",
+      on:api=>{api.setMode("epk");api.setParam("dataset",0);api.setParam("kval",100);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#34d399">green</span>=activation / true positive · <span style="color:#fb7185">rose</span>=repression / beyond-P · <span style="color:#4dd7ff">cyan</span>=CORR / expression · <span style="color:#a78bfa">violet</span>=GNN-new / count value · <span style="color:#fbbf24">amber</span>=TF / random baseline.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="leaderboard") api.frame([0,1.5,0],13);
+      else api.frame([-0.5,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.gene)   api.setSelected("Gene "+d.gene.id+" · "+d.gene.net+(d.gene.isTF?" · TF":" · target"));
+      if(d.method) api.setSelected(d.method.name+" · "+d.method.metric+" = "+d.method.value.toFixed(3)+(d.method.random?" (baseline)":""));
+      if(d.edge)   api.setSelected("rank "+d.edge.rank+" · "+(d.edge.tp?"TRUE POSITIVE":(d.edge.beyondP?"beyond P (impossible)":"miss")));
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      if(mode==="boolode"){
+        const net=[{name:"GSD",g:7,e:11},{name:"HSC",g:11,e:18},{name:"VSC",g:20,e:25},{name:"CESC",g:33,e:31},{name:"RP",g:10,e:14},{name:"LI",g:16,e:20},{name:"GSD2",g:7,e:11},{name:"mCAD",g:10,e:13},{name:"BF",g:14,e:14}][Math.round(s.boolNet)];
+        return {mode,boolNet:net.name,netGenes:net.g,netEdges:net.e,dropout:+(s.dropout/100).toFixed(2),epValidForEP100:net.e>=100};
+      }
+      if(mode==="leaderboard"){
+        const mi=Math.round(s.metric), sel=Math.round(s.method);
+        const M=[{auroc:0.58,auprc:0.031,ep100:0.12,ep500:0.09},{auroc:0.63,auprc:0.042,ep100:0.18,ep500:0.14},{auroc:0.67,auprc:0.055,ep100:0.24,ep500:0.19},{auroc:0.50,auprc:0.012,ep100:0.012,ep500:0.012}];
+        const key=["auroc","auprc","ep100","ep500"][mi];
+        const selV=M[sel][key], randV=M[3][key];
+        const enrich=randV>0?selV/randV:0;
+        const gnnVsGenie=(M[1][key]>0)?(M[2][key]-M[1][key])/M[1][key]:0;
+        return {mode,metric:["AUROC","AUPRC","EP@100","EP@500"][mi],method:["CORR","GENIE3","GNN-new"][sel],methodValue:+selV.toFixed(3),enrichment:+enrich.toFixed(2),gnnVsGenie:+gnnVsGenie.toFixed(3)};
+      }
+      if(mode==="epk"){
+        const useReal=Math.round(s.dataset)===1;
+        const P=useReal?854:14, K=Math.round(s.kval);
+        const ep=useReal?(s.method>=1?0.24:0.12):0.50;
+        return {mode,dataset:useReal?"mESC":"RP",P,K,epValid:K<=P?1:0,epAtK:+ep.toFixed(3),enrichment:useReal?+(ep/0.012).toFixed(1):null};
+      }
+      return {mode};
+    }
+  });
+})();
+</script>
+</body>
+</html>

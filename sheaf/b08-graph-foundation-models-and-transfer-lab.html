@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B08 · Graph foundation models and transfer</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ── accuracy model (deterministic) ──────────────────────────────────────
+  // nLabels: 2..50   adaptMode: 0=frozen,1=finetune,2=scratch   corpusSize: 0,1
+  function calcAccuracy(nLabels,adaptMode,corpusSize){
+    const n=Math.max(2,Math.min(50,nLabels));
+    const t=Math.log2(n)/Math.log2(50); // 0..1
+    const cb=corpusSize*0.08;
+    const frozen  =0.52+cb+0.28*t-0.03*t*t;
+    const finetune=0.48+cb*1.1+0.36*t-0.04*t*t;
+    const scratch =0.22+0.46*t*t;
+    const vals=[frozen,finetune,scratch];
+    return Math.max(0.15,Math.min(0.95,vals[adaptMode]));
+  }
+
+  // Efficiency-curve sample points (20 pts over 2..50)
+  function efficiencyCurve(corpusSize){
+    const pts=[];
+    for(let k=0;k<20;k++){
+      const n=Math.round(2+k*(48/19));
+      pts.push({
+        n,
+        pretrained:calcAccuracy(n,0,corpusSize),
+        scratch:calcAccuracy(n,2,corpusSize)
+      });
+    }
+    return pts;
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const nLabels=Math.round(s.nLabels);
+    const adaptMode=Math.round(s.adaptMode);
+    const corpusSize=Math.round(s.corpusSize);
+
+    // groups
+    const gGraph =api.group("graph");
+    const gCurve =api.group("curve");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");
+    const GR=new T.Color("#34d399");
+    const AM=new T.Color("#fbbf24");
+    const VI=new T.Color("#a78bfa");
+    const SL=new T.Color("#54667c");
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: pretrain
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="pretrain"){
+      const nNodes=corpusSize===0?12:22;
+      const R=3.8;
+      const nodeTypes=["gene","TF","drug","pathway"];
+      const nodeCols=[CY,GR,AM,VI];
+
+      for(let i=0;i<nNodes;i++){
+        const ang=i/nNodes*Math.PI*2;
+        const px=Math.cos(ang)*R, pz=Math.sin(ang)*R;
+        const isMasked=(prand(i*7+13)>0.65);
+        const typeIdx=Math.floor(prand(i*3+2)*4);
+        const baseCol=nodeCols[typeIdx];
+        const col=isMasked?new T.Color("#1e2d45"):baseCol.clone();
+        const emi=isMasked?new T.Color("#111e30"):baseCol.clone().multiplyScalar(0.7);
+        const sphere=new T.Mesh(
+          new T.SphereGeometry(isMasked?0.22:0.30,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:emi,emissiveIntensity:isMasked?0.2:0.6,roughness:0.4})
+        );
+        sphere.position.set(px,0,pz);
+        gGraph.add(sphere);
+        api.pick(sphere,{node:{id:i,masked:isMasked,type:nodeTypes[typeIdx]}});
+
+        // sparse edges
+        if(prand(i*5+7)>0.38){
+          const j=(i+1)%nNodes;
+          const ang2=j/nNodes*Math.PI*2;
+          const edgePts=[new T.Vector3(px,0,pz),new T.Vector3(Math.cos(ang2)*R,0,Math.sin(ang2)*R)];
+          gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints(edgePts),new T.LineBasicMaterial({color:0x1e3046,transparent:true,opacity:0.55})));
+        }
+
+        // reconstruction arrow above masked nodes
+        if(isMasked){
+          const cone=new T.Mesh(new T.ConeGeometry(0.1,0.38,8),new T.MeshBasicMaterial({color:VI}));
+          cone.rotation.z=Math.PI;
+          cone.position.set(px,0.72,pz);
+          gGraph.add(cone);
+        }
+      }
+
+      // central encoder sphere
+      const enc=new T.Mesh(new T.SphereGeometry(0.85,24,18),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.55,roughness:0.3}));
+      gGraph.add(enc);
+      addLbl("encoder θ","#4dd7ff",1.5,0,1.35,0);
+
+      // spokes from encoder to nodes (light)
+      for(let i=0;i<nNodes;i+=3){
+        const ang=i/nNodes*Math.PI*2;
+        const sp=[new T.Vector3(0,0,0),new T.Vector3(Math.cos(ang)*R,0,Math.sin(ang)*R)];
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints(sp),new T.LineBasicMaterial({color:0x1a3050,transparent:true,opacity:0.35})));
+      }
+
+      addLbl(corpusSize===0?"small corpus":"large corpus","#fbbf24",1.3,0,-1.4,R+0.5);
+      addLbl("masked-node · contrastive","#a78bfa",1.2,0,0.0,-(R+0.8));
+
+      const repQ=corpusSize===0?0.63:0.81;
+      sceneSnap={mode,corpusSize,repQuality:+repQ.toFixed(3),downstreamAccuracy:null,pretrained_scratch_gap:null,nLabels,transferGain:null};
+
+      return {
+        badge:"Pretraining · "+(corpusSize===0?"small":"large")+" corpus · "+nNodes+" nodes",
+        formula:"θ* = argmin_θ L_pretrain(f_θ ; G_source)",
+        insight:"The encoder learns general biological graph structure without task labels. Masked nodes (grey) are reconstructed from neighbours; contrastive objectives align augmented views. A larger corpus builds richer representations that transfer further downstream.",
+        state:"Representation quality: "+(repQ*100).toFixed(0)+"%. Masked nodes: violet arrows = reconstruction targets. Spoke lines = encoder reads all nodes.",
+        metrics:{downstreamAccuracy:"—",pretrainedScratchGap:"—",nLabels:""+nLabels,transferGain:"—"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: transfer
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="transfer"){
+      const labels=["frozen","fine-tune","scratch"];
+      const cols=[CY,GR,AM];
+      const xPos=[-3.2,0,3.2];
+      const accVals=[
+        calcAccuracy(nLabels,0,corpusSize),
+        calcAccuracy(nLabels,1,corpusSize),
+        calcAccuracy(nLabels,2,corpusSize)
+      ];
+
+      // accuracy bars
+      accVals.forEach((acc,idx)=>{
+        const x=xPos[idx];
+        const h=0.15+acc*4.0;
+        const isActive=(idx===adaptMode);
+        const col=cols[idx];
+        const bar=new T.Mesh(
+          new T.BoxGeometry(1.6,h,1.4),
+          new T.MeshStandardMaterial({
+            color:col.clone(),
+            emissive:col.clone().multiplyScalar(isActive?0.85:0.2),
+            emissiveIntensity:isActive?0.72:0.18,
+            roughness:0.4,
+            transparent:!isActive,
+            opacity:isActive?1.0:0.45
+          })
+        );
+        bar.position.set(x,h/2,-0.8);
+        gBars.add(bar);
+        api.pick(bar,{bar:{mode:labels[idx],acc,active:isActive}});
+
+        addLbl((acc*100).toFixed(0)+"%",col.getStyle(),1.65,x,h+0.55,-0.8);
+        addSlbl(labels[idx],col.getStyle(),0.38,x,0.06,-0.8);
+      });
+
+      // active-bar indicator arrow
+      const aIdx=adaptMode;
+      const arH=0.15+accVals[aIdx]*4.0;
+      const arw=new T.Mesh(new T.ConeGeometry(0.17,0.46,8),new T.MeshBasicMaterial({color:0xfde68a}));
+      arw.position.set(xPos[aIdx],arH+0.95,-0.8);
+      gGraph.add(arw);
+
+      // baseline separator line
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5.5,0,-0.8),new T.Vector3(5.5,0,-0.8)]),new T.LineBasicMaterial({color:0x1e3046})));
+
+      // class-separation scatter in background
+      accVals.forEach((acc,idx)=>{
+        const x=xPos[idx];
+        const spread=idx===2?1.5:0.62;
+        for(let d=0;d<14;d++){
+          const clsA=d<7;
+          const cx=x+(prand(d*17+idx*100)-0.5)*spread;
+          const cz=2.6+(prand(d*23+idx*200)-0.5)*spread+(clsA?0.75:-0.75);
+          const dotCol=clsA?CY.clone():AM.clone();
+          if(idx===2) dotCol.lerp(SL,0.6);
+          const dot=new T.Mesh(new T.SphereGeometry(0.11,8,8),new T.MeshStandardMaterial({color:dotCol,emissive:dotCol,emissiveIntensity:0.65,roughness:0.4}));
+          dot.position.set(cx,0,cz);
+          gGraph.add(dot);
+        }
+      });
+
+      addLbl("class scatter","#6b7a8d",1.1,0,0.1,3.8);
+
+      const accActive=accVals[adaptMode];
+      const accScratch=accVals[2];
+      const gap=accActive-accScratch;
+      const tGain=(accScratch>0)?gap/accScratch:0;
+      sceneSnap={mode,adaptMode,corpusSize,nLabels,downstreamAccuracy:+accActive.toFixed(3),pretrained_scratch_gap:+gap.toFixed(3),transferGain:+tGain.toFixed(3)};
+
+      const modeNames=["Frozen encoder","Fine-tune","From scratch"];
+      return {
+        badge:"Transfer · "+modeNames[adaptMode]+" · "+nLabels+" labels",
+        formula:"φ* = adapt(θ*, D_target)",
+        insight:"Pretrained encoders already separate classes (scatter dots). A frozen encoder with a small head often suffices at low label counts. Fine-tuning specialises further; scratch needs many labels to build useful representations from nothing.",
+        state:"Active: "+labels[adaptMode]+" · acc "+(accActive*100).toFixed(0)+"% · gap vs scratch: "+(gap*100).toFixed(0)+"pp · transfer gain: "+(tGain*100).toFixed(0)+"%.",
+        metrics:{
+          downstreamAccuracy:(accActive*100).toFixed(0)+"%",
+          pretrainedScratchGap:(gap*100).toFixed(0)+"pp",
+          nLabels:""+nLabels,
+          transferGain:(tGain*100).toFixed(0)+"%"
+        },
+        focus:{center:[0,2,-0.8],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: data-efficiency
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="data-efficiency"){
+      const curve=efficiencyCurve(corpusSize);
+      const xS=0.82, yS=4.2;
+      const xOff=-4.0, yOff=0;
+
+      // axes
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff+curve.length*xS,yOff,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff,yOff+yS,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+
+      // pretrained curve (cyan)
+      const ptPts=curve.map((p,i)=>new T.Vector3(xOff+i*xS,yOff+p.pretrained*yS,0));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(ptPts),new T.LineBasicMaterial({color:CY.getHex()})));
+
+      // scratch curve (amber)
+      const scPts=curve.map((p,i)=>new T.Vector3(xOff+i*xS,yOff+p.scratch*yS,0));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(scPts),new T.LineBasicMaterial({color:AM.getHex()})));
+
+      // fill gap region with translucent ribbon (sample with thin boxes)
+      curve.forEach((p,i)=>{
+        if(p.pretrained>p.scratch+0.01){
+          const x=xOff+i*xS;
+          const yPT=yOff+p.pretrained*yS;
+          const ySC=yOff+p.scratch*yS;
+          const mid=(yPT+ySC)/2;
+          const hh=yPT-ySC;
+          const fill=new T.Mesh(new T.BoxGeometry(xS*0.7,hh,0.05),new T.MeshBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.18}));
+          fill.position.set(x,mid,0);
+          gCurve.add(fill);
+        }
+      });
+
+      // current-position index
+      const idx=Math.min(curve.length-1,Math.round((nLabels-2)/(50-2)*(curve.length-1)));
+      const pt=curve[idx];
+      const mx=xOff+idx*xS;
+      const myPT=yOff+pt.pretrained*yS;
+      const mySC=yOff+pt.scratch*yS;
+
+      // markers
+      const mPT=new T.Mesh(new T.SphereGeometry(0.19,12,12),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.92,roughness:0.2}));
+      mPT.position.set(mx,myPT,0.12); gCurve.add(mPT); api.pick(mPT,{marker:{type:"pretrained",n:pt.n,acc:pt.pretrained}});
+
+      const mSC=new T.Mesh(new T.SphereGeometry(0.19,12,12),new T.MeshStandardMaterial({color:AM,emissive:AM,emissiveIntensity:0.92,roughness:0.2}));
+      mSC.position.set(mx,mySC,0.12); gCurve.add(mSC); api.pick(mSC,{marker:{type:"scratch",n:pt.n,acc:pt.scratch}});
+
+      // vertical gap line at marker
+      if(myPT>mySC+0.08){
+        const gapPts=[new T.Vector3(mx+0.2,mySC,0.08),new T.Vector3(mx+0.2,myPT,0.08)];
+        gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(gapPts),new T.LineBasicMaterial({color:VI.getHex()})));
+      }
+
+      // axis labels
+      addLbl("acc","#8a99ad",1.05,xOff-0.7,yOff+yS*0.5,0);
+      addLbl("few","#8a99ad",0.95,xOff+1,yOff-0.55,0);
+      addLbl("many labels","#8a99ad",0.95,xOff+(curve.length-2)*xS,yOff-0.55,0);
+
+      // legend
+      addLbl("pretrained","#4dd7ff",1.15,xOff+(curve.length)*xS+0.2,myPT,0);
+      addLbl("scratch","#fbbf24",1.15,xOff+(curve.length)*xS+0.2,mySC,0);
+
+      const gap2=pt.pretrained-pt.scratch;
+      const tG2=(pt.scratch>0)?gap2/pt.scratch:0;
+      sceneSnap={mode,corpusSize,nLabels,adaptMode:0,downstreamAccuracy:+pt.pretrained.toFixed(3),pretrained_scratch_gap:+gap2.toFixed(3),transferGain:+tG2.toFixed(3)};
+
+      return {
+        badge:"Data efficiency · "+nLabels+" labels · "+(corpusSize===0?"small":"large")+" corpus",
+        formula:"gap(n) = acc_pretrained(n) − acc_scratch(n) → 0  as  n → ∞",
+        insight:"At few labels the pretrained model (cyan) outperforms from-scratch (amber) substantially — the core transfer benefit. The violet shaded region is the transfer advantage. As labels accumulate the curves converge and the advantage disappears. Drag nLabels to move the markers.",
+        state:"At "+nLabels+" labels: pretrained "+(pt.pretrained*100).toFixed(0)+"%, scratch "+(pt.scratch*100).toFixed(0)+"%. Gap: "+(gap2*100).toFixed(0)+"pp. Transfer gain: "+(tG2*100).toFixed(0)+"%.",
+        metrics:{
+          downstreamAccuracy:(pt.pretrained*100).toFixed(0)+"%",
+          pretrainedScratchGap:(gap2*100).toFixed(0)+"pp",
+          nLabels:""+nLabels,
+          transferGain:(tG2*100).toFixed(0)+"%"
+        },
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    return {badge:"B08",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"b08",
+    kind:"graph-foundation-transfer",
+    eyebrow:"Block B · GNN Architectures",
+    title:"B08 · Graph foundation models and transfer",
+    subtitle:"Pretrain on a broad corpus, adapt with few labels. Three views: self-supervised pretraining, adaptation strategies, and the label-efficiency curve.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, bar, or marker.",
+    modes:[
+      {value:"pretrain",        label:"Pretrain (self-supervised)"},
+      {value:"transfer",        label:"Transfer (frozen / fine-tune / scratch)"},
+      {value:"data-efficiency", label:"Data efficiency (few-shot curve)"}
+    ],
+    params:[
+      {key:"nLabels",   label:"# downstream labels",min:2,max:50,step:1,value:8,
+       fmt:v=>Math.round(v).toString()},
+      {key:"adaptMode", label:"adaptation (0=frozen 1=finetune 2=scratch)",min:0,max:2,step:1,value:0,
+       fmt:v=>["frozen","fine-tune","scratch"][Math.round(v)],modes:["transfer"]},
+      {key:"corpusSize",label:"corpus size (0=small 1=large)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"small":"large",modes:["pretrain","data-efficiency"]}
+    ],
+    metrics:[
+      {key:"downstreamAccuracy",  label:"Downstream accuracy",accent:"cyan"},
+      {key:"pretrainedScratchGap",label:"Pretrained − scratch gap",accent:"violet"},
+      {key:"nLabels",             label:"# labels",accent:"amber"},
+      {key:"transferGain",        label:"Transfer gain",accent:"green"}
+    ],
+    layers:[
+      {group:"graph",  label:"Graph / Corpus"},
+      {group:"curve",  label:"Efficiency curve"},
+      {group:"bars",   label:"Accuracy bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Min labels (2)",
+      on:api=>{api.setParam("nLabels",2);}
+    },
+    secondary:{
+      label:"Max labels (50)",
+      on:api=>{api.setParam("nLabels",50);}
+    },
+    defaultCam:{theta:-0.4,phi:0.6,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=pretrained/frozen · <span style="color:#34d399">green</span>=fine-tune · <span style="color:#fbbf24">amber</span>=scratch · <span style="color:#a78bfa">violet</span>=gap / reconstruction · dark grey=masked node.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="transfer") api.frame([0,2,-0.8],12);
+      else if(s.mode==="data-efficiency") api.frame([0,2,0],13);
+      else api.frame([0,0,0],12);
+    },
+    onSelect(api,d){
+      if(d.node)   api.setSelected("Node "+d.node.id+" · type:"+d.node.type+(d.node.masked?" · MASKED":""));
+      if(d.bar)    api.setSelected(d.bar.mode+" · acc "+(d.bar.acc*100).toFixed(0)+"% · "+(d.bar.active?"ACTIVE":"dim"));
+      if(d.marker) api.setSelected(d.marker.type+" @ "+d.marker.n+" labels → "+(d.marker.acc*100).toFixed(0)+"%");
+    },
+    build,
+    snapshot(s){
+      const nL=Math.round(s.nLabels);
+      const aM=Math.round(s.adaptMode);
+      const cS=Math.round(s.corpusSize);
+      const accPT=calcAccuracy(nL,0,cS);
+      const accSC=calcAccuracy(nL,2,cS);
+      const accActive=(s.mode==="transfer")?calcAccuracy(nL,aM,cS):accPT;
+      const gap=accPT-accSC;
+      const tGain=(accSC>0)?gap/accSC:0;
+      return {
+        mode:s.mode,
+        nLabels:nL,
+        adaptMode:aM,
+        corpusSize:cS,
+        downstreamAccuracy:+accActive.toFixed(3),
+        pretrained_scratch_gap:+gap.toFixed(3),
+        transferGain:+tGain.toFixed(3),
+        positiveTransferAtLowLabels:gap>0.01
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

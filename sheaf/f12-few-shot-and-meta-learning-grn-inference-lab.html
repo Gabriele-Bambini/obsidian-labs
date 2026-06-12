@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F12 · Few-shot and meta-learning GRN inference</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no rng, no clock) ───────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS from the note's Section-5 worked example (5-shot K562 erythroid) ─
+  //   3 erythroid TFs, their ChIP-seq target counts, 8200 K562 genes,
+  //   the results table (AUROC / AUPRC / EP@50), cross-organism transfer.
+  const F={
+    nGenes:8200,                 // K562 genes with mean log-expr > 0.5
+    tfs:["GATA1","KLF1","TAL1"], // the three core erythroid regulators
+    chip:[1842,1203,2107],       // ENCODE ChIP-seq target genes per TF
+    shotsRef:5,                  // K = 5 (5-shot support set)
+    // GATA1 5 support positives (note Section 5)
+    gata1Pos:["HBB","GYPA","ANK1","EPB42","SLC4A1"],
+    // Results table: AUROC / AUPRC / EP@50 by method (note Section 5)
+    rows:[
+      {key:"coexp",  name:"Co-expression",  auroc:0.61, auprc:0.18, ep50:0.24},
+      {key:"motif",  name:"Motif-only",     auroc:0.67, auprc:0.21, ep50:0.31},
+      {key:"zeroshot",name:"0-shot GNN",    auroc:0.69, auprc:0.23, ep50:0.35},
+      {key:"proto",  name:"5-shot Proto-Net",auroc:0.74,auprc:0.31, ep50:0.49},
+      {key:"maml",   name:"5-shot MAML-GNN",auroc:0.76, auprc:0.33, ep50:0.52},
+      {key:"full",   name:"Full ChIP sup.", auroc:0.88, auprc:0.54, ep50:0.71}
+    ],
+    crossEcoliBase:0.19,         // metabolic-TF AUPRC without E. coli prior
+    crossEcoliGain:0.27,         // AUPRC with E. coli CRP regulon prior
+    posRateLo:0.025, posRateHi:0.10 // 2.5–10% positive rate (class imbalance)
+  };
+
+  // colors — 3Blue1Brown: three blues + one brown
+  const C_TF   ="#4dd7ff";  // bright cyan-blue : TF / prototype core
+  const C_POS  ="#3aa0ff";  // mid blue        : positive (true target / support+)
+  const C_QHIT ="#9ad0ff";  // pale blue       : query predicted positive
+  const C_NEG  ="#b08a52";  // brown           : negative / non-target
+  const C_DIM  ="#37506a";  // slate           : unlabeled query bulk
+  const C_TXT  ="#cfe0f0";
+
+  let sceneSnap={};
+
+  // ── deterministic "embedding": map a query index → 2D position around the
+  //   positive prototype. K of the genes are true targets (cluster near +).
+  function queryEmbed(i,seed){
+    const a=prand(i*3.1+seed*11.0)*Math.PI*2;
+    const r=0.6+prand(i*7.7+seed*5.0)*2.4;
+    return [Math.cos(a)*r, Math.sin(a)*r];
+  }
+
+  // ── metric lookup for a method row ────────────────────────────────────────
+  function rowByKey(k){return F.rows.find(r=>r.key===k)||F.rows[0];}
+
+  // proto-net softmax confidence for a query at distance dPos,dNeg
+  function protoConf(dPos,dNeg){
+    const a=Math.exp(-dPos), b=Math.exp(-dNeg);
+    return a/(a+b);
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const tfIdx=Math.round(s.tf);            // 0=GATA1 1=KLF1 2=TAL1
+    const shots=Math.round(s.shots);         // K, 1..20
+    const steps=Math.round(s.innerSteps);    // MAML inner-loop gradient steps 0..5
+    const thr=s.threshold;                   // decision threshold 0..1
+    const ecoli=Math.round(s.ecoliPrior);    // 0/1 cross-organism prior
+
+    const gScene =api.group("scene");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const addBig=(t,c,sz,x,y,z)=>{const sp=api.bigLabel(t,c,sz);sp.position.set(x,y,z);gLabels.add(sp);};
+    const addSm =(t,c,sz,x,y,z)=>{const sp=api.label(t,c,sz);sp.position.set(x,y,z);gLabels.add(sp);};
+
+    const TFname=F.tfs[tfIdx];
+    const TFchip=F.chip[tfIdx];
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: proto  — Prototypical Network (metric-based, Section 4.2 / 5)
+    //   support positives (blue) and negatives (brown) embed; positive
+    //   prototype c+ = mean of support positives; query genes classified by
+    //   distance to c+ vs c-.  Slider 'shots' = K positives in the support set.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="proto"){
+      const K=Math.max(1,Math.min(20,shots));
+      const nNeg=Math.max(6,K*6);                 // ~6 negatives per positive (imbalance)
+      const seed=tfIdx*100+7;
+
+      // --- support positives (blue) cluster near c+ on +x side ---
+      const cPos=new T.Vector3( 2.6,0, 0);        // positive prototype location
+      const cNeg=new T.Vector3(-2.6,0, 0);        // negative prototype location
+      let sumPx=0,sumPz=0;
+      for(let k=0;k<K;k++){
+        const a=prand(k*4.1+seed)*Math.PI*2;
+        const jitter=1.0/Math.sqrt(K);            // more shots → tighter prototype estimate
+        const r=0.35+prand(k*9.3+seed)*0.9*jitter;
+        const px=cPos.x+Math.cos(a)*r, pz=Math.sin(a)*r;
+        sumPx+=px; sumPz+=pz;
+        const m=new T.Mesh(new T.SphereGeometry(0.20,16,12),
+          new T.MeshStandardMaterial({color:new T.Color(C_POS),emissive:new T.Color(C_POS).multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.set(px,0,pz); gScene.add(m);
+        const lbl=(tfIdx===0&&k<F.gata1Pos.length)?F.gata1Pos[k]:"+"+(k+1);
+        api.pick(m,{support:{tf:TFname,kind:"positive",label:lbl}});
+        if(tfIdx===0&&k<F.gata1Pos.length) addSm(lbl,C_QHIT,0.30,px,0.30,pz);
+      }
+      const protoPx=sumPx/K, protoPz=sumPz/K;
+
+      // --- support negatives (brown) cluster near c- ---
+      for(let k=0;k<nNeg;k++){
+        const a=prand(k*3.7+seed+50)*Math.PI*2;
+        const r=0.4+prand(k*5.9+seed+50)*1.3;
+        const m=new T.Mesh(new T.SphereGeometry(0.15,12,10),
+          new T.MeshStandardMaterial({color:new T.Color(C_NEG),emissive:new T.Color(C_NEG).multiplyScalar(0.4),emissiveIntensity:0.35,roughness:0.5}));
+        m.position.set(cNeg.x+Math.cos(a)*r,0,Math.sin(a)*r); gScene.add(m);
+        api.pick(m,{support:{tf:TFname,kind:"negative",label:"neg"+(k+1)}});
+      }
+
+      // --- prototype cores (big spheres + halo) ---
+      const pc=new T.Mesh(new T.SphereGeometry(0.42,24,18),new T.MeshStandardMaterial({color:new T.Color(C_TF),emissive:new T.Color(C_TF),emissiveIntensity:0.7,roughness:0.25}));
+      pc.position.set(protoPx,0,protoPz); gScene.add(pc); api.pick(pc,{proto:{kind:"c+",tf:TFname,K}});
+      api.halo([protoPx,0,protoPz],{r:0.95,color:"cyan",group:"scene"});
+      const nc=new T.Mesh(new T.SphereGeometry(0.42,24,18),new T.MeshStandardMaterial({color:new T.Color(C_NEG),emissive:new T.Color(C_NEG),emissiveIntensity:0.5,roughness:0.3}));
+      nc.position.copy(cNeg); gScene.add(nc); api.pick(nc,{proto:{kind:"c-",tf:TFname}});
+      addBig("c+ (proto)",C_TF,1.25,protoPx,1.0,protoPz);
+      addBig("c−",C_NEG,1.15,cNeg.x,1.0,0);
+
+      // --- query genes: classify by distance to c+ vs c- ---
+      const nQ=44;
+      let tp=0,fp=0,fn=0,truePos=0;
+      for(let i=0;i<nQ;i++){
+        const e=queryEmbed(i,seed+3);
+        // a fraction are true targets (live nearer the positive cloud)
+        const isTrue=(prand(i*13.0+seed)>0.62);
+        if(isTrue) truePos++;
+        const qx=isTrue? (1.6+e[0]*0.7) : (e[0]*1.1 - 0.4);
+        const qz=e[1]*1.0;
+        const dPos=Math.hypot(qx-protoPx,qz-protoPz);
+        const dNeg=Math.hypot(qx-cNeg.x,qz-cNeg.z);
+        const conf=protoConf(dPos,dNeg);
+        const called=conf>=thr;
+        if(called&&isTrue) tp++; else if(called&&!isTrue) fp++; else if(!called&&isTrue) fn++;
+        const col=called?new T.Color(C_QHIT):new T.Color(C_DIM);
+        const m=new T.Mesh(new T.SphereGeometry(called?0.12:0.085,10,8),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(called?0.6:0.2),emissiveIntensity:called?0.55:0.2,roughness:0.5}));
+        m.position.set(qx,0.02,qz); gScene.add(m);
+        api.pick(m,{query:{tf:TFname,conf:+conf.toFixed(2),called,truth:isTrue?1:0}});
+      }
+      // decision midplane between prototypes
+      api.plane([0,0,0],{w:0.06,h:7.5,color:"#8a99ad",opacity:0.22,flat:false,group:"scene"});
+      addSm("decision boundary","#8a99ad",0.36,0,0.1,3.7);
+
+      const prec=tp/Math.max(1,tp+fp);
+      const rec =tp/Math.max(1,tp+fn);
+      // reference AUPRC for proto-net (note table), modulated lightly by K
+      const baseAUPRC=rowByKey("proto").auprc;
+      const auprc=Math.max(0.18,Math.min(0.40, baseAUPRC*(0.6+0.4*Math.min(1,K/F.shotsRef))));
+
+      api.setMetric("auroc",rowByKey("proto").auroc.toFixed(2));
+      api.setMetric("auprc",auprc.toFixed(2));
+      api.setMetric("ep50",rowByKey("proto").ep50.toFixed(2));
+      api.setMetric("support",K+"+ / "+nNeg+"−");
+
+      sceneSnap={mode,tf:TFname,K,threshold:+thr.toFixed(2),
+        precision:+prec.toFixed(3),recall:+rec.toFixed(3),
+        auprc:+auprc.toFixed(3),auroc:rowByKey("proto").auroc,
+        truePositives:truePos,calledPositives:tp+fp};
+
+      return {
+        badge:"Proto-Net · "+TFname+" · "+K+"-shot",
+        formula:"c⁺ = (1/K) Σ f_θ(eⱼ) ;  p(y=1)=σ(−d(e,c⁺)+d(e,c⁻))",
+        insight:"Prototypical Networks (metric-based). The "+K+" support positives (blue) average into the prototype c⁺; negatives (brown) form c⁻. Each query gene is scored by its distance to c⁺ vs c⁻. More shots tighten the prototype estimate; raising the threshold trades recall for precision. The biological prior: erythroid TF targets (GATA1: "+TFchip+" ChIP peaks) cluster by accessibility and lineage.",
+        state:"K="+K+" positives, "+nNeg+" negatives · threshold "+thr.toFixed(2)+" → precision "+(prec*100).toFixed(0)+"% · recall "+(rec*100).toFixed(0)+"% · AUPRC "+auprc.toFixed(2)+".",
+        metrics:{auroc:rowByKey("proto").auroc.toFixed(2),auprc:auprc.toFixed(2),ep50:rowByKey("proto").ep50.toFixed(2),support:K+"+ / "+nNeg+"−"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: maml  — gradient-based meta-learning (MAML, Section 4.1)
+    //   θ initialization → inner-loop gradient steps on the support loss move
+    //   θ → φ along a descent path; query accuracy improves with each step.
+    //   Slider 'innerSteps' = number of inner-loop gradient steps.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="maml"){
+      const nStep=Math.max(0,Math.min(5,steps));
+      // loss landscape: a 1D parabola in x; θ0 starts off-minimum, φ approaches it
+      const xS=0.95, yOff=-1.4;
+      const xOf=-4.3;
+      const loss=x=>0.18+0.62*Math.pow((x-3.4)/3.4,2);   // min near x=3.4
+      // sample landscape curve
+      const pts=[];
+      for(let k=0;k<24;k++){const xx=k*0.36; pts.push(new T.Vector3(xOf+xx*xS-0.0, yOff+ (loss(xx))*4.4 ,0));}
+      gScene.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:0x33506a})));
+      addBig("L_S(θ)  support loss",C_TXT,1.05,xOf+3.6,yOff+3.4,0);
+
+      // θ0 at x=0.4 ; each inner step alpha*grad moves toward minimum (x=3.4)
+      const x0=0.4, xMin=3.4, alpha=0.42;
+      let x=x0; const path=[x];
+      for(let i=0;i<nStep;i++){ x = x - alpha*2*(x-xMin)/3.4; path.push(x); }
+      // draw markers along the path
+      path.forEach((xx,i)=>{
+        const yy=yOff+loss(xx)*4.4;
+        const xx3=xOf+xx*xS;
+        const isLast=(i===path.length-1);
+        const col=(i===0)? new T.Color(C_NEG) : (isLast? new T.Color(C_TF): new T.Color(C_POS));
+        const m=new T.Mesh(new T.SphereGeometry(i===0||isLast?0.24:0.16,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.7),emissiveIntensity:0.65,roughness:0.3}));
+        m.position.set(xx3,yy,0.1); gScene.add(m);
+        api.pick(m,{mamlStep:{step:i,x:+xx.toFixed(2),loss:+loss(xx).toFixed(3)}});
+        if(i>0){ // gradient-step arrow from previous to this
+          const py=yOff+loss(path[i-1])*4.4, px=xOf+path[i-1]*xS;
+          api.arrow([px,py+0.05,0.12],[xx3,yy+0.05,0.12],{color:"#9ad0ff",width:0.035,head:0.2,group:"scene"});
+        }
+      });
+      addBig("θ (init)",C_NEG,1.15,xOf+x0*xS,yOff+loss(x0)*4.4+0.8,0);
+      addBig("φ ("+nStep+" steps)",C_TF,1.2,xOf+x*xS,yOff+loss(x)*4.4-1.1,0);
+
+      // outer (meta) arrow: shows θ being nudged to a better basin (illustrative)
+      api.arrow([xOf+x0*xS,yOff-0.6,0],[xOf+(x0+0.5)*xS,yOff-0.6,0],{color:"#b08a52",width:0.04,head:0.24,group:"scene"});
+      addSm("β · meta-update of θ",C_NEG,0.36,xOf+(x0+0.6)*xS,yOff-0.95,0);
+
+      // query accuracy improves with steps: 0-shot → 5-shot MAML range
+      const acc0=rowByKey("zeroshot").auroc;       // 0.69
+      const accK=rowByKey("maml").auroc;           // 0.76
+      const t=nStep/5;
+      const acc=acc0+(accK-acc0)*Math.pow(t,0.7);
+      const lossNow=loss(x);
+
+      api.setMetric("auroc",acc.toFixed(2));
+      api.setMetric("auprc",(rowByKey("zeroshot").auprc+(rowByKey("maml").auprc-rowByKey("zeroshot").auprc)*t).toFixed(2));
+      api.setMetric("ep50",(rowByKey("zeroshot").ep50+(rowByKey("maml").ep50-rowByKey("zeroshot").ep50)*t).toFixed(2));
+      api.setMetric("support",nStep+" inner");
+
+      sceneSnap={mode,tf:TFname,innerSteps:nStep,xPhi:+x.toFixed(3),
+        supportLoss:+lossNow.toFixed(3),auroc:+acc.toFixed(3),
+        auprc:+(rowByKey("zeroshot").auprc+(rowByKey("maml").auprc-rowByKey("zeroshot").auprc)*t).toFixed(3)};
+
+      return {
+        badge:"MAML-GNN · "+TFname+" · "+nStep+" inner steps",
+        formula:"φᵢ = θ − α∇_θ L_S(θ) ;  θ ← θ − β∇_θ Σᵢ L_Q(φᵢ)",
+        insight:"Model-Agnostic Meta-Learning (gradient-based). θ is a learned initialization sitting where a FEW inner-loop steps (rate α) descend the support loss fast → adapted φ. The outer loop (rate β, brown) trains θ so this works across tasks. Here "+nStep+" inner steps move θ→φ down L_S; query AUROC climbs "+acc0.toFixed(2)+"→"+acc.toFixed(2)+". The double gradient is what makes θ adaptable, not just good.",
+        state:"Inner steps "+nStep+" (α="+alpha.toFixed(2)+") · support loss "+lossNow.toFixed(3)+" · query AUROC "+acc.toFixed(2)+" (vs 0-shot "+acc0.toFixed(2)+").",
+        metrics:{auroc:acc.toFixed(2),auprc:(rowByKey("zeroshot").auprc+(rowByKey("maml").auprc-rowByKey("zeroshot").auprc)*t).toFixed(2),ep50:(rowByKey("zeroshot").ep50+(rowByKey("maml").ep50-rowByKey("zeroshot").ep50)*t).toFixed(2),support:nStep+" inner"},
+        focus:{center:[0,0.5,0],radius:11.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: benchmark  — the results table as bars (Section 5)
+    //   Co-expr / motif / 0-shot / 5-shot proto / 5-shot MAML / full ChIP.
+    //   Bars show the chosen metric (AUROC | AUPRC | EP@50 via 'threshold'
+    //   slider reused as a metric selector is confusing — use a fixed trio:
+    //   we plot AUPRC bars and annotate the few-shot gap vs full supervision.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="benchmark"){
+      const xS=1.55, x0=-3.9*xS/1.55;          // spacing
+      const baseX=-3.9, dx=1.55;
+      F.rows.forEach((r,idx)=>{
+        const x=baseX+idx*dx;
+        const h=0.12+r.auprc*7.2;              // AUPRC drives height
+        const isFew=(r.key==="proto"||r.key==="maml");
+        const isFull=(r.key==="full");
+        const col=isFull? new T.Color(C_TF) : isFew? new T.Color(C_POS) : new T.Color(C_NEG);
+        const m=new T.Mesh(new T.BoxGeometry(0.85,h,0.85),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(isFew||isFull?0.7:0.3),emissiveIntensity:isFew||isFull?0.6:0.3,roughness:0.45}));
+        m.position.set(x,h/2,0); gBars.add(m);
+        api.pick(m,{bench:{name:r.name,auroc:r.auroc,auprc:r.auprc,ep50:r.ep50}});
+        addBig(r.auprc.toFixed(2),col.getStyle(),1.2,x,h+0.5,0);
+        addSm(r.name,C_TXT,0.30,x,0.05,0.85);
+      });
+      // baseline
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(baseX-0.7,0,0),new T.Vector3(baseX+F.rows.length*dx,0,0)]),new T.LineBasicMaterial({color:0x33506a})));
+
+      // gap annotation: 5-shot MAML vs full supervision (AUPRC)
+      const maml=rowByKey("maml").auprc, full=rowByKey("full").auprc, zero=rowByKey("zeroshot").auprc;
+      const gapToFull=full-maml;
+      const gainOverZero=maml-zero;
+      addBig("AUPRC",C_TXT,1.1,baseX-1.1,full*7.2*0.6,0);
+      addSm("few-shot (blue) lift over 0-shot; gap to full (cyan) remains",C_TXT,0.32,baseX+2.0,full*7.2+1.0,0);
+
+      api.setMetric("auroc",rowByKey("maml").auroc.toFixed(2));
+      api.setMetric("auprc",maml.toFixed(2));
+      api.setMetric("ep50",rowByKey("maml").ep50.toFixed(2));
+      api.setMetric("support","+"+(gainOverZero).toFixed(2)+" vs 0");
+
+      sceneSnap={mode,tf:TFname,auprcMaml:maml,auprcFull:full,auprcZero:zero,
+        gapToFull:+gapToFull.toFixed(3),gainOverZero:+gainOverZero.toFixed(3)};
+
+      return {
+        badge:"Benchmark · 6 methods · AUPRC",
+        formula:"AUPRC: 0-shot "+zero.toFixed(2)+" → 5-shot "+maml.toFixed(2)+" → full "+full.toFixed(2),
+        insight:"The Section-5 results table as bars (AUPRC). Brown = priors/baselines (co-expression, motif, 0-shot). Blue = the two 5-shot meta-learners (Proto-Net, MAML-GNN). Cyan = full ChIP supervision. The 5-shot lift over 0-shot is +"+gainOverZero.toFixed(2)+" AUPRC; but the gap to full supervision (+"+gapToFull.toFixed(2)+") is the fundamental few-shot ceiling — meta-learning narrows it, never closes it, yet works where ChIP-seq does not exist.",
+        state:"AUPRC: 0-shot "+zero.toFixed(2)+", 5-shot MAML "+maml.toFixed(2)+" (+"+gainOverZero.toFixed(2)+"), full "+full.toFixed(2)+" (gap "+gapToFull.toFixed(2)+").",
+        metrics:{auroc:rowByKey("maml").auroc.toFixed(2),auprc:maml.toFixed(2),ep50:rowByKey("maml").ep50.toFixed(2),support:"+"+gainOverZero.toFixed(2)+" vs 0"},
+        focus:{center:[0,2,0],radius:12.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: transfer  — cross-organism transfer (Section 4.4 / 5)
+    //   E. coli RegulonDB (CRP regulon) → ortholog map → human metabolic TFs.
+    //   Toggle 'ecoliPrior' adds the E. coli support; AUPRC 0.19 → 0.27.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="transfer"){
+      // E. coli source cluster (left) — well annotated, dense
+      const srcC=new T.Vector3(-3.4,0,0);
+      const ecoreCol=ecoli? C_POS : C_DIM;
+      const ec=new T.Mesh(new T.SphereGeometry(0.5,24,18),new T.MeshStandardMaterial({color:new T.Color(ecoreCol),emissive:new T.Color(ecoreCol).multiplyScalar(0.6),emissiveIntensity:0.55,roughness:0.3}));
+      ec.position.copy(srcC); gScene.add(ec); api.pick(ec,{node:{kind:"E.coli CRP regulon"}});
+      addBig("E. coli CRP",ecoli?C_POS:"#6b7a8d",1.2,srcC.x,1.1,0);
+      // dense source edges (RegulonDB ~5000 edges / 300 TFs)
+      for(let i=0;i<14;i++){
+        const a=i/14*Math.PI*2, r=1.5;
+        const p=new T.Vector3(srcC.x+Math.cos(a)*r,0,Math.sin(a)*r);
+        const dot=new T.Mesh(new T.SphereGeometry(0.12,10,8),new T.MeshStandardMaterial({color:new T.Color(ecoli?C_POS:C_DIM),emissive:new T.Color(ecoli?C_POS:C_DIM).multiplyScalar(0.5),emissiveIntensity:0.4,roughness:0.5}));
+        dot.position.copy(p); gScene.add(dot);
+        if(ecoli) gScene.add(new T.Line(new T.BufferGeometry().setFromPoints([srcC,p]),new T.LineBasicMaterial({color:0x2a557a,transparent:true,opacity:0.6})));
+      }
+
+      // ortholog bridge
+      const tgtC=new T.Vector3(3.4,0,0);
+      if(ecoli){
+        api.arrow([srcC.x+1.7,0,0],[tgtC.x-1.7,0,0],{color:"#9ad0ff",width:0.05,head:0.3,group:"scene"});
+        addSm("OrthoFinder ortholog map · JASPAR motif filter","#9ad0ff",0.34,0,0.5,0);
+      } else {
+        addSm("no cross-organism prior","#8a99ad",0.36,0,0.5,0);
+      }
+
+      // human target cluster (right) — sparse labels
+      const hc=new T.Mesh(new T.SphereGeometry(0.5,24,18),new T.MeshStandardMaterial({color:new T.Color(C_TF),emissive:new T.Color(C_TF),emissiveIntensity:0.6,roughness:0.3}));
+      hc.position.copy(tgtC); gScene.add(hc); api.pick(hc,{node:{kind:"human metabolic TF (NRF2/PPARA)"}});
+      addBig("human NRF2/PPARA",C_TF,1.2,tgtC.x,1.1,0);
+      // human side: few labeled (blue) + many unlabeled (slate); prior fills some
+      for(let i=0;i<14;i++){
+        const a=i/14*Math.PI*2, r=1.5;
+        const p=new T.Vector3(tgtC.x+Math.cos(a)*r,0,Math.sin(a)*r);
+        // without prior: only ~2 labeled; with prior: ~6 (transferred support)
+        const labeled = ecoli ? (i%2===0||i<3) : (i<2);
+        const col=labeled? C_POS : C_DIM;
+        const dot=new T.Mesh(new T.SphereGeometry(labeled?0.14:0.1,10,8),new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(labeled?0.6:0.2),emissiveIntensity:labeled?0.5:0.2,roughness:0.5}));
+        dot.position.copy(p); gScene.add(dot);
+        gScene.add(new T.Line(new T.BufferGeometry().setFromPoints([tgtC,p]),new T.LineBasicMaterial({color:labeled?0x2a557a:0x26384a,transparent:true,opacity:labeled?0.6:0.3})));
+      }
+
+      const auprc = ecoli ? F.crossEcoliGain : F.crossEcoliBase;
+      // AUPRC bar comparison
+      [[F.crossEcoliBase,"no prior",C_NEG,-1.0],[F.crossEcoliGain,"+E.coli",C_POS,1.0]].forEach(b=>{
+        const h=0.1+b[0]*9.0;
+        const active=(ecoli&&b[1]==="+E.coli")||(!ecoli&&b[1]==="no prior");
+        const col=new T.Color(b[2]);
+        const m=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(active?0.7:0.2),emissiveIntensity:active?0.6:0.2,roughness:0.45,transparent:!active,opacity:active?1:0.5}));
+        m.position.set(b[3],h/2,-3.3); gBars.add(m);
+        addBig(b[0].toFixed(2),col.getStyle(),1.1,b[3],h+0.5,-3.3);
+        addSm(b[1],C_TXT,0.30,b[3],0.05,-2.95);
+      });
+      addSm("metabolic-TF AUPRC","#8a99ad",0.34,0,0.1,-2.0);
+
+      api.setMetric("auroc","—");
+      api.setMetric("auprc",auprc.toFixed(2));
+      api.setMetric("ep50","—");
+      api.setMetric("support",ecoli?"E.coli prior":"human only");
+
+      sceneSnap={mode,tf:TFname,ecoliPrior:ecoli,auprc:+auprc.toFixed(3),
+        auprcBase:F.crossEcoliBase,auprcGain:F.crossEcoliGain,
+        deltaAUPRC:+(F.crossEcoliGain-F.crossEcoliBase).toFixed(3)};
+
+      return {
+        badge:"Cross-organism · "+(ecoli?"+E. coli prior":"human only"),
+        formula:"S_human ∪ map(S_Ecoli)  →  AUPRC "+F.crossEcoliBase.toFixed(2)+" → "+F.crossEcoliGain.toFixed(2),
+        insight:"Cross-organism few-shot transfer. E. coli RegulonDB has ~5000 validated edges (CRP regulon dense, left); human metabolic TFs (NRF2, PPARA) have almost none (right). OrthoFinder maps E. coli edges to human orthologs, filtered to TF families with conserved JASPAR motifs, and adds them to the support set. AUPRC rises "+F.crossEcoliBase.toFixed(2)+"→"+F.crossEcoliGain.toFixed(2)+" — useful but imperfect: E. coli uses sigma factors and operons, human uses enhancers and combinatorics.",
+        state:(ecoli?"With E. coli CRP prior: ":"Human-only: ")+"AUPRC "+auprc.toFixed(2)+" (Δ "+(F.crossEcoliGain-F.crossEcoliBase).toFixed(2)+" from transfer).",
+        metrics:{auroc:"—",auprc:auprc.toFixed(2),ep50:"—",support:ecoli?"E.coli prior":"human only"},
+        focus:{center:[0,0,-1.2],radius:12}
+      };
+    }
+
+    return {badge:"F12",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f12",
+    kind:"few-shot-meta-grn",
+    eyebrow:"Block F · GRN Inference",
+    title:"F12 · Few-shot and meta-learning GRN inference",
+    subtitle:"Validated TF→target edges are rare. Four views of learning fast from few labels: Prototypical Networks, MAML, the 5-shot benchmark, and cross-organism transfer — on the GATA1 / KLF1 / TAL1 erythroid task.",
+    selectedLabel:"Element",
+    selectedHint:"Click a support gene, prototype, MAML step, bar, or node.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"proto",     label:"Prototypical Net (metric)"},
+      {value:"maml",      label:"MAML-GNN (gradient)"},
+      {value:"benchmark", label:"5-shot benchmark (table)"},
+      {value:"transfer",  label:"Cross-organism transfer"}
+    ],
+    params:[
+      {key:"tf",        label:"erythroid TF (0=GATA1 1=KLF1 2=TAL1)",min:0,max:2,step:1,value:0,
+       fmt:v=>["GATA1","KLF1","TAL1"][Math.round(v)],modes:["proto","maml"]},
+      {key:"shots",     label:"K (support positives / shot)",min:1,max:20,step:1,value:5,
+       fmt:v=>Math.round(v)+"-shot",modes:["proto"]},
+      {key:"threshold", label:"decision threshold",min:0.3,max:0.8,step:0.02,value:0.5,
+       fmt:v=>v.toFixed(2),modes:["proto"]},
+      {key:"innerSteps",label:"MAML inner-loop steps",min:0,max:5,step:1,value:1,
+       fmt:v=>Math.round(v)+" steps",modes:["maml"]},
+      {key:"ecoliPrior",label:"E. coli prior (0=off 1=on)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===1?"on":"off",modes:["transfer"]}
+    ],
+    metrics:[
+      {key:"auroc",  label:"AUROC",        accent:"cyan"},
+      {key:"auprc",  label:"AUPRC",        accent:"violet"},
+      {key:"ep50",   label:"EP@50",        accent:"amber"},
+      {key:"support",label:"support set",  accent:"green"}
+    ],
+    layers:[
+      {group:"scene", label:"Scene / embedding"},
+      {group:"bars",  label:"Metric bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"5-shot",
+      on:api=>{api.setParam("shots",5);api.setParam("innerSteps",1);}
+    },
+    secondary:{
+      label:"Full sweep (K=20)",
+      on:api=>{api.setParam("shots",20);api.setParam("innerSteps",5);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:12},
+    hint:'<span style="color:#3aa0ff">blue</span>=support positive / few-shot method · <span style="color:#4dd7ff">cyan</span>=prototype / full supervision · <span style="color:#b08a52">brown</span>=negative / baseline prior · <span style="color:#37506a">slate</span>=unlabeled query.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="benchmark") api.frame([0,2,0],12.5);
+      else if(s.mode==="maml") api.frame([0,0.5,0],11.5);
+      else if(s.mode==="transfer") api.frame([0,0,-1.2],12);
+      else api.frame([0,0,0],11);
+    },
+    onSelect(api,d){
+      if(d.support) api.setSelected(d.support.tf+" support "+d.support.kind+" · "+d.support.label);
+      if(d.proto)   api.setSelected("Prototype "+d.proto.kind+(d.proto.K!=null?" of "+d.proto.K+" positives":""));
+      if(d.query)   api.setSelected("Query gene · conf "+d.query.conf+" · "+(d.query.called?"CALLED":"rejected")+" · truth="+d.query.truth);
+      if(d.mamlStep)api.setSelected("MAML step "+d.mamlStep.step+" · x="+d.mamlStep.x+" · L_S="+d.mamlStep.loss);
+      if(d.bench)   api.setSelected(d.bench.name+" · AUROC "+d.bench.auroc+" · AUPRC "+d.bench.auprc+" · EP@50 "+d.bench.ep50);
+      if(d.node)    api.setSelected(d.node.kind);
+    },
+    build,
+    snapshot(s){
+      return Object.assign({
+        mode:s.mode,
+        tf:["GATA1","KLF1","TAL1"][Math.round(s.tf)],
+        K:Math.round(s.shots),
+        threshold:+s.threshold.toFixed(2),
+        innerSteps:Math.round(s.innerSteps),
+        ecoliPrior:Math.round(s.ecoliPrior)
+      }, sceneSnap);
+    }
+  });
+})();
+</script>
+</body>
+</html>

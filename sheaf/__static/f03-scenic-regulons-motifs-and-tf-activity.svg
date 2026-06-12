@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F03 — SCENIC: GRNBoost2 → motif filter → per-cell TF activity</title>
+<desc id="d">Four-panel captioned figure: SCENIC: GRNBoost2 → motif filter → per-cell TF activity</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F03 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="22" font-weight="700">SCENIC: GRNBoost2 → motif filter → per-cell TF activity</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The GATA1 regulon</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">gene panel</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">10</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">regulon |R|</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cell types</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TF</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">GATA1</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">RcisTarget motif filter</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">NES = max_k [ RC(k)·√k ]</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">keep g if NES &gt; 3.0</text>
+<rect x="502" y="178" width="12" height="26" rx="2" fill="#a78bfa"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">AHSP</text>
+<rect x="534" y="181.06" width="12" height="22.94" rx="2" fill="#4dd7ff"/>
+<text x="540" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">HBB</text>
+<rect x="566" y="203.8" width="12" height="0.2" rx="2" fill="#fb7185"/>
+<text x="572" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">CD3E</text>
+<line x1="502" y1="202.47" x2="598" y2="202.47" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">AUCell per-cell activity</text>
+<rect x="56" y="292" width="12" height="64" rx="2" fill="#34d399"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">ery</text>
+<rect x="85" y="353.87" width="12" height="2.13" rx="2" fill="#fb7185"/>
+<text x="91" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">T</text>
+<rect x="114" y="353.87" width="12" height="2.13" rx="2" fill="#fbbf24"/>
+<text x="120" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">mono</text>
+<line x1="56" y1="313.33" x2="143" y2="313.33" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393.5" fill="#34d399" font-size="11.5" font-weight="700">AUC erythroblast</text>
+<text x="196" y="393.5" fill="#9fb4cc" font-size="11.5">0.60</text>
+<text x="56" y="413.5" fill="#fb7185" font-size="11.5" font-weight="700">AUC others (15k)</text>
+<text x="196" y="413.5" fill="#9fb4cc" font-size="11.5">≈0.02</text>
+<text x="56" y="441" fill="#8a99ad" font-size="11">K_auc = 5; only the erythroblast is GATA1-active.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Activity ≠ expression</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">GRNBoost2</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">co-variation</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">RcisTarget</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">+ motif</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">AUCell</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">per-cell AUC</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">output A</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">cell × TF</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F03. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">SCENIC </text>
+<text x="240.23" y="538" fill="#c7d2dd" font-size="13">pipeline </text>
+<text x="312.77" y="538" fill="#c7d2dd" font-size="13">on </text>
+<text x="336.95" y="538" fill="#c7d2dd" font-size="13">the </text>
+<text x="369.19" y="538" fill="#c7d2dd" font-size="13">GATA1 </text>
+<text x="422.38" y="538" fill="#c7d2dd" font-size="13">erythroid </text>
+<text x="502.98" y="538" fill="#c7d2dd" font-size="13">regulon. </text>
+<text x="575.52" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="609.05" y="538" fill="#c7d2dd" font-size="13">GRNBoost2 </text>
+<text x="694.49" y="538" fill="#c7d2dd" font-size="13">yields </text>
+<text x="750.91" y="538" fill="#c7d2dd" font-size="13">7 </text>
+<text x="767.03" y="538" fill="#c7d2dd" font-size="13">candidates </text>
+<text x="855.69" y="538" fill="#c7d2dd" font-size="13">for</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">GATA1; </text>
+<text x="101.26" y="559" fill="#c7d2dd" font-size="13">2 </text>
+<text x="117.38" y="559" fill="#c7d2dd" font-size="13">(CD3E, </text>
+<text x="177.42" y="559" fill="#c7d2dd" font-size="13">CD14) </text>
+<text x="228.2" y="559" fill="#c7d2dd" font-size="13">are </text>
+<text x="260.44" y="559" fill="#c7d2dd" font-size="13">spurious </text>
+<text x="332.98" y="559" fill="#c7d2dd" font-size="13">co-variation. </text>
+<text x="445.82" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="479.35" y="559" fill="#c7d2dd" font-size="13">RcisTarget </text>
+<text x="570.43" y="559" fill="#c7d2dd" font-size="13">keeps </text>
+<text x="618.79" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="651.03" y="559" fill="#c7d2dd" font-size="13">5 </text>
+<text x="667.15" y="559" fill="#c7d2dd" font-size="13">genes </text>
+<text x="715.51" y="559" fill="#c7d2dd" font-size="13">with </text>
+<text x="755.81" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="771.93" y="559" fill="#c7d2dd" font-size="13">GATA </text>
+<text x="817.06" y="559" fill="#c7d2dd" font-size="13">motif</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">(NES </text>
+<text x="83.93" y="580" fill="#c7d2dd" font-size="13">= </text>
+<text x="100.05" y="580" fill="#c7d2dd" font-size="13">4.2 </text>
+<text x="132.29" y="580" fill="#c7d2dd" font-size="13">&gt; </text>
+<text x="148.41" y="580" fill="#c7d2dd" font-size="13">3.0); </text>
+<text x="196.77" y="580" fill="#c7d2dd" font-size="13">CD3E/CD14 </text>
+<text x="283.41" y="580" fill="#c7d2dd" font-size="13">are </text>
+<text x="315.65" y="580" fill="#c7d2dd" font-size="13">pruned. </text>
+<text x="380.13" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="413.66" y="580" fill="#c7d2dd" font-size="13">AUCell </text>
+<text x="473.71" y="580" fill="#c7d2dd" font-size="13">scores </text>
+<text x="530.13" y="580" fill="#c7d2dd" font-size="13">each </text>
+<text x="570.43" y="580" fill="#c7d2dd" font-size="13">cell </text>
+<text x="610.73" y="580" fill="#c7d2dd" font-size="13">by </text>
+<text x="634.91" y="580" fill="#c7d2dd" font-size="13">recovery </text>
+<text x="707.45" y="580" fill="#c7d2dd" font-size="13">of </text>
+<text x="731.63" y="580" fill="#c7d2dd" font-size="13">R_GATA1; </text>
+<text x="810.21" y="580" fill="#c7d2dd" font-size="13">the</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">erythroblast </text>
+<text x="144.78" y="601" fill="#c7d2dd" font-size="13">reaches </text>
+<text x="209.26" y="601" fill="#c7d2dd" font-size="13">AUC </text>
+<text x="245.13" y="601" fill="#c7d2dd" font-size="13">= </text>
+<text x="261.25" y="601" fill="#c7d2dd" font-size="13">0.60, </text>
+<text x="309.61" y="601" fill="#c7d2dd" font-size="13">other </text>
+<text x="357.97" y="601" fill="#c7d2dd" font-size="13">lineages </text>
+<text x="430.51" y="601" fill="#c7d2dd" font-size="13">≈ </text>
+<text x="453.08" y="601" fill="#c7d2dd" font-size="13">0.02. </text>
+<text x="501.44" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="534.96" y="601" fill="#c7d2dd" font-size="13">The </text>
+<text x="568.41" y="601" fill="#c7d2dd" font-size="13">output </text>
+<text x="624.83" y="601" fill="#c7d2dd" font-size="13">cell </text>
+<text x="665.13" y="601" fill="#c7d2dd" font-size="13">× </text>
+<text x="687.7" y="601" fill="#c7d2dd" font-size="13">TF </text>
+<text x="714.3" y="601" fill="#c7d2dd" font-size="13">matrix </text>
+<text x="770.72" y="601" fill="#c7d2dd" font-size="13">encodes </text>
+<text x="835.2" y="601" fill="#c7d2dd" font-size="13">TF</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">activity, </text>
+<text x="120.6" y="622" fill="#c7d2dd" font-size="13">not </text>
+<text x="152.84" y="622" fill="#c7d2dd" font-size="13">mRNA </text>
+<text x="196.77" y="622" fill="#c7d2dd" font-size="13">— </text>
+<text x="219.33" y="622" fill="#c7d2dd" font-size="13">capturing </text>
+<text x="299.93" y="622" fill="#c7d2dd" font-size="13">post-translational </text>
+<text x="453.07" y="622" fill="#c7d2dd" font-size="13">regulation.</text>
+</svg>

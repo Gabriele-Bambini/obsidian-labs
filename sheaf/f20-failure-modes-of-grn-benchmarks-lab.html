@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F20 · Failure modes of GRN benchmarks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── canonical worked example (note §4.1, §5) ─────────────────────────────
+  // DREAM5 E. coli gold standard from RegulonDB:
+  //   total gold edges = 4511
+  //   top-5 TFs (crp,lexA,fliA,hns,fnr) carry 1021 edges = 22.6%
+  //   crp=229 lexA=40 fliA=37 hns=35 fnr~ remainder of the 1021 head
+  // honest method AUROC ~0.66 (no prior, real expression skill)
+  // hub-only AUROC      = 0.71
+  // prior/leak method   = 0.78 (best with-prior)  → organism leakage explains ~60% of gap
+  const F={
+    goldEdges:4511,
+    topTFs:["crp","lexA","fliA","hns","fnr"],
+    topTFtargets:[229,40,37,35,30],   // head of the skewed degree distribution
+    top5Share:1021,                   // 22.6% of 4511
+    honestAUROC:0.66,                 // expression-only method, no leakage
+    hubOnlyAUROC:0.71,                // trivial: rank TFs by RegulonDB degree
+    leakAUROC:0.78,                   // best with-prior method (DREAM5)
+    residualFloor:0.52,               // residual AUROC once hub regressed out
+    // BEELINE synthetic-vs-real (note §4.4 / §5)
+    synthAUROC:0.72,                  // GENIE3 on SERGIO synthetic
+    realChipAUROC:0.58,               // GENIE3 on real hESC ChIP gold
+    synthRealRho:0.64                 // spearman rank corr synthetic vs real
+  };
+  const top5Frac=F.top5Share/F.goldEdges; // 0.2264
+
+  // ── deterministic gold-standard edge model ───────────────────────────────
+  // A method's AUROC under each failure mode, as a function of how much the
+  // "trivial exploit" is allowed to drive the score (exploit slider 0..1) and
+  // how skewed/contaminated the benchmark is (skew/contam slider).
+  function auditNumbers(mode,exploit,skew,negEasy){
+    // honest skill the method actually has (expression-only baseline)
+    const honest=F.honestAUROC;
+    let reported=honest, trivial=honest, label="honest", inflated=0;
+
+    if(mode==="hub"){
+      // hub-only ceiling rises with degree skew; exploit blends honest→hub
+      trivial=0.55+0.16*skew;                 // 0.55..0.71 hub-only AUROC
+      reported=honest+(trivial-honest)*exploit + 0.07*exploit;
+      label="hub degree";
+    } else if(mode==="organism"){
+      // organism leakage: returning RegulonDB prior directly ≈ eval GT
+      trivial=0.60+0.30*skew;                 // up to ~0.90 by direct lookup
+      reported=honest+(trivial-honest)*exploit*0.92;
+      label="prior lookup";
+    } else if(mode==="synthetic"){
+      // simulator overfit: high on SERGIO, collapses on real ChIP data
+      trivial=F.synthAUROC;                   // synthetic ceiling
+      const real=F.realChipAUROC;             // real ceiling
+      // skew here = "how synthetic is the test set" (1=pure SERGIO,0=real)
+      const testCeil=real+(trivial-real)*skew;
+      reported=honest+(testCeil-honest)*exploit;
+      label="SERGIO fit";
+    } else { // clean audit — hardened benchmark, no exploit pays off
+      trivial=0.50+0.02*skew;
+      reported=honest;                        // exploit buys nothing
+      label="no exploit";
+    }
+    // negative-set bias: easy negatives inflate every reported AUROC.
+    // A clean/hardened benchmark uses hard matched negatives, so no boost.
+    const negBoost=(mode==="clean")?0:negEasy*0.06;   // up to +0.06 AUROC from easy N
+    reported=Math.min(0.95,reported+negBoost);
+    trivial=Math.min(0.95,trivial+negBoost);
+    inflated=Math.max(0,reported-honest);     // points NOT from real biology (floored at 0)
+    // residual AUROC: method value beyond the trivial exploit
+    const residual=Math.max(F.residualFloor,
+      0.50+ (reported-trivial)*0.9 + (1-exploit)*0.10);
+    return {honest,trivial,reported,inflated,residual,label};
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const exploit=s.exploit;        // 0..1 how much the trivial exploit drives score
+    const skew=s.skew;              // 0..1 benchmark skew / contamination / synthetic-ness
+    const negEasy=s.negEasy;        // 0..1 fraction of easy negatives in the negative set
+    const A=auditNumbers(mode,exploit,skew,negEasy);
+
+    const gGold =api.group("gold");     // gold-standard network
+    const gBars =api.group("bars");     // AUROC bars
+    const gAudit=api.group("audit");    // residual / diagnostic geometry
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");  // honest / true biology
+    const RO=new T.Color("#fb7185");  // inflation / leakage / exploit
+    const AM=new T.Color("#fbbf24");  // hub / reported
+    const VI=new T.Color("#a78bfa");  // residual / takeaway
+    const GR=new T.Color("#34d399");  // clean / passes audit
+    const SL=new T.Color("#54667c");
+
+    // ════════════════════════════════════════════════════════════════
+    // SHARED OBJECT: the skewed gold-standard star (top TFs = hubs)
+    // ════════════════════════════════════════════════════════════════
+    // Lay the 5 top TFs around a ring; node size ∝ known target count.
+    const R=3.6;
+    const tfPos=[];
+    const maxDeg=F.topTFtargets[0];
+    for(let i=0;i<F.topTFs.length;i++){
+      const ang=(i/F.topTFs.length)*Math.PI*2 - Math.PI/2;
+      const px=Math.cos(ang)*R, pz=Math.sin(ang)*R;
+      tfPos.push(new T.Vector3(px,0,pz));
+      const deg=F.topTFtargets[i];
+      const rad=0.28+0.55*(deg/maxDeg);
+      // colour: under hub/organism leakage the hubs glow rose (exploited)
+      const exploited=(mode==="hub"||mode==="organism");
+      const baseC=exploited?RO.clone():CY.clone();
+      const c=baseC.clone().lerp(AM,exploited?exploit*0.5:0);
+      const sphere=new T.Mesh(
+        new T.SphereGeometry(rad,18,14),
+        new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.55),emissiveIntensity:0.5+0.4*(exploited?exploit:0),roughness:0.4})
+      );
+      sphere.position.set(px,0,pz);
+      gGold.add(sphere);
+      api.pick(sphere,{tf:{name:F.topTFs[i],targets:deg}});
+      addSlbl(F.topTFs[i],"#9fb3c8",0.40,px,rad+0.45,pz);
+      addLbl(deg+"",exploited?"#fb7185":"#4dd7ff",1.0,px,rad+0.95,pz);
+
+      // target genes hanging off each TF (count scaled down for legibility)
+      const shown=Math.max(2,Math.round(deg/F.topTFtargets[0]*9));
+      for(let k=0;k<shown;k++){
+        const sa=ang + (k-shown/2)*0.13;
+        const tr=R+1.0+ (k%2)*0.5;
+        const gx=Math.cos(sa)*tr, gz=Math.sin(sa)*tr;
+        const dot=new T.Mesh(new T.SphereGeometry(0.085,8,8),
+          new T.MeshStandardMaterial({color:0x2c4258,emissive:0x16263a,emissiveIntensity:0.5,roughness:0.6}));
+        dot.position.set(gx,0,gz);
+        gGold.add(dot);
+        gGold.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(px,0,pz),new T.Vector3(gx,0,gz)]),
+          new T.LineBasicMaterial({color:exploited?0x5a2330:0x1e3046,transparent:true,opacity:0.5})));
+      }
+    }
+    // central "benchmark" core
+    const core=new T.Mesh(new T.SphereGeometry(0.5,20,16),
+      new T.MeshStandardMaterial({color:SL,emissive:0x10212f,emissiveIntensity:0.4,roughness:0.5}));
+    gGold.add(core);
+    addLbl("DREAM5 gold · "+F.goldEdges+" edges","#8a99ad",1.15,0,-1.4,R+1.7);
+    addLbl("top-5 TFs = "+(top5Frac*100).toFixed(1)+"%","#fb7185",1.1,0,0,-(R+2.1));
+
+    // mode-specific overlay text on the star
+    if(mode==="hub")      addLbl("hub leakage","#fbbf24",1.3,0,1.7,0);
+    else if(mode==="organism") addLbl("organism leakage","#fb7185",1.3,0,1.7,0);
+    else if(mode==="synthetic") addLbl("synthetic mismatch","#a78bfa",1.3,0,1.7,0);
+    else addLbl("clean audit","#34d399",1.3,0,1.7,0);
+
+    // ════════════════════════════════════════════════════════════════
+    // AUROC BARS: honest skill vs trivial exploit vs reported
+    // ════════════════════════════════════════════════════════════════
+    const barX=[-2.4,0,2.4];
+    const barVals=[A.honest,A.trivial,A.reported];
+    const barCols=[CY,(mode==="clean"?GR:RO),AM];
+    const barLbl=["honest","trivial("+A.label+")","reported"];
+    barVals.forEach((v,idx)=>{
+      const x=barX[idx];
+      const h=0.15+v*4.2;
+      const c=barCols[idx];
+      const bar=new T.Mesh(new T.BoxGeometry(1.3,h,1.1),
+        new T.MeshStandardMaterial({color:c.clone(),emissive:c.clone().multiplyScalar(0.5),emissiveIntensity:0.45,roughness:0.4}));
+      bar.position.set(x,h/2,7.0);
+      gBars.add(bar);
+      api.pick(bar,{bar:{kind:barLbl[idx],auroc:v}});
+      addLbl(v.toFixed(2),c.getStyle(),1.45,x,h+0.5,7.0);
+      addSlbl(barLbl[idx],c.getStyle(),0.36,x,0.05,7.0);
+    });
+    // 0.5 chance baseline line
+    gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([
+      new T.Vector3(-3.4,0.15+0.5*4.2,7.0),new T.Vector3(3.4,0.15+0.5*4.2,7.0)]),
+      new T.LineBasicMaterial({color:0x394b5e,transparent:true,opacity:0.7})));
+    addSlbl("chance 0.50","#5d7186",0.34,3.0,0.15+0.5*4.2+0.25,7.0);
+
+    // inflation ribbon: reported minus honest (the points that aren't biology)
+    if(A.inflated>0.005){
+      const yH=0.15+A.honest*4.2, yR=0.15+A.reported*4.2;
+      const mid=(yH+yR)/2, hh=Math.max(0.05,yR-yH);
+      const fill=new T.Mesh(new T.BoxGeometry(1.1,hh,0.06),
+        new T.MeshBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.22}));
+      fill.position.set(barX[2],mid,7.0+0.7);
+      gBars.add(fill);
+      addLbl("+"+(A.inflated*100).toFixed(0)+"pp inflated",(mode==="clean")?"#34d399":"#fb7185",1.05,barX[2]+0.1,yR+1.1,7.0);
+    } else {
+      addLbl("0pp inflated","#34d399",1.05,barX[2],0.15+A.reported*4.2+1.0,7.0);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // RESIDUAL DIAGNOSTIC: AUROC beyond the trivial exploit
+    // ════════════════════════════════════════════════════════════════
+    const resX=0, resZ=-5.6;
+    const rh=0.15+A.residual*3.4;
+    const resC=A.residual<0.55?RO:GR;
+    const resBar=new T.Mesh(new T.BoxGeometry(1.5,rh,1.3),
+      new T.MeshStandardMaterial({color:resC.clone(),emissive:resC.clone().multiplyScalar(0.55),emissiveIntensity:0.5,roughness:0.4}));
+    resBar.position.set(resX,rh/2,resZ);
+    gAudit.add(resBar);
+    api.pick(resBar,{residual:{auroc:A.residual}});
+    addLbl("residual "+A.residual.toFixed(2),resC.getStyle(),1.3,resX,rh+0.55,resZ);
+    addSlbl("AUROC beyond exploit","#8a99ad",0.40,resX,0.05,resZ);
+    // 0.55 "adds nothing" threshold marker
+    gAudit.add(new T.Line(new T.BufferGeometry().setFromPoints([
+      new T.Vector3(-1.2,0.15+0.55*3.4,resZ),new T.Vector3(1.2,0.15+0.55*3.4,resZ)]),
+      new T.LineBasicMaterial({color:0x6b3340})));
+    addSlbl("0.55",(A.residual<0.55?"#fb7185":"#5d7186"),0.34,1.5,0.15+0.55*3.4,resZ);
+
+    // ── metrics + snapshot ──
+    const passes=(A.inflated<0.02 && A.residual>=0.55);
+    sceneSnap={
+      mode,
+      reportedAUROC:+A.reported.toFixed(3),
+      honestAUROC:+A.honest.toFixed(3),
+      trivialAUROC:+A.trivial.toFixed(3),
+      inflationPP:+(A.inflated*100).toFixed(1),
+      residualAUROC:+A.residual.toFixed(3),
+      top5Share:+top5Frac.toFixed(4),
+      passesAudit:passes
+    };
+
+    const modeName={hub:"Hub gene leakage",organism:"Organism leakage",synthetic:"Synthetic data mismatch",clean:"Clean / hardened audit"}[mode];
+
+    const formula={
+      hub:"s(M_hub , B) ≈ s(M , B) &nbsp; with &nbsp; hub-score = #targets(TF)",
+      organism:"M_trivial(e) = 1[ e ∈ RegulonDB prior ] ≈ gold standard",
+      synthetic:"AUROC_synth = "+F.synthAUROC.toFixed(2)+" ≫ AUROC_real = "+F.realChipAUROC.toFixed(2)+" &nbsp;(ρ = "+F.synthRealRho.toFixed(2)+")",
+      clean:"residual = AUROC(M | exploit regressed out) ≥ 0.55"
+    }[mode];
+
+    const insight={
+      hub:"The DREAM5 E. coli gold standard puts "+F.top5Share+" of "+F.goldEdges+" edges ("+(top5Frac*100).toFixed(1)+"%) on just 5 TFs (crp has "+F.topTFtargets[0]+" targets alone). Ranking edges by TF degree — using no expression data — already reaches AUROC ≈ "+F.hubOnlyAUROC.toFixed(2)+". Drive the exploit up: the reported bar climbs toward the trivial ceiling while the residual collapses below 0.55, exposing that the method adds almost nothing beyond memorising TF popularity.",
+      organism:"Methods that use a RegulonDB-derived prior are evaluated on a RegulonDB-derived gold standard. The trivial method simply returns the prior edges and lands near the evaluation truth. Organism leakage explains ~60% of the apparent gap between with-prior ("+F.leakAUROC.toFixed(2)+") and no-prior ("+F.honestAUROC.toFixed(2)+") methods. The reported AUROC is circular, not biology.",
+      synthetic:"SERGIO's Gaussian co-expression is trivially captured by mutual-information methods: GENIE3 scores "+F.synthAUROC.toFixed(2)+" on synthetic but only "+F.realChipAUROC.toFixed(2)+" on real hESC ChIP data. Slide skew toward pure-synthetic and the reported bar rises with no gain in real-biology skill. Rank correlation synthetic↔real is only ρ = "+F.synthRealRho.toFixed(2)+": the synthetic winner is often not the real winner.",
+      clean:"Hardened benchmark: hubs removed or down-weighted, prior disjoint from gold standard, real-data gold, hard matched negatives. Now no exploit pays off — the reported AUROC equals the honest "+F.honestAUROC.toFixed(2)+", inflation is ~0pp, and the residual stays above 0.55. This is the only regime where a leaderboard number means what it claims."
+    }[mode];
+
+    return {
+      badge:modeName+" · reported "+A.reported.toFixed(2)+" · +"+(A.inflated*100).toFixed(0)+"pp inflated",
+      formula:formula,
+      insight:insight,
+      state:"honest "+A.honest.toFixed(2)+" · trivial("+A.label+") "+A.trivial.toFixed(2)+" · reported "+A.reported.toFixed(2)+" → "+(A.inflated*100).toFixed(0)+"pp inflation · residual "+A.residual.toFixed(2)+(passes?" · PASSES audit":" · FAILS audit"),
+      metrics:{
+        reportedAUROC:A.reported.toFixed(2),
+        inflationPP:(A.inflated>=0?"+":"")+(A.inflated*100).toFixed(0)+"pp",
+        residualAUROC:A.residual.toFixed(2),
+        passesAudit:passes?"yes":"no"
+      },
+      focus:{center:[0,1.5,1.2],radius:15}
+    };
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f20",
+    kind:"grn-benchmark-failure-modes",
+    eyebrow:"Block F · GRN Inference",
+    title:"F20 · Failure modes of GRN benchmarks",
+    subtitle:"Audit the leaderboard, not the leaderboard's claim. One skewed gold standard (DREAM5 E. coli, BEELINE/SERGIO) seen through four failure modes: hub leakage, organism leakage, synthetic mismatch, and a hardened clean audit.",
+    selectedLabel:"Element",
+    selectedHint:"Click a TF hub, an AUROC bar, or the residual bar.",
+    insightLabel:"Failure mode",
+    modes:[
+      {value:"hub",       label:"Hub gene leakage"},
+      {value:"organism",  label:"Organism leakage (prior = gold)"},
+      {value:"synthetic", label:"Synthetic data mismatch (SERGIO)"},
+      {value:"clean",     label:"Clean / hardened audit"}
+    ],
+    params:[
+      {key:"exploit", label:"exploit weight (trivial → reported)",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["hub","organism","synthetic"]},
+      {key:"skew",    label:"degree skew / contamination / synthetic-ness",min:0,max:1,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)},
+      {key:"negEasy", label:"easy negatives in negative set",min:0,max:1,step:0.05,value:0.3,
+       fmt:v=>v.toFixed(2)}
+    ],
+    metrics:[
+      {key:"reportedAUROC", label:"Reported AUROC",accent:"amber"},
+      {key:"inflationPP",   label:"Inflation (not biology)",accent:"rose"},
+      {key:"residualAUROC", label:"Residual beyond exploit",accent:"violet"},
+      {key:"passesAudit",   label:"Passes audit",accent:"green"}
+    ],
+    layers:[
+      {group:"gold",  label:"Gold standard star"},
+      {group:"bars",  label:"AUROC bars"},
+      {group:"audit", label:"Residual diagnostic"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Max exploit",
+      on:api=>{if(api.state.mode!=="clean")api.setParam("exploit",1);}
+    },
+    secondary:{
+      label:"No exploit",
+      on:api=>{api.setParam("exploit",0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:15},
+    hint:'<span style="color:#4dd7ff">cyan</span>=honest skill · <span style="color:#fbbf24">amber</span>=reported · <span style="color:#fb7185">rose</span>=trivial exploit / inflation · <span style="color:#a78bfa">violet</span>=residual beyond exploit · <span style="color:#34d399">green</span>=passes audit. Reported climbs toward the trivial ceiling; residual &lt; 0.55 means no real biology.',
+    onParam(api){ api.frame([0,1.5,1.2],15); },
+    onMode(api){ api.frame([0,1.5,1.2],15); },
+    onSelect(api,d){
+      if(d.tf)       api.setSelected("TF "+d.tf.name+" · "+d.tf.targets+" known targets (gold-standard hub)");
+      if(d.bar)      api.setSelected(d.bar.kind+" · AUROC "+d.bar.auroc.toFixed(2));
+      if(d.residual) api.setSelected("Residual AUROC beyond exploit: "+d.residual.auroc.toFixed(2)+(d.residual.auroc<0.55?" · adds ~nothing":" · adds real skill"));
+    },
+    build,
+    snapshot(s){
+      const A=auditNumbers(s.mode,s.exploit,s.skew,s.negEasy);
+      const passes=(A.inflated<0.02 && A.residual>=0.55);
+      return {
+        mode:s.mode,
+        reportedAUROC:+A.reported.toFixed(3),
+        honestAUROC:+A.honest.toFixed(3),
+        trivialAUROC:+A.trivial.toFixed(3),
+        inflationPP:+(A.inflated*100).toFixed(1),
+        residualAUROC:+A.residual.toFixed(3),
+        top5Share:+top5Frac.toFixed(4),
+        goldEdges:F.goldEdges,
+        passesAudit:passes
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

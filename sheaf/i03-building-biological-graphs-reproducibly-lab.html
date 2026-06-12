@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I03 · Building biological graphs reproducibly</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG, no clock) ───────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  // a seeded hash: same seed -> same stream (this is the whole point of I03)
+  const prand=(i,seed)=>frac(Math.sin((i*127.1+(seed||0)*311.7+31.7))*43758.5453);
+
+  // ── lesson FACTS (Section 5 worked example: simulated PBMC) ───────────────
+  const F={
+    nCells:200, nGenes:500, nTFs:30,
+    nT:80, nB:60, nNK:60,           // 3 cell types
+    nPcs:20, nTopGenes:200,
+    seedA:42, seedB:99,             // same-seed vs different-seed
+    knnRef:10,                      // n_neighbors reference
+    stringRef:700, dorTiers:["A","B","C","D"]
+  };
+
+  // sample of the 200-cell PBMC manifold (3 clusters).
+  // Deterministic positions per cell type; closeness drives kNN edges.
+  function cellLayout(nShown,seed){
+    const centers=[[-2.7,-1.4],[2.9,-1.0],[0.2,2.9]]; // T / B / NK
+    const counts=[F.nT,F.nB,F.nNK];
+    const total=counts[0]+counts[1]+counts[2];
+    const cells=[];
+    for(let k=0;k<nShown;k++){
+      const frcum=(k+0.5)/nShown;
+      let type=0,acc=0;
+      for(let t=0;t<3;t++){acc+=counts[t]/total;if(frcum<=acc){type=t;break;}}
+      const c=centers[type];
+      const a=prand(k*2.3+1,seed)*Math.PI*2;
+      const rad=0.25+prand(k*3.7+5,seed)*1.45; // spread inside cluster
+      cells.push({i:k,type,x:c[0]+Math.cos(a)*rad,z:c[1]+Math.sin(a)*rad});
+    }
+    return cells;
+  }
+
+  // kNN edges over the shown cells: each cell -> its n nearest neighbors.
+  function knnEdges(cells,n){
+    const E=[]; const seen={};
+    for(let i=0;i<cells.length;i++){
+      const d=[];
+      for(let j=0;j<cells.length;j++){ if(j===i) continue;
+        const dx=cells[i].x-cells[j].x, dz=cells[i].z-cells[j].z;
+        d.push({j,dd:dx*dx+dz*dz});
+      }
+      d.sort((p,q)=>p.dd-q.dd);
+      for(let k=0;k<Math.min(n,d.length);k++){
+        const j=d[k].j; const key=i<j?i+"_"+j:j+"_"+i;
+        if(seen[key]) continue; seen[key]=1;
+        E.push([i,j,Math.sqrt(d[k].dd)]);
+      }
+    }
+    return E;
+  }
+
+  // 12-gene mini GRN for the prior-knowledge mode (TF -> target).
+  const GRN_GENES=["TF1","TF2","TF3","TF4","g1","g2","g3","g4","g5","g6","g7","g8"];
+  // [src, dst, stringScore(0..1000), dorTier 0=A..3=D, mor +1/-1]
+  const GRN_EDGES=[
+    [0,4,920,0,+1],[0,5,840,0,-1],[0,6,710,1,+1],[0,7,560,2,+1],
+    [1,5,880,0,+1],[1,7,690,1,-1],[1,8,520,2,+1],[1,9,430,3,+1],
+    [2,8,910,0,+1],[2,9,760,1,+1],[2,10,640,2,-1],[2,4,470,3,+1],
+    [3,10,830,0,-1],[3,11,720,1,+1],[3,6,580,2,+1],[3,5,390,3,-1]
+  ];
+
+  let sceneSnap={};
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const nNeighbors=Math.round(s.nNeighbors);
+    const stringThr=Math.round(s.stringThr);
+    const dorTier=Math.round(s.dorTier);      // 0=A 1=AB 2=ABC 3=ABCD
+    const seedSel=Math.round(s.seedSel);      // 0=seed 42, 1=seed 99
+    const nShown=Math.round(s.nShown);
+
+    const gCells =api.group("cells");
+    const gEdges =api.group("edges");
+    const gGrn   =api.group("grn");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color(api.COL.cyan);
+    const GR=new T.Color(api.COL.green);
+    const AM=new T.Color(api.COL.amber);
+    const RO=new T.Color(api.COL.rose);
+    const typeCol=[CY,AM,GR];                 // T / B / NK
+    const typeName=["T_cell","B_cell","NK_cell"];
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: kNN cell graph (scanpy sc.pp.neighbors on PBMC)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="knn"){
+      const cells=cellLayout(nShown,F.seedA);
+      const E=knnEdges(cells,nNeighbors);
+
+      E.forEach(([i,j])=>{
+        api.edge([cells[i].x,0,cells[i].z],[cells[j].x,0,cells[j].z],
+          {color:"#21384f",opacity:0.5,width:0.025,group:"edges"});
+      });
+
+      const deg=new Array(cells.length).fill(0);
+      E.forEach(([i,j])=>{deg[i]++;deg[j]++;});
+      let nIso=0;
+      cells.forEach((c,idx)=>{
+        const iso=deg[idx]===0;
+        if(iso) nIso++;
+        const col=iso?"#3a4658":typeCol[c.type].getStyle();
+        api.node([c.x,0,c.z],{r:iso?0.10:0.135,color:col,halo:!iso,haloScale:1.7,
+          pick:{cell:{id:c.i,type:typeName[c.type],deg:deg[idx],iso}},group:"cells"});
+      });
+
+      addLbl("T_cell ("+F.nT+")","#4dd7ff",1.05,-2.7,1.2,-1.4);
+      addLbl("B_cell ("+F.nB+")","#fbbf24",1.05,2.9,1.2,-1.0);
+      addLbl("NK_cell ("+F.nNK+")","#34d399",1.05,0.2,1.2,2.9);
+      addLbl("n_neighbors = "+nNeighbors,"#a78bfa",1.2,0,3.6,0.6);
+
+      const meanDeg=E.length*2/cells.length;
+      sceneSnap={mode,nNeighbors,nShown,nEdges:E.length,meanDegree:+meanDeg.toFixed(2),
+        nIsolated:nIso,isUndirected:1,seedSel,stringThr,dorTier};
+      api.setMetric("nEdges",""+E.length);
+      api.setMetric("meanDegree",meanDeg.toFixed(1));
+      api.setMetric("nIsolated",""+nIso);
+      api.setMetric("graphType","kNN cell");
+
+      return {
+        badge:"kNN cell graph · "+nShown+" cells shown · n_neighbors="+nNeighbors,
+        formula:"sc.pp.neighbors(adata, n_neighbors="+nNeighbors+", n_pcs="+F.nPcs+", random_state="+F.seedA+")",
+        insight:"The scanpy kNN graph connects each PBMC to its "+nNeighbors+" nearest cells in PCA space. Three cell types (T, B, NK) form clusters. Lowering n_neighbors thins the graph and can leave isolated cells (grey) that get zero-vector GNN embeddings; raising it smooths the manifold toward over-smoothing. Every edge here is an undirected connectivity weight.",
+        state:"Edges: "+E.length+" · mean degree "+meanDeg.toFixed(1)+" · isolated cells: "+nIso+(nIso>0?"  (WARNING: zero-vector embeddings)":"  (none)")+". Undirected.",
+        metrics:{nEdges:""+E.length,meanDegree:meanDeg.toFixed(1),nIsolated:""+nIso,graphType:"kNN cell"},
+        focus:{center:[0,0.4,0.6],radius:11.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: prior-knowledge GRN (STRING threshold + DoRothEA tiers)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="prior"){
+      const pos=[];
+      for(let i=0;i<4;i++){const x=(-3+i*2.0); pos.push([x,0,-2.2]);}
+      for(let i=0;i<8;i++){const x=(-3.5+i*1.0); pos.push([x,0,2.2]);}
+
+      const maxTier=dorTier; // 0=A only ... 3=A..D
+      let kept=0, repressors=0, activators=0;
+      GRN_EDGES.forEach(([sIdx,dIdx,score,tier,mor])=>{
+        const on=(score>=stringThr)&&(tier<=maxTier);
+        const a=pos[sIdx], b=pos[dIdx];
+        if(on){
+          kept++;
+          if(mor>0) activators++; else repressors++;
+          const c=mor>0?api.COL.green:api.COL.rose;
+          api.arrow(a,b,{color:c,head:0.20,width:0.035,group:"grn"});
+        }else{
+          api.edge(a,b,{color:"#1c2c3e",opacity:0.18,width:0.014,group:"grn"});
+        }
+      });
+
+      for(let i=0;i<12;i++){
+        const isTF=i<4;
+        api.node(pos[i],{r:isTF?0.20:0.155,color:isTF?"#a78bfa":"#4dd7ff",
+          haloScale:1.8,label:GRN_GENES[i],labelColor:isTF?"#c4b5fd":"#bfe6ff",
+          pick:{gene:{name:GRN_GENES[i],isTF}},group:"grn"});
+      }
+
+      addLbl("transcription factors","#a78bfa",1.05,0,1.4,-3.1);
+      addLbl("target genes","#4dd7ff",1.05,0,1.4,3.1);
+      addLbl("STRING ≥ "+stringThr+"  ·  DoRothEA "+F.dorTiers.slice(0,maxTier+1).join("+"),"#fbbf24",1.15,0,3.0,0);
+
+      sceneSnap={mode,stringThr,dorTier,nEdges:kept,activators,repressors,
+        isUndirected:0,nNeighbors,nShown,seedSel,meanDegree:+(kept/12).toFixed(2),nIsolated:0};
+      api.setMetric("nEdges",""+kept);
+      api.setMetric("meanDegree",(kept/12).toFixed(1));
+      api.setMetric("nIsolated","+"+activators+"/-"+repressors);
+      api.setMetric("graphType","prior GRN");
+
+      return {
+        badge:"Prior GRN · STRING≥"+stringThr+" · DoRothEA "+F.dorTiers.slice(0,maxTier+1).join("+")+" · "+kept+" edges",
+        formula:"edge ∈ G  ⇔  combined_score ≥ "+stringThr+"  ∧  tier ∈ {"+F.dorTiers.slice(0,maxTier+1).join(",")+"}",
+        insight:"A prior GRN is filtered, not measured. Raising the STRING confidence threshold or restricting DoRothEA to high tiers (A only) keeps fewer, more reliable edges; loosening them adds lower-confidence edges. DoRothEA edges are DIRECTED TF→target and signed (green=activation, rose=repression). The edge set is fully determined by these two logged parameters — change either and the trained model changes.",
+        state:"Kept "+kept+" / "+GRN_EDGES.length+" candidate edges · "+activators+" activating, "+repressors+" repressing. Directed TF→target. Ghost lines = filtered out.",
+        metrics:{nEdges:""+kept,meanDegree:(kept/12).toFixed(1),nIsolated:"+"+activators+"/-"+repressors,graphType:"prior GRN"},
+        focus:{center:[0,0.4,0],radius:11.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: reproducibility check (same seed vs different seed)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="repro"){
+      const seedRight=seedSel===0?F.seedA:F.seedB;
+      const same=seedRight===F.seedA;
+      const nShownR=Math.min(28,nShown); // keep panels readable
+      const cellsL=cellLayout(nShownR,F.seedA);
+      const cellsR=cellLayout(nShownR,seedRight);
+      const EL=knnEdges(cellsL,nNeighbors);
+      const ER=knnEdges(cellsR,nNeighbors);
+
+      const keyset=es=>{const m={};es.forEach(([i,j])=>{const k=i<j?i+"_"+j:j+"_"+i;m[k]=1;});return m;};
+      const kL=keyset(EL), kR=keyset(ER);
+      let inter=0; for(const k in kL){if(kR[k])inter++;}
+      const union=Object.keys(kL).length+Object.keys(kR).length-inter;
+      const jaccard=union>0?inter/union:1;
+      const edgeMatch=same?1:((Math.abs(EL.length-ER.length)===0 && jaccard>0.999)?1:0);
+
+      const dxL=-3.6, dxR=3.6;
+      function drawPanel(cells,E,dx,tag){
+        E.forEach(([i,j])=>{
+          api.edge([cells[i].x*0.5+dx,0,cells[i].z*0.5],[cells[j].x*0.5+dx,0,cells[j].z*0.5],
+            {color:"#21384f",opacity:0.45,width:0.022,group:"edges"});
+        });
+        cells.forEach(c=>{
+          api.node([c.x*0.5+dx,0,c.z*0.5],{r:0.10,color:typeCol[c.type].getStyle(),
+            haloScale:1.5,pick:{cell:{id:c.i,type:typeName[c.type],panel:tag}},group:"cells"});
+        });
+      }
+      drawPanel(cellsL,EL,dxL,"ref(42)");
+      drawPanel(cellsR,ER,dxR,"sel("+seedRight+")");
+
+      addLbl("random_state = 42","#4dd7ff",1.15,dxL,2.7,0);
+      addLbl("random_state = "+seedRight,seedRight===F.seedA?"#4dd7ff":"#fb7185",1.15,dxR,2.7,0);
+
+      const verdict=same?"BITWISE IDENTICAL ✓":"DIFFERENT GRAPH ✗";
+      addLbl(verdict,same?"#34d399":"#fb7185",1.5,0,3.7,0);
+      addLbl("Jaccard(edges) = "+jaccard.toFixed(3),same?"#34d399":"#fbbf24",1.15,0,-2.9,0);
+
+      const bridgeCol=same?api.COL.green:api.COL.rose;
+      api.node([0,0,0],{r:0.16,color:bridgeCol,haloScale:2.2,group:"labels"});
+
+      sceneSnap={mode,seedSel,seedRight,nNeighbors,nShown:nShownR,
+        edgesRef:EL.length,edgesSel:ER.length,jaccard:+jaccard.toFixed(3),
+        bitwiseIdentical:edgeMatch,reproducible:same?1:0,
+        stringThr,dorTier,nEdges:ER.length,meanDegree:+(ER.length*2/nShownR).toFixed(2),nIsolated:0};
+      api.setMetric("nEdges",EL.length+" / "+ER.length);
+      api.setMetric("meanDegree",jaccard.toFixed(3));
+      api.setMetric("nIsolated",same?"yes":"no");
+      api.setMetric("graphType",same?"reproducible":"drifted");
+
+      return {
+        badge:"Reproducibility · ref seed 42 vs seed "+seedRight+" · "+(same?"identical":"different"),
+        formula:"same data + same seed ("+F.seedA+") ⇒ edge_index₁ == edge_index₂   (else ✗)",
+        insight:"This is the worked example's reproducibility assertion. Building the kNN graph twice with the SAME random_state="+F.seedA+" yields a bitwise-identical edge_index (Jaccard 1.000). Switching to random_state="+F.seedB+" reshuffles PCA initialization and neighbor selection, so the topology drifts — the model would never be evaluated on the graph a collaborator trained on. Versioning the seed (and scanpy/numpy versions) is what makes the graph reproducible.",
+        state:same?("Same seed → "+EL.length+" edges both sides, Jaccard 1.000. assert PASSED: graphs are bitwise identical."):
+                    ("Seed "+F.seedA+" vs "+F.seedB+": "+EL.length+" vs "+ER.length+" edges, Jaccard "+jaccard.toFixed(3)+". Topology differs — reproducibility FAILED without seed control."),
+        metrics:{nEdges:EL.length+"/"+ER.length,meanDegree:jaccard.toFixed(3),nIsolated:same?"yes":"no",graphType:same?"reproducible":"drifted"},
+        focus:{center:[0,0.4,0],radius:12.5}
+      };
+    }
+
+    return {badge:"I03",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i03",
+    kind:"reproducible-biological-graphs",
+    eyebrow:"Block I · Implementation",
+    title:"I03 · Building biological graphs reproducibly",
+    subtitle:"A biological graph is the output of a construction pipeline. Three views: the scanpy kNN cell graph, the filtered prior-knowledge GRN, and the seed-controlled reproducibility check on a simulated PBMC dataset (200 cells, 3 types).",
+    selectedLabel:"Element",
+    selectedHint:"Click a cell, gene, or panel node.",
+    modes:[
+      {value:"knn",   label:"kNN cell graph (scanpy)"},
+      {value:"prior", label:"Prior GRN (STRING + DoRothEA)"},
+      {value:"repro", label:"Reproducibility (seed control)"}
+    ],
+    params:[
+      {key:"nNeighbors",label:"n_neighbors (kNN degree)",min:2,max:20,step:1,value:10,
+       fmt:v=>Math.round(v).toString(),modes:["knn","repro"]},
+      {key:"nShown",   label:"cells shown (of 200)",min:18,max:60,step:2,value:42,
+       fmt:v=>Math.round(v).toString(),modes:["knn","repro"]},
+      {key:"stringThr",label:"STRING combined_score ≥",min:300,max:950,step:50,value:700,
+       fmt:v=>Math.round(v).toString(),modes:["prior"]},
+      {key:"dorTier",  label:"DoRothEA tiers (0=A 3=A-D)",min:0,max:3,step:1,value:1,
+       fmt:v=>["A","A+B","A+B+C","A+B+C+D"][Math.round(v)],modes:["prior"]},
+      {key:"seedSel",  label:"right seed (0=42 1=99)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"42 (same)":"99 (diff)",modes:["repro"]}
+    ],
+    metrics:[
+      {key:"nEdges",     label:"Edges",accent:"cyan"},
+      {key:"meanDegree", label:"Mean degree / Jaccard",accent:"violet"},
+      {key:"nIsolated",  label:"Isolated / signs / repro",accent:"amber"},
+      {key:"graphType",  label:"Graph type",accent:"green"}
+    ],
+    layers:[
+      {group:"cells", label:"Cells / nodes"},
+      {group:"edges", label:"kNN edges"},
+      {group:"grn",   label:"GRN edges"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Min n_neighbors (2)",
+      on:api=>{api.setParam("nNeighbors",2);}
+    },
+    secondary:{
+      label:"Standard n_neighbors (15)",
+      on:api=>{api.setParam("nNeighbors",15);}
+    },
+    defaultCam:{theta:-0.5,phi:0.85,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=T_cell / target · <span style="color:#fbbf24">amber</span>=B_cell · <span style="color:#34d399">green</span>=NK / activation · <span style="color:#a78bfa">violet</span>=TF / param · <span style="color:#fb7185">rose</span>=repression / drift · grey=isolated cell.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="knn") api.frame([0,0.4,0.6],11.5);
+      else if(s.mode==="prior") api.frame([0,0.4,0],11.5);
+      else api.frame([0,0.4,0],12.5);
+    },
+    onSelect(api,d){
+      if(d.cell) api.setSelected("Cell "+d.cell.id+" · "+d.cell.type+(d.cell.deg!=null?" · degree "+d.cell.deg:"")+(d.cell.iso?" · ISOLATED":"")+(d.cell.panel?" · "+d.cell.panel:""));
+      if(d.gene) api.setSelected(d.gene.name+(d.gene.isTF?" · transcription factor":" · target gene"));
+    },
+    build,
+    snapshot(s){
+      const nn=Math.round(s.nNeighbors);
+      const st=Math.round(s.stringThr);
+      const dt=Math.round(s.dorTier);
+      const sd=Math.round(s.seedSel);
+      const out={
+        mode:s.mode,
+        nNeighbors:nn,
+        stringThr:st,
+        dorTier:dt,
+        seedSel:sd,
+        seedRight:sd===0?F.seedA:F.seedB,
+        reproducible:(s.mode==="repro"&&sd===0)?1:0,
+        directed:s.mode==="prior"?1:0
+      };
+      if(sceneSnap&&sceneSnap.mode===s.mode){
+        if(sceneSnap.nEdges!=null) out.nEdges=sceneSnap.nEdges;
+        if(sceneSnap.meanDegree!=null) out.meanDegree=sceneSnap.meanDegree;
+        if(sceneSnap.nIsolated!=null) out.nIsolated=sceneSnap.nIsolated;
+        if(sceneSnap.jaccard!=null) out.jaccard=sceneSnap.jaccard;
+        if(sceneSnap.activators!=null) out.activators=sceneSnap.activators;
+        if(sceneSnap.repressors!=null) out.repressors=sceneSnap.repressors;
+        if(sceneSnap.bitwiseIdentical!=null) out.bitwiseIdentical=sceneSnap.bitwiseIdentical;
+      }
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E10 · Graph autoencoders for single-cell integration</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG, no clock; hash of sin only) ─────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+  const sig=x=>1/(1+Math.exp(-x));
+
+  let sceneSnap={};
+
+  // ── E10 FACTS: the note's Section-5 worked example ───────────────────────
+  // 4 cells, 4D expression, kNN edges 1-2 and 3-4, GCN encode to 2D latent.
+  const CELLS=[
+    {id:1,type:"CD4+ T",x:[5.2,0.1,0.3,3.1]},
+    {id:2,type:"CD4+ T",x:[4.8,0.2,0.4,2.9]},
+    {id:3,type:"Monocyte",x:[0.2,5.8,4.1,0.1]},
+    {id:4,type:"Monocyte",x:[0.3,5.5,3.9,0.2]}
+  ];
+  // edges of A (k=1): 1-2 and 3-4
+  const ADJ=[[0,1,0,0],[1,0,0,0],[0,0,0,1],[0,0,1,0]];
+  // raw GCN latent (self-loop normalized average of first 2 genes)
+  const Z_RAW=[[5.00,0.15],[5.00,0.15],[0.25,5.65],[0.25,5.65]];
+  // ideal axis-aligned (learned) latent
+  const Z_LRN=[[5.00,0.00],[5.00,0.00],[0.00,5.00],[0.00,5.00]];
+
+  // latent code for cell i as a function of training "sep" in [0,1] and KL.
+  // sep=0 -> raw GCN output (cross-type dot 2.1); sep=1 -> learned axis-aligned (cross 0).
+  // klW shrinks magnitudes toward the N(0,I) prior (mu->0): scale = 1 - 0.7*klW.
+  function latent(i,sep,klW){
+    const a=Z_RAW[i], b=Z_LRN[i];
+    const z0=a[0]+(b[0]-a[0])*sep;
+    const z1=a[1]+(b[1]-a[1])*sep;
+    const scale=1-0.7*klW;
+    return [z0*scale,z1*scale];
+  }
+  const dot=(a,b)=>a[0]*b[0]+a[1]*b[1];
+
+  // structure-reconstruction BCE over the 16 ordered pairs (with self-loops in target)
+  function bceStruct(sep,klW,posW){
+    let pos=0,neg=0,np=0,nn=0;
+    for(let i=0;i<4;i++)for(let j=0;j<4;j++){
+      const tgt=(i===j||ADJ[i][j]===1)?1:0;
+      const p=Math.min(0.999999,Math.max(1e-6,sig(dot(latent(i,sep,klW),latent(j,sep,klW)))));
+      if(tgt===1){pos+=-Math.log(p);np++;}
+      else{neg+=-Math.log(1-p);nn++;}
+    }
+    // pos_weight up-weights the (rare) edge pairs as in the note (pos_weight=(N^2-|E|)/|E|)
+    return (posW*pos+neg)/(np*posW+nn);
+  }
+  // KL divergence proxy: -0.5*mean(1+logvar-mu^2-exp(logvar)); mu shrinks with klW
+  function klTerm(klW){
+    // mean squared mu across cells at this klW (uses dim-magnitudes)
+    let s=0;for(let i=0;i<4;i++){const z=latent(i,1,klW);s+=z[0]*z[0]+z[1]*z[1];}
+    const mu2=s/8;                 // mean over 4 cells x 2 dims
+    return 0.5*mu2;                // logvar~0 illustrative => 0.5*mu^2
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const sep=s.sep;                 // 0..1 training progress / separation
+    const klW=s.klW;                 // 0..1 KL weight
+    const posW=Math.round(s.posW);   // 1..50 edge up-weight
+    const method=Math.round(s.method);// 0 scVI,1 VGAE,2 DGI,3 scGNN
+
+    const gEnc=api.group("encoder");
+    const gLat=api.group("latent");
+    const gDec=api.group("decoder");
+    const gLbl=api.group("labels");
+
+    function bL(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+    function sL(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+
+    const CY=new T.Color("#4dd7ff"); // T cell / RNA
+    const AM=new T.Color("#fbbf24"); // monocyte / structure
+    const VI=new T.Color("#a78bfa"); // latent / KL
+    const GR=new T.Color("#34d399"); // correct / mixing
+    const RO=new T.Color("#fb7185"); // error / loss
+    const SL=new T.Color("#54667c");
+    const typeCol=t=>t==="CD4+ T"?CY:AM;
+
+    // 2D latent footprint anchors for the 4 cells (T-cluster left, mono cluster right)
+    function latPos2D(i,sep,klW){
+      const z=latent(i,sep,klW);
+      // map [z0(T axis),z1(mono axis)] -> plane: x grows with mono-ness, depth splits cells
+      const monoNess=z[1]-z[0];            // negative for T, positive for mono
+      const x=monoNess*0.62;
+      const zd=(i%2===0?-0.7:0.7)+(i<2?-0.0:0.0);
+      const y=0;
+      return new T.Vector3(x, y, zd+(i<2?-1.6:1.6));
+    }
+
+    // current loss numbers
+    const recon=bceStruct(sep,klW,posW);
+    const kl=klTerm(klW);
+    const elbo=recon+klW*kl;
+    // cross-type predicted edge prob (the 0.89 failure number)
+    const crossP=sig(dot(latent(0,sep,klW),latent(2,sep,klW)));
+    const withinP=sig(dot(latent(0,sep,klW),latent(1,sep,klW)));
+    const gap=withinP-crossP;          // separation gap we want large
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: encoder — GCN message passing maps (X,A) -> latent Z
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="encoder"){
+      // input expression nodes (left), latent nodes (right), MP edges between kNN neighbours
+      const inX=-4.2, latX=3.0;
+      const yPos=[2.4,0.9,-0.9,-2.4];
+      CELLS.forEach((c,i)=>{
+        const col=typeCol(c.type);
+        // input cell sphere (size ~ total expression)
+        const tot=c.x.reduce((a,b)=>a+b,0);
+        const node=new T.Mesh(new T.SphereGeometry(0.20+tot*0.018,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.55,roughness:0.4}));
+        node.position.set(inX,yPos[i],0);
+        gEnc.add(node);
+        api.pick(node,{cell:{id:c.id,type:c.type,x:c.x}});
+        sL("c"+c.id+" "+c.type,col.getStyle(),0.34,inX-1.5,yPos[i],0);
+
+        // latent node (2D position projected to right column)
+        const lp=latent(i,sep,klW);
+        const ln=new T.Mesh(new T.SphereGeometry(0.30,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.8),emissiveIntensity:0.7,roughness:0.3}));
+        ln.position.set(latX+lp[0]*0.22, lp[1]*0.40-1.1, 0);
+        gLat.add(ln);
+        api.pick(ln,{latent:{id:c.id,z:[+lp[0].toFixed(2),+lp[1].toFixed(2)]}});
+
+        // encoder mapping arrow input -> latent
+        const ePts=[new T.Vector3(inX+0.4,yPos[i],0),new T.Vector3(ln.position.x-0.4,ln.position.y,0)];
+        gEnc.add(new T.Line(new T.BufferGeometry().setFromPoints(ePts),
+          new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.5})));
+      });
+
+      // kNN message-passing edges among INPUT cells (1-2, 3-4): self+neighbour averaging
+      [[0,1],[2,3]].forEach(([a,b])=>{
+        const pa=new T.Vector3(inX,yPos[a],0), pb=new T.Vector3(inX,yPos[b],0);
+        gEnc.add(new T.Line(new T.BufferGeometry().setFromPoints([pa,pb]),
+          new T.LineBasicMaterial({color:GR.getHex(),linewidth:2})));
+      });
+
+      bL("X (expression 4D)","#4dd7ff",1.25,inX,3.4,0);
+      bL("GCN encoder","#a78bfa",1.3,-0.8,3.4,0);
+      bL("Z (latent 2D)","#34d399",1.25,latX+0.4,3.4,0);
+      sL("z = D⁻¹ᐟ²(A+I)D⁻¹ᐟ² X W : ½ self + ½ neighbour","#8a99ad",0.34,-0.8,-3.3,0);
+
+      sceneSnap={mode,method,sep:+sep.toFixed(3),klW:+klW.toFixed(3),posW,
+        crossEdgeProb:+crossP.toFixed(3),withinEdgeProb:+withinP.toFixed(3),
+        separationGap:+gap.toFixed(3),reconBCE:+recon.toFixed(3),klTermVal:+kl.toFixed(3),elbo:+elbo.toFixed(3)};
+
+      return {
+        badge:"Encoder · GCN message passing · sep "+(sep*100).toFixed(0)+"%",
+        formula:"z<sub>v</sub> = GCN<sub>μ</sub>(X,A)<sub>v</sub> = ½·x<sub>v</sub>W + ½·x<sub>nbr</sub>W &nbsp; (self-loop normalized)",
+        insight:"Each cell's latent code is a message-passing blend of itself and its kNN neighbour, not its own expression alone. Cells 1-2 (T) average to z≈[5.0,0.15]; cells 3-4 (mono) to z≈[0.25,5.65]. Drag <b>train separation</b> to watch the GCN+head learn axis-aligned codes; raise <b>KL weight</b> to shrink magnitudes toward the N(0,I) prior.",
+        state:"Latent now: T-cell z≈["+latent(0,sep,klW).map(v=>v.toFixed(2)).join(",")+"], Mono z≈["+latent(2,sep,klW).map(v=>v.toFixed(2)).join(",")+"]. Within-type edge prob "+withinP.toFixed(2)+", cross-type "+crossP.toFixed(2)+".",
+        metrics:{withinEdgeProb:withinP.toFixed(2),crossEdgeProb:crossP.toFixed(2),reconBCE:recon.toFixed(3),elbo:elbo.toFixed(3)},
+        focus:{center:[-0.4,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: decoder — dot-product decoder Â = sigmoid(ZZᵀ) vs true A
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="decoder"){
+      // 4x4 grid: predicted Â (left), true A+I (right). cell colour by sigmoid.
+      function grid(ox,labelTxt,predFn){
+        const cs=0.95;
+        for(let i=0;i<4;i++)for(let j=0;j<4;j++){
+          const v=predFn(i,j);                 // 0..1
+          const tgt=(i===j||ADJ[i][j]===1)?1:0;
+          const base=GR.clone().lerp(RO, Math.abs(v-tgt)); // green=correct, rose=error
+          const cell=new T.Mesh(new T.BoxGeometry(cs*0.9,0.08+v*0.9,cs*0.9),
+            new T.MeshStandardMaterial({color:base,emissive:base.clone().multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+          cell.position.set(ox+j*cs, (0.08+v*0.9)/2, -i*cs+1.5);
+          (ox<0?gDec:gLat).add(cell);
+          api.pick(cell,{matrix:{name:labelTxt,i:i+1,j:j+1,val:+v.toFixed(2),target:tgt}});
+        }
+        bL(labelTxt,"#cfe0f0",1.2,ox+1.5*cs,1.7,1.9);
+      }
+      grid(-4.8,"Â = σ(ZZᵀ)",(i,j)=>sig(dot(latent(i,sep,klW),latent(j,sep,klW))));
+      grid(1.2,"A + I (true)",(i,j)=>(i===j||ADJ[i][j]===1)?1:0);
+
+      // highlight the cross-type failure cell (1,3)
+      const failP=sig(dot(latent(0,sep,klW),latent(2,sep,klW)));
+      const cone=new T.Mesh(new T.ConeGeometry(0.18,0.5,8),new T.MeshBasicMaterial({color:RO.getHex()}));
+      cone.rotation.z=Math.PI; cone.position.set(-4.8+2*0.95, 0.08+failP*0.9+0.6, -0*0.95+1.5);
+      gDec.add(cone);
+      sL("cross-type Â(1,3)="+failP.toFixed(2)+" (target 0)","#fb7185",0.34,-3.0,-1.0,1.9);
+      sL("green = matches target · rose = reconstruction error","#8a99ad",0.32,-1.6,-2.4,1.9);
+
+      const bceCross=-Math.log(Math.max(1e-6,1-failP));
+      sceneSnap={mode,method,sep:+sep.toFixed(3),klW:+klW.toFixed(3),posW,
+        crossEdgeProb:+crossP.toFixed(3),withinEdgeProb:+withinP.toFixed(3),
+        separationGap:+gap.toFixed(3),reconBCE:+recon.toFixed(3),crossBCE:+bceCross.toFixed(3),
+        klTermVal:+kl.toFixed(3),elbo:+elbo.toFixed(3)};
+
+      return {
+        badge:"Decoder · dot-product · cross Â="+failP.toFixed(2),
+        formula:"Â<sub>ij</sub> = σ(z<sub>i</sub>ᵀz<sub>j</sub>) &nbsp;·&nbsp; L<sub>recon</sub> = BCE(Â, A)",
+        insight:"The decoder predicts an edge from the dot product of two latent codes. At the raw GCN latent, cross-type cells 1 and 3 still score z₁ᵀz₃ = 2.1 → σ = 0.89, a false high edge probability with BCE cost −log(1−0.89)=2.21. The within/cross gap is tiny in 2D. Train (raise <b>separation</b>) to push cross-type codes orthogonal: z₁ᵀz₃ → 0, σ → 0.5, lower loss.",
+        state:"Cross-type Â(1,3) = "+failP.toFixed(2)+" → BCE "+bceCross.toFixed(2)+". Within-type Â "+withinP.toFixed(2)+". Reconstruction BCE (pos_weight "+posW+") = "+recon.toFixed(3)+".",
+        metrics:{withinEdgeProb:withinP.toFixed(2),crossEdgeProb:failP.toFixed(2),reconBCE:recon.toFixed(3),elbo:elbo.toFixed(3)},
+        focus:{center:[-1.6,0.4,0.8],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: methods — scVI / VGAE / DGI / scGNN integration contrast
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="methods"){
+      const M=[
+        {name:"scVI",   graph:0, target:"Expr (NB)", col:SL,
+         note:"non-graph VAE baseline; batch as decoder covariate"},
+        {name:"VGAE",   graph:1, target:"Adjacency", col:VI,
+         note:"σ(ZZᵀ) decode + KL to N(0,I)"},
+        {name:"DGI",    graph:1, target:"Mutual info",col:CY,
+         note:"no decoder; node vs global summary"},
+        {name:"scGNN",  graph:1, target:"Expr + topo",col:GR,
+         note:"EM: graph⇄embedding, GMM clusters"}
+      ];
+      const xPos=[-4.8,-1.6,1.6,4.8];
+      // a quality-ish score per method as a function of klW/sep (illustrative, deterministic)
+      const score=m=>{
+        if(m===0) return 0.62+0.10*klW;            // scVI: smooth, batch-aware
+        if(m===1) return 0.50+0.34*sep-0.10*(1-klW);// VGAE: needs training + KL
+        if(m===2) return 0.55+0.18*sep;            // DGI: self-supervised
+        return 0.58+0.30*sep+0.06*klW;             // scGNN: joint, best with training
+      };
+      M.forEach((m,idx)=>{
+        const sc=Math.max(0.15,Math.min(0.95,score(idx)));
+        const h=0.2+sc*3.6;
+        const active=(idx===method);
+        const col=m.col.clone();
+        const bar=new T.Mesh(new T.BoxGeometry(1.7,h,1.5),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(active?0.85:0.2),
+            emissiveIntensity:active?0.72:0.18,roughness:0.4,transparent:!active,opacity:active?1:0.5}));
+        bar.position.set(xPos[idx],h/2,0);
+        gDec.add(bar);
+        api.pick(bar,{method:{name:m.name,score:+sc.toFixed(2),graph:!!m.graph,target:m.target}});
+        bL((sc*100).toFixed(0)+"%",col.getStyle(),1.5,xPos[idx],h+0.5,0);
+        sL(m.name,col.getStyle(),0.40,xPos[idx],0.05,0);
+        // graph-uses marker
+        const tag=new T.Mesh(new T.SphereGeometry(0.13,10,10),
+          new T.MeshStandardMaterial({color:m.graph?GR:RO,emissive:m.graph?GR:RO,emissiveIntensity:0.7}));
+        tag.position.set(xPos[idx],h+1.0,0);
+        gLat.add(tag);
+        sL(m.target,"#8a99ad",0.30,xPos[idx],-0.7,0);
+      });
+      // active indicator
+      const aH=0.2+Math.max(0.15,Math.min(0.95,score(method)))*3.6;
+      const arw=new T.Mesh(new T.ConeGeometry(0.18,0.5,8),new T.MeshBasicMaterial({color:0xfde68a}));
+      arw.position.set(xPos[method],aH+1.45,0); gDec.add(arw);
+      gDec.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-6,0,0),new T.Vector3(6,0,0)]),
+        new T.LineBasicMaterial({color:0x1e3046})));
+      bL("integration score","#cfe0f0",1.2,0,4.4,0);
+      sL("green dot = uses kNN graph · rose dot = non-graph","#8a99ad",0.32,0,-1.4,0);
+
+      const sc=Math.max(0.15,Math.min(0.95,score(method)));
+      sceneSnap={mode,method,sep:+sep.toFixed(3),klW:+klW.toFixed(3),posW,
+        methodScore:+sc.toFixed(3),usesGraph:M[method].graph===1,
+        crossEdgeProb:+crossP.toFixed(3),withinEdgeProb:+withinP.toFixed(3),
+        separationGap:+gap.toFixed(3),reconBCE:+recon.toFixed(3),klTermVal:+kl.toFixed(3),elbo:+elbo.toFixed(3)};
+
+      const names=["scVI","VGAE","DGI","scGNN"];
+      return {
+        badge:"Methods · "+names[method]+" · "+(sc*100).toFixed(0)+"% · "+(M[method].graph?"graph":"non-graph"),
+        formula:"scVI: X̂~NB &nbsp;|&nbsp; VGAE: σ(ZZᵀ)−KL &nbsp;|&nbsp; DGI: I(h<sub>v</sub>;s) &nbsp;|&nbsp; scGNN: EM(Z,A)",
+        insight:"Four integration methods on the same 4-cell graph. <b>scVI</b> ignores the graph (NB expression decode, batch covariate) and sets the performance floor. <b>VGAE</b> reconstructs adjacency and needs the KL term to stay generative. <b>DGI</b> drops the decoder entirely and maximizes node↔summary mutual information. <b>scGNN</b> alternates graph and embedding updates by EM. More training (separation) helps the graph methods most.",
+        state:names[method]+": score "+(sc*100).toFixed(0)+"%, target "+M[method].target+", "+(M[method].graph?"uses kNN graph":"non-graph baseline")+". "+M[method].note+".",
+        metrics:{withinEdgeProb:withinP.toFixed(2),crossEdgeProb:crossP.toFixed(2),reconBCE:recon.toFixed(3),elbo:elbo.toFixed(3)},
+        focus:{center:[0,1.6,0],radius:14}
+      };
+    }
+
+    return {badge:"E10",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e10",
+    kind:"graph-autoencoder-integration",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E10 · Graph autoencoders for single-cell integration",
+    subtitle:"4 cells, 2 T-cells + 2 monocytes, encode (X,A)→Z in 2D, decode σ(ZZᵀ). Three views: GCN encoder, dot-product decoder + loss, and the scVI/VGAE/DGI/scGNN method contrast.",
+    selectedLabel:"Element",
+    selectedHint:"Click a cell, latent node, matrix cell, or method bar.",
+    modes:[
+      {value:"encoder", label:"Encoder (GCN message passing → Z)"},
+      {value:"decoder", label:"Decoder (σ(ZZᵀ) vs true A · BCE)"},
+      {value:"methods", label:"Methods (scVI / VGAE / DGI / scGNN)"}
+    ],
+    params:[
+      {key:"sep",   label:"train separation (raw GCN → learned)",min:0,max:1,step:0.01,value:0,
+       fmt:v=>v.toFixed(2)},
+      {key:"klW",   label:"KL weight (shrink μ → N(0,I))",min:0,max:1,step:0.01,value:0.2,
+       fmt:v=>v.toFixed(2)},
+      {key:"posW",  label:"pos_weight (edge up-weight)",min:1,max:50,step:1,value:10,
+       fmt:v=>Math.round(v).toString(),modes:["decoder"]},
+      {key:"method",label:"method (0 scVI 1 VGAE 2 DGI 3 scGNN)",min:0,max:3,step:1,value:1,
+       fmt:v=>["scVI","VGAE","DGI","scGNN"][Math.round(v)],modes:["methods"]}
+    ],
+    metrics:[
+      {key:"withinEdgeProb",label:"Within-type Â",accent:"cyan"},
+      {key:"crossEdgeProb", label:"Cross-type Â",accent:"rose"},
+      {key:"reconBCE",      label:"Recon BCE",accent:"amber"},
+      {key:"elbo",          label:"−ELBO (loss)",accent:"violet"}
+    ],
+    layers:[
+      {group:"encoder", label:"Encoder / inputs"},
+      {group:"latent",  label:"Latent / targets"},
+      {group:"decoder", label:"Decoder / bars"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"Untrained (raw GCN)",
+      on:api=>{api.setParam("sep",0);}
+    },
+    secondary:{
+      label:"Trained (axis-aligned)",
+      on:api=>{api.setParam("sep",1);}
+    },
+    defaultCam:{theta:-0.45,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=T-cell/RNA · <span style="color:#fbbf24">amber</span>=monocyte/structure · <span style="color:#a78bfa">violet</span>=latent/KL · <span style="color:#34d399">green</span>=correct/mixing · <span style="color:#fb7185">rose</span>=reconstruction error.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="encoder") api.frame([-0.4,0,0],13);
+      else if(s.mode==="decoder") api.frame([-1.6,0.4,0.8],13);
+      else api.frame([0,1.6,0],14);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="encoder") api.frame([-0.4,0,0],13);
+      else if(s.mode==="decoder") api.frame([-1.6,0.4,0.8],13);
+      else api.frame([0,1.6,0],14);
+    },
+    onSelect(api,d){
+      if(d.cell)   api.setSelected("Cell "+d.cell.id+" · "+d.cell.type+" · x=["+d.cell.x.join(", ")+"]");
+      if(d.latent) api.setSelected("Latent z(cell "+d.latent.id+") = ["+d.latent.z.join(", ")+"]");
+      if(d.matrix) api.setSelected(d.matrix.name+" ["+d.matrix.i+","+d.matrix.j+"] = "+d.matrix.val+" · target "+d.matrix.target);
+      if(d.method) api.setSelected(d.method.name+" · score "+(d.method.score*100).toFixed(0)+"% · "+(d.method.graph?"graph":"non-graph")+" · target: "+d.method.target);
+    },
+    build,
+    snapshot(s){
+      const sep=s.sep, klW=s.klW, posW=Math.round(s.posW), method=Math.round(s.method);
+      const recon=bceStruct(sep,klW,posW);
+      const kl=klTerm(klW);
+      const crossP=sig(dot(latent(0,sep,klW),latent(2,sep,klW)));
+      const withinP=sig(dot(latent(0,sep,klW),latent(1,sep,klW)));
+      return {
+        mode:s.mode,
+        method,
+        sep:+sep.toFixed(3),
+        klW:+klW.toFixed(3),
+        posW,
+        withinEdgeProb:+withinP.toFixed(3),
+        crossEdgeProb:+crossP.toFixed(3),
+        separationGap:+(withinP-crossP).toFixed(3),
+        reconBCE:+recon.toFixed(3),
+        klTermVal:+kl.toFixed(3),
+        elbo:+(recon+klW*kl).toFixed(3),
+        crossTypeFalseEdge:crossP>0.75
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

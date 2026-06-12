@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure E06 — Splicing kinetics become a directed cell-transition graph</title>
+<desc id="d">Four-panel captioned figure: Splicing kinetics become a directed cell-transition graph</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE E06 · BLOCK E · SINGLE-CELL &amp; MULTI-OMICS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="23" font-weight="700">Splicing kinetics become a directed cell-transition graph</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Splicing kinetics</text>
+<text x="56" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">v_g = β·u_g − γ·s_g</text>
+<text x="56" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">steady: s = (γ/β)·u</text>
+<text x="56" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="187.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#34d399"/>
+<circle cx="510" cy="108" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="510" y="113" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">GATA1 velocity</text>
+<rect x="502" y="179.78" width="12" height="14.22" rx="2" fill="#34d399"/>
+<text x="508" y="206" fill="#8a99ad" font-size="9" text-anchor="middle">C1</text>
+<rect x="520" y="130" width="12" height="64" rx="2" fill="#34d399"/>
+<text x="526" y="206" fill="#8a99ad" font-size="9" text-anchor="middle">C2</text>
+<rect x="538" y="165.56" width="12" height="28.44" rx="2" fill="#34d399"/>
+<text x="544" y="206" fill="#8a99ad" font-size="9" text-anchor="middle">C3</text>
+<rect x="556" y="151.33" width="12" height="42.67" rx="2" fill="#fb7185"/>
+<text x="562" y="206" fill="#8a99ad" font-size="9" text-anchor="middle">C4</text>
+<line x1="502" y1="194" x2="574" y2="194" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="64" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="64" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Directed graph</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">edge if cos(v_i, δ_ij) &gt; 0</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">δ_ij = z_j − z_i</text>
+<text x="56" y="349.5" fill="#4dd7ff" font-size="11.5" font-weight="700">C1→C2</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">0.45</text>
+<text x="56" y="369.5" fill="#34d399" font-size="11.5" font-weight="700">C2→C3</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.62</text>
+<text x="56" y="389.5" fill="#fbbf24" font-size="11.5" font-weight="700">C3→C4</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">0.58</text>
+<text x="56" y="417" fill="#8a99ad" font-size="11">3 forward edges, no back-edges — a linear trajectory.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="510" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="510" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Regulatory cascade</text>
+<text x="502" y="301.5" fill="#4dd7ff" font-size="11.5" font-weight="700">GATA1 peak</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">C2</text>
+<text x="502" y="321.5" fill="#34d399" font-size="11.5" font-weight="700">KLF1 peak</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">C2</text>
+<text x="502" y="341.5" fill="#fbbf24" font-size="11.5" font-weight="700">HBB peak</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">C3</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">CD34</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">silenced</text>
+<text x="502" y="389" fill="#8a99ad" font-size="11">Velocity peaks order regulators: GATA1 → KLF1 → HBB.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure E06. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Four </text>
+<text x="184.61" y="538" fill="#c7d2dd" font-size="13">erythroid </text>
+<text x="265.21" y="538" fill="#c7d2dd" font-size="13">cells </text>
+<text x="313.57" y="538" fill="#c7d2dd" font-size="13">(C1 </text>
+<text x="347.02" y="538" fill="#c7d2dd" font-size="13">HSC </text>
+<text x="382.89" y="538" fill="#c7d2dd" font-size="13">→ </text>
+<text x="405.46" y="538" fill="#c7d2dd" font-size="13">C2 </text>
+<text x="430.85" y="538" fill="#c7d2dd" font-size="13">CMP </text>
+<text x="466.71" y="538" fill="#c7d2dd" font-size="13">→ </text>
+<text x="489.28" y="538" fill="#c7d2dd" font-size="13">C3 </text>
+<text x="514.67" y="538" fill="#c7d2dd" font-size="13">MEP </text>
+<text x="550.54" y="538" fill="#c7d2dd" font-size="13">→ </text>
+<text x="573.1" y="538" fill="#c7d2dd" font-size="13">C4 </text>
+<text x="598.49" y="538" fill="#c7d2dd" font-size="13">Erythroblast), </text>
+<text x="720.6" y="538" fill="#c7d2dd" font-size="13">four </text>
+<text x="760.9" y="538" fill="#c7d2dd" font-size="13">genes. </text>
+<text x="817.32" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a)</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">Splicing </text>
+<text x="113.75" y="559" fill="#c7d2dd" font-size="13">kinetics </text>
+<text x="186.29" y="559" fill="#c7d2dd" font-size="13">v=β·u−γ·s </text>
+<text x="279.78" y="559" fill="#c7d2dd" font-size="13">with </text>
+<text x="320.08" y="559" fill="#c7d2dd" font-size="13">β=γ=1.0 </text>
+<text x="384.57" y="559" fill="#c7d2dd" font-size="13">place </text>
+<text x="432.93" y="559" fill="#c7d2dd" font-size="13">each </text>
+<text x="473.23" y="559" fill="#c7d2dd" font-size="13">cell </text>
+<text x="513.53" y="559" fill="#c7d2dd" font-size="13">in </text>
+<text x="537.7" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="553.82" y="559" fill="#c7d2dd" font-size="13">u–s </text>
+<text x="592.51" y="559" fill="#c7d2dd" font-size="13">phase </text>
+<text x="640.87" y="559" fill="#c7d2dd" font-size="13">portrait. </text>
+<text x="721.47" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="755" y="559" fill="#c7d2dd" font-size="13">GATA1 </text>
+<text x="808.2" y="559" fill="#c7d2dd" font-size="13">velocity</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="64.18" y="580" fill="#c7d2dd" font-size="13">positive </text>
+<text x="136.72" y="580" fill="#c7d2dd" font-size="13">through </text>
+<text x="201.2" y="580" fill="#c7d2dd" font-size="13">C1–C3 </text>
+<text x="258.43" y="580" fill="#c7d2dd" font-size="13">(induction) </text>
+<text x="355.15" y="580" fill="#c7d2dd" font-size="13">then </text>
+<text x="395.45" y="580" fill="#c7d2dd" font-size="13">negative </text>
+<text x="467.99" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="492.17" y="580" fill="#c7d2dd" font-size="13">C4 </text>
+<text x="517.56" y="580" fill="#c7d2dd" font-size="13">(-0.6, </text>
+<text x="573.98" y="580" fill="#c7d2dd" font-size="13">peaking). </text>
+<text x="654.58" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="688.1" y="580" fill="#c7d2dd" font-size="13">cos_sim(v_i, </text>
+<text x="792.88" y="580" fill="#c7d2dd" font-size="13">δ_ij)&gt;0</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">promotes </text>
+<text x="112.54" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="144.78" y="601" fill="#c7d2dd" font-size="13">kNN </text>
+<text x="179.44" y="601" fill="#c7d2dd" font-size="13">backbone </text>
+<text x="251.98" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="276.16" y="601" fill="#c7d2dd" font-size="13">3 </text>
+<text x="292.28" y="601" fill="#c7d2dd" font-size="13">directed </text>
+<text x="364.82" y="601" fill="#c7d2dd" font-size="13">edges </text>
+<text x="413.18" y="601" fill="#c7d2dd" font-size="13">(w=0.45, </text>
+<text x="485.72" y="601" fill="#c7d2dd" font-size="13">0.62, </text>
+<text x="534.08" y="601" fill="#c7d2dd" font-size="13">0.58) </text>
+<text x="582.44" y="601" fill="#c7d2dd" font-size="13">with </text>
+<text x="622.74" y="601" fill="#c7d2dd" font-size="13">no </text>
+<text x="646.92" y="601" fill="#c7d2dd" font-size="13">back-edges. </text>
+<text x="743.64" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="777.17" y="601" fill="#c7d2dd" font-size="13">Velocity </text>
+<text x="850.92" y="601" fill="#c7d2dd" font-size="13">peaks</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">order </text>
+<text x="88.36" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="120.6" y="622" fill="#c7d2dd" font-size="13">cascade </text>
+<text x="185.08" y="622" fill="#c7d2dd" font-size="13">GATA1(C2) </text>
+<text x="271.72" y="622" fill="#c7d2dd" font-size="13">→ </text>
+<text x="294.29" y="622" fill="#c7d2dd" font-size="13">KLF1(C2) </text>
+<text x="371.67" y="622" fill="#c7d2dd" font-size="13">→ </text>
+<text x="394.24" y="622" fill="#c7d2dd" font-size="13">HBB(C3); </text>
+<text x="471.61" y="622" fill="#c7d2dd" font-size="13">CD34 </text>
+<text x="514.33" y="622" fill="#c7d2dd" font-size="13">is </text>
+<text x="538.51" y="622" fill="#c7d2dd" font-size="13">silenced </text>
+<text x="611.05" y="622" fill="#c7d2dd" font-size="13">throughout.</text>
+</svg>

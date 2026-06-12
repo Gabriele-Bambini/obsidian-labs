@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F09 · AttentionGRN and graph transformer GRN reconstruction</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no runtime entropy) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── lesson FACTS: the note's Section-5 worked example ─────────────────────
+  //   6 genes × 4 cells, TP53 DNA-damage response. TFs = {TP53, GATA1}.
+  //   X[gene] = expression profile across cell1..cell4.
+  const GENES=["TP53","CDKN1A","MDM2","GATA1","HBB","CCNB1"];
+  const ISTF =[ true,  false,  false, true,   false,false ];   // TF mask (source rows)
+  const X={
+    TP53  :[0,   1,   2,   1.5],
+    CDKN1A:[0,   0.5, 2.1, 1.8],
+    MDM2  :[0,   0.4, 1.8, 1.5],
+    GATA1 :[1,   0.9, 0.8, 0.9],
+    HBB   :[2,   1.8, 1.5, 1.6],
+    CCNB1 :[1.5, 1.0, 0.2, 0.3]
+  };
+  // ground-truth TP53 regulatory targets (direct binding evidence)
+  const TRUE_TP53={CDKN1A:true,MDM2:true,HBB:false,GATA1:false,CCNB1:false,TP53:false};
+  // graph-transformer edge biases for the TP53 row (motif + ATAC evidence)
+  const EDGE_BIAS={CDKN1A:0.8,MDM2:0.7,HBB:-0.5,GATA1:0,CCNB1:0,TP53:0};
+  // per-head profile transforms: head 0 = co-activation (raw),
+  //   head 1 = antagonism (negate target so anti-correlated genes score high),
+  //   head 2 = cell-type-specific (emphasise high-variance cells 3,4)
+  const dk=4;                       // d_k = N_cells = 4  → sqrt(d_k)=2
+
+  const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2]+a[3]*b[3];
+  const mean=a=>(a[0]+a[1]+a[2]+a[3])/4;
+  function pearson(a,b){
+    const ma=mean(a),mb=mean(b);let n=0,da=0,db=0;
+    for(let i=0;i<4;i++){n+=(a[i]-ma)*(b[i]-mb);da+=(a[i]-ma)*(a[i]-ma);db+=(b[i]-mb)*(b[i]-mb);}
+    return n/Math.sqrt(da*db);
+  }
+  function softmax(arr,temp){
+    const t=temp||1;
+    const m=Math.max.apply(null,arr);
+    const e=arr.map(v=>Math.exp((v-m)/t));
+    const s=e.reduce((a,b)=>a+b,0);
+    return e.map(v=>v/s);
+  }
+
+  // head-specific transform of a target gene's profile
+  function headProfile(prof,head){
+    if(head===1){ // antagonism: invert around the per-gene mean
+      const m=mean(prof);return prof.map(v=>2*m-v);
+    }
+    if(head===2){ // cell-type-specific: weight late (high-variance) cells
+      return [prof[0]*0.4,prof[1]*0.7,prof[2]*1.3,prof[3]*1.3];
+    }
+    return prof; // head 0: raw co-activation
+  }
+
+  // Compute the TP53 attention row.
+  //   biasOn: add graph-transformer edge biases  ·  temp: softmax temperature
+  //   tfMask: zero non-TF sources is row-level (always the TP53 row here)
+  //   head:   which attention head transform to use for targets
+  function tp53Row(biasOn,temp,head,biasScale){
+    const q=X.TP53;
+    const raw=GENES.map(g=>{
+      const kk=headProfile(X[g],head);
+      let s=dot(q,kk)/Math.sqrt(dk);
+      if(biasOn) s+=EDGE_BIAS[g]*(biasScale==null?1:biasScale);
+      return s;
+    });
+    const w=softmax(raw,temp);
+    return {raw,w};
+  }
+
+  // background score 1/d for d genes (note: meaningful scores >> 1/d)
+  const dGenes=GENES.length;
+  const background=1/dGenes;
+
+  // precision / recall of TP53→target calls at a softmax-weight threshold tau
+  function prCounts(w,tau){
+    let tp=0,fp=0,fn=0;
+    GENES.forEach((g,i)=>{
+      if(g==="TP53") return;            // skip self
+      const called=w[i]>=tau;
+      const truth=TRUE_TP53[g];
+      if(called&&truth) tp++;
+      else if(called&&!truth) fp++;
+      else if(!called&&truth) fn++;
+    });
+    const prec=tp+fp>0?tp/(tp+fp):0;
+    const rec =tp+fn>0?tp/(tp+fn):0;
+    return {tp,fp,fn,prec,rec};
+  }
+
+  let sceneSnap={};
+
+  // colour palette (3 blues + 1 brown house style, plus support hues)
+  function build(api){
+    const T=api.THREE,s=api.state,mode=s.mode;
+    const temp=s.temp;                     // softmax temperature 0.5..2.0
+    const tau =s.tau;                       // call threshold on softmax weight
+    const head=Math.round(s.head);          // 0,1,2 (multi-head mode)
+    const biasScale=s.biasScale;            // 0..1 strength of motif/ATAC bias
+
+    const gGenes =api.group("genes");
+    const gAttn  =api.group("attn");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // light blue  — TP53 / query
+    const BL=new T.Color("#3b82f6");   // mid blue     — true targets
+    const DK=new T.Color("#1e40af");   // deep blue    — structure
+    const BR=new T.Color("#c08457");   // brown        — false positive / spurious
+    const GR=new T.Color("#34d399");
+    const AM=new T.Color("#fbbf24");
+    const VI=new T.Color("#a78bfa");
+    const SL=new T.Color("#54667c");
+
+    // colour a gene by its regulatory role
+    function geneCol(g){
+      if(g==="TP53") return CY;
+      if(TRUE_TP53[g]) return BL;       // true TP53 target
+      if(g==="HBB")   return BR;        // the spurious co-varying gene
+      return SL;                        // unrelated
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // shared geometry: 6 genes on an arc, TP53 = query at the apex
+    // ════════════════════════════════════════════════════════════════
+    function geneArcPos(i){
+      const a=(-0.5+ i/(GENES.length-1))*Math.PI*1.05;   // spread across an arc
+      return new T.Vector3(Math.sin(a)*4.2, 0, -Math.cos(a)*2.6+1.2);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 — attention  (raw self-attention: the co-variation failure)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="attention"){
+      const {raw,w}=tp53Row(false,temp,0,0);
+
+      // TP53 query node (apex)
+      const qPos=new T.Vector3(0,2.4,1.2);
+      const qSph=new T.Mesh(new T.SphereGeometry(0.42,24,18),
+        new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.7,roughness:0.3}));
+      qSph.position.copy(qPos); gGenes.add(qSph);
+      api.pick(qSph,{gene:{name:"TP53",role:"query (TF)"}});
+      addLbl("TP53 query","#4dd7ff",1.5,0,3.05,1.2);
+
+      // target genes on the arc + attention edges scaled by weight
+      GENES.forEach((g,i)=>{
+        if(g==="TP53") return;
+        const p=geneArcPos(i);
+        const col=geneCol(g);
+        const wi=w[i];
+        const sph=new T.Mesh(new T.SphereGeometry(0.20+wi*0.85,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.55,roughness:0.4}));
+        sph.position.copy(p); gGenes.add(sph);
+        api.pick(sph,{gene:{name:g,role:TRUE_TP53[g]?"true target":(g==="HBB"?"spurious (HBB)":"unrelated"),weight:wi,pearson:pearson(X.TP53,X[g])}});
+
+        // attention edge thickness ∝ weight; brown if it is a FALSE positive call
+        const called=wi>=tau, fp=called&&!TRUE_TP53[g];
+        const eCol=fp?BR:(TRUE_TP53[g]?BL:SL);
+        const segs=10;
+        for(let k=0;k<segs;k++){
+          const t0=k/segs,t1=(k+1)/segs;
+          const a0=qPos.clone().lerp(p,t0), a1=qPos.clone().lerp(p,t1);
+          gAttn.add(new T.Line(new T.BufferGeometry().setFromPoints([a0,a1]),
+            new T.LineBasicMaterial({color:eCol.getHex(),transparent:true,opacity:0.25+wi*0.7})));
+        }
+        addLbl(g,col.getStyle(),1.05,p.x,p.y+0.55+wi*0.85,p.z);
+        addSlbl("A="+wi.toFixed(3),col.getStyle(),0.40,p.x,p.y-0.5,p.z);
+      });
+
+      // background reference plane (1/d)
+      addLbl("background 1/d = "+background.toFixed(3),"#8a99ad",1.0,0,-1.35,-2.2);
+      addLbl("raw attention · co-variation","#c08457",1.2,0,-0.6,4.3);
+
+      const pr=prCounts(w,tau);
+      const wHBB=w[GENES.indexOf("HBB")];
+      sceneSnap={mode,temp:+temp.toFixed(2),tau:+tau.toFixed(3),head:0,biasScale:0,
+        attnHBB:+wHBB.toFixed(3),attnCDKN1A:+w[1].toFixed(3),
+        falsePositives:pr.fp,precision:+pr.prec.toFixed(3),recall:+pr.rec.toFixed(3)};
+
+      return {
+        badge:"Raw attention · HBB="+wHBB.toFixed(3)+" · FP="+pr.fp,
+        formula:"A[TP53,j] = softmax<sub>j</sub>( q·k<sub>j</sub> / &radic;d<sub>k</sub> ) , &radic;d<sub>k</sub>=2",
+        insight:"Raw self-attention scores TP53→gene by the uncentred dot-product of expression profiles. HBB (brown) gets A="+wHBB.toFixed(3)+" — nearly as high as the true target CDKN1A — purely because both genes have large values in cells 3–4. Co-variation is conflated with regulation: HBB is a false positive even though its Pearson correlation with TP53 is "+pearson(X.TP53,X.HBB).toFixed(2)+".",
+        state:"Threshold τ="+tau.toFixed(3)+" → calls "+(pr.tp+pr.fp)+" edges: "+pr.tp+" true, "+pr.fp+" false ("+(pr.fp>0?"HBB spuriously called":"clean")+"). Precision "+(pr.prec*100).toFixed(0)+"%, recall "+(pr.rec*100).toFixed(0)+"%.",
+        metrics:{attnHBB:wHBB.toFixed(3),attnCDKN1A:w[1].toFixed(3),falsePositives:""+pr.fp,precision:(pr.prec*100).toFixed(0)+"%"},
+        focus:{center:[0,0.6,0.6],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 — graph-transformer  (motif/ATAC edge bias deprioritises HBB)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="graph-transformer"){
+      const {raw:rawNo,w:wNo}=tp53Row(false,temp,0,0);
+      const {raw,w}=tp53Row(true,temp,0,biasScale);
+
+      // TP53 query node
+      const qPos=new T.Vector3(0,2.4,1.2);
+      const qSph=new T.Mesh(new T.SphereGeometry(0.42,24,18),
+        new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.7,roughness:0.3}));
+      qSph.position.copy(qPos); gGenes.add(qSph);
+      api.pick(qSph,{gene:{name:"TP53",role:"query (TF)"}});
+      addLbl("TP53 query","#4dd7ff",1.5,0,3.05,1.2);
+
+      GENES.forEach((g,i)=>{
+        if(g==="TP53") return;
+        const p=geneArcPos(i);
+        const col=geneCol(g);
+        const wi=w[i];
+        const sph=new T.Mesh(new T.SphereGeometry(0.20+wi*0.85,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.55,roughness:0.4}));
+        sph.position.copy(p); gGenes.add(sph);
+        api.pick(sph,{gene:{name:g,role:TRUE_TP53[g]?"true target":(g==="HBB"?"spurious (HBB)":"unrelated"),weight:wi,bias:EDGE_BIAS[g]*biasScale}});
+
+        const called=wi>=tau, fp=called&&!TRUE_TP53[g];
+        const eCol=fp?BR:(TRUE_TP53[g]?BL:SL);
+        const segs=10;
+        for(let k=0;k<segs;k++){
+          const t0=k/segs,t1=(k+1)/segs;
+          const a0=qPos.clone().lerp(p,t0), a1=qPos.clone().lerp(p,t1);
+          gAttn.add(new T.Line(new T.BufferGeometry().setFromPoints([a0,a1]),
+            new T.LineBasicMaterial({color:eCol.getHex(),transparent:true,opacity:0.25+wi*0.7})));
+        }
+        addLbl(g,col.getStyle(),1.05,p.x,p.y+0.55+wi*0.85,p.z);
+        // show the bias applied to this edge
+        const b=EDGE_BIAS[g]*biasScale;
+        const bcol=b>0?GR:(b<0?BR:SL);
+        addSlbl((b>=0?"+":"")+b.toFixed(2)+" bias",bcol.getStyle(),0.38,p.x,p.y-0.5,p.z);
+      });
+
+      addLbl("graph transformer · +motif / +ATAC bias","#34d399",1.2,0,-0.6,4.3);
+
+      const pr=prCounts(w,tau);
+      const wHBB=w[GENES.indexOf("HBB")], wHBBno=wNo[GENES.indexOf("HBB")];
+      const dropHBB=wHBBno-wHBB;
+      sceneSnap={mode,temp:+temp.toFixed(2),tau:+tau.toFixed(3),head:0,biasScale:+biasScale.toFixed(2),
+        attnHBB:+wHBB.toFixed(3),attnCDKN1A:+w[1].toFixed(3),
+        falsePositives:pr.fp,precision:+pr.prec.toFixed(3),recall:+pr.rec.toFixed(3),hbbDrop:+dropHBB.toFixed(3)};
+
+      return {
+        badge:"Graph transformer · HBB "+wHBBno.toFixed(3)+"→"+wHBB.toFixed(3)+" · FP="+pr.fp,
+        formula:"A<sub>raw</sub>[i,j] = q·k<sub>j</sub>/&radic;d<sub>k</sub> + b<sub>edge</sub>[i,j]  (b: +0.8 CDKN1A, +0.7 MDM2, −0.5 HBB)",
+        insight:"Additive structural biases inject biology without hard-coding the graph. The TP53→CDKN1A and →MDM2 edges gain +0.8 / +0.7 from JASPAR motif + ATAC accessibility; TP53→HBB gets −0.5 (no TP53 motif at the HBB promoter). HBB's attention falls "+wHBBno.toFixed(3)+"→"+wHBB.toFixed(3)+" while CDKN1A rises to "+w[1].toFixed(3)+", correctly re-ranking the edges. Drag bias strength to 0 to recover raw attention.",
+        state:"Bias strength "+(biasScale*100).toFixed(0)+"%. CDKN1A "+w[1].toFixed(3)+" > MDM2 "+w[2].toFixed(3)+" > HBB "+wHBB.toFixed(3)+". False positives at τ="+tau.toFixed(3)+": "+pr.fp+". Precision "+(pr.prec*100).toFixed(0)+"%, recall "+(pr.rec*100).toFixed(0)+"%.",
+        metrics:{attnHBB:wHBB.toFixed(3),attnCDKN1A:w[1].toFixed(3),falsePositives:""+pr.fp,precision:(pr.prec*100).toFixed(0)+"%"},
+        focus:{center:[0,0.6,0.6],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 — multi-head  (head specialisation: co-activation / antagonism / cell-type)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="multi-head"){
+      const headNames=["co-activation","antagonism","cell-type"];
+      const headCols=[GR,BR,VI];
+      // attention rows for the 3 heads
+      const rows=[0,1,2].map(h=>tp53Row(false,temp,h,0).w);
+      const ens=GENES.map((g,i)=>(rows[0][i]+rows[1][i]+rows[2][i])/3);
+      const ensSum=ens.reduce((a,b)=>a+b,0);
+      const ensN=ens.map(v=>v/ensSum);   // re-normalise the ensemble row
+
+      // TP53 query node (apex)
+      const qPos=new T.Vector3(0,2.6,1.2);
+      const qSph=new T.Mesh(new T.SphereGeometry(0.40,24,18),
+        new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.7,roughness:0.3}));
+      qSph.position.copy(qPos); gGenes.add(qSph);
+      addLbl("TP53 query","#4dd7ff",1.4,0,3.25,1.2);
+
+      // three head bar-rows, one per head + the ensemble row, as a small heatmap
+      const xs=-4.4, dx=1.55, y0=-1.2;
+      const showRows=[rows[0],rows[1],rows[2],ensN];
+      const rowLbl=["head1","head2","head3","ensem"];
+      const rowCol=[headCols[0],headCols[1],headCols[2],CY];
+      showRows.forEach((row,r)=>{
+        const z=-2.0+r*1.35;
+        GENES.forEach((g,i)=>{
+          if(g==="TP53") return;
+          const wi=row[i];
+          const x=xs+i*dx;
+          const h=0.12+wi*3.6;
+          const col=rowCol[r].clone().lerp(geneCol(g),0.35);
+          const bar=new T.Mesh(new T.BoxGeometry(0.62,h,0.62),
+            new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.45,roughness:0.4}));
+          bar.position.set(x,y0+h/2,z); gBars.add(bar);
+          api.pick(bar,{cell:{head:r<3?headNames[r]:"ensemble",gene:g,weight:wi}});
+          if(r===3) addSlbl(wi.toFixed(2),CY.getStyle(),0.34,x,y0+h+0.35,z);
+        });
+        addLbl(rowLbl[r],rowCol[r].getStyle(),0.95,xs-1.2,y0+0.2,z);
+      });
+      // gene column labels along the front
+      GENES.forEach((g,i)=>{
+        if(g==="TP53") return;
+        addSlbl(g,geneCol(g).getStyle(),0.36,xs+i*dx,y0-0.15,-2.0-1.0);
+      });
+      addLbl("multi-head ensemble = mean over heads","#a78bfa",1.2,0,-0.6,4.3);
+
+      // which head most prefers each true target?
+      const pr=prCounts(ensN,tau);
+      const wHBB=ensN[GENES.indexOf("HBB")];
+      // head2 (antagonism) should rank HBB low and CCNB1/anti genes differently
+      sceneSnap={mode,temp:+temp.toFixed(2),tau:+tau.toFixed(3),head,biasScale:0,
+        attnHBB:+wHBB.toFixed(3),attnCDKN1A:+ensN[1].toFixed(3),
+        head1CDKN1A:+rows[0][1].toFixed(3),head2HBB:+rows[1][GENES.indexOf("HBB")].toFixed(3),
+        falsePositives:pr.fp,precision:+pr.prec.toFixed(3),recall:+pr.rec.toFixed(3)};
+
+      return {
+        badge:"Multi-head · ensemble CDKN1A="+ensN[1].toFixed(3)+" · FP="+pr.fp,
+        formula:"score(TP53→j) = (1/H) &Sigma;<sub>h</sub> A<sup>h</sup>[TP53,j] ,  H=3 heads",
+        insight:"Each head learns a different regulatory mode. Head 1 (green, co-activation) scores genes rising with TP53 — it likes CDKN1A but also spuriously HBB. Head 2 (brown, antagonism) inverts targets, so it up-weights genes that move opposite TP53 (CCNB1) and down-weights co-rising HBB. Head 3 (violet, cell-type) emphasises high-variance cells 3–4. Averaging the heads is a learnable ensemble that is more robust than any single head.",
+        state:"Ensemble (cyan row) CDKN1A "+ensN[1].toFixed(3)+", HBB "+wHBB.toFixed(3)+". Head-2 antagonism cuts HBB to "+rows[1][GENES.indexOf("HBB")].toFixed(3)+". At τ="+tau.toFixed(3)+": "+pr.fp+" false positives, precision "+(pr.prec*100).toFixed(0)+"%.",
+        metrics:{attnHBB:wHBB.toFixed(3),attnCDKN1A:ensN[1].toFixed(3),falsePositives:""+pr.fp,precision:(pr.prec*100).toFixed(0)+"%"},
+        focus:{center:[0,0.4,0.4],radius:13}
+      };
+    }
+
+    return {badge:"F09",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f09",
+    kind:"attentiongrn-graph-transformer",
+    eyebrow:"Block F · GRN Inference",
+    title:"F09 · AttentionGRN and graph transformer GRN reconstruction",
+    subtitle:"TP53 DNA-damage response, 6 genes × 4 cells. Self-attention scores every TF→gene edge from expression profiles — and conflates co-variation with regulation. Three views: raw attention, graph-transformer edge bias, and multi-head ensembling.",
+    selectedLabel:"Element",
+    selectedHint:"Click the TP53 query, a gene node, or an attention cell.",
+    insightLabel:"Reading the scene",
+    modes:[
+      {value:"attention",         label:"Raw attention (co-variation trap)"},
+      {value:"graph-transformer", label:"Graph transformer (motif / ATAC bias)"},
+      {value:"multi-head",        label:"Multi-head ensemble (head specialisation)"}
+    ],
+    params:[
+      {key:"temp",     label:"softmax temperature",min:0.5,max:2.0,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)},
+      {key:"tau",      label:"call threshold τ (softmax weight)",min:0.02,max:0.40,step:0.005,value:0.22,
+       fmt:v=>v.toFixed(3)},
+      {key:"biasScale",label:"edge-bias strength (motif+ATAC)",min:0,max:1,step:0.05,value:1.0,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["graph-transformer"]},
+      {key:"head",     label:"focus head (0=coact 1=antag 2=cell)",min:0,max:2,step:1,value:0,
+       fmt:v=>["co-activation","antagonism","cell-type"][Math.round(v)],modes:["multi-head"]}
+    ],
+    metrics:[
+      {key:"attnHBB",        label:"A[TP53,HBB] (spurious)",accent:"amber"},
+      {key:"attnCDKN1A",     label:"A[TP53,CDKN1A] (true)", accent:"cyan"},
+      {key:"falsePositives", label:"false-positive edges",  accent:"amber"},
+      {key:"precision",      label:"TP53-row precision",     accent:"green"}
+    ],
+    layers:[
+      {group:"genes", label:"Gene nodes"},
+      {group:"attn",  label:"Attention edges"},
+      {group:"bars",  label:"Head heatmap"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"No bias (raw)",
+      on:api=>{api.setParam("biasScale",0);}
+    },
+    secondary:{
+      label:"Full bias",
+      on:api=>{api.setParam("biasScale",1);}
+    },
+    defaultCam:{theta:-0.35,phi:0.5,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TP53 query · <span style="color:#3b82f6">blue</span>=true target (CDKN1A,MDM2) · <span style="color:#c08457">brown</span>=spurious HBB / false positive · <span style="color:#34d399">green</span>=+bias / co-activation head · <span style="color:#a78bfa">violet</span>=cell-type head. Edge thickness ∝ attention weight.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="multi-head") api.frame([0,0.4,0.4],13);
+      else api.frame([0,0.6,0.6],12);
+    },
+    onSelect(api,d){
+      if(d.gene){
+        let t="Gene "+d.gene.name+" · "+d.gene.role;
+        if(d.gene.weight!=null) t+=" · A="+d.gene.weight.toFixed(3);
+        if(d.gene.pearson!=null) t+=" · r="+d.gene.pearson.toFixed(2);
+        if(d.gene.bias!=null) t+=" · bias "+(d.gene.bias>=0?"+":"")+d.gene.bias.toFixed(2);
+        api.setSelected(t);
+      }
+      if(d.cell) api.setSelected(d.cell.head+" → "+d.cell.gene+" · A="+d.cell.weight.toFixed(3));
+    },
+    build,
+    snapshot(s){
+      const temp=s.temp,tau=s.tau,head=Math.round(s.head),biasScale=s.biasScale;
+      // recompute the TP53 row consistent with the active mode
+      let row;
+      if(s.mode==="graph-transformer") row=tp53Row(true,temp,0,biasScale).w;
+      else if(s.mode==="multi-head"){
+        const rs=[0,1,2].map(h=>tp53Row(false,temp,h,0).w);
+        const ens=GENES.map((g,i)=>(rs[0][i]+rs[1][i]+rs[2][i])/3);
+        const sum=ens.reduce((a,b)=>a+b,0);
+        row=ens.map(v=>v/sum);
+      } else row=tp53Row(false,temp,0,0).w;
+      const pr=prCounts(row,tau);
+      const iHBB=GENES.indexOf("HBB");
+      return {
+        mode:s.mode,
+        temp:+temp.toFixed(2),
+        tau:+tau.toFixed(3),
+        head:head,
+        biasScale:+biasScale.toFixed(2),
+        attnHBB:+row[iHBB].toFixed(3),
+        attnCDKN1A:+row[1].toFixed(3),
+        attnMDM2:+row[2].toFixed(3),
+        falsePositives:pr.fp,
+        precision:+pr.prec.toFixed(3),
+        recall:+pr.rec.toFixed(3),
+        hbbAboveBackground:row[iHBB]>background
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

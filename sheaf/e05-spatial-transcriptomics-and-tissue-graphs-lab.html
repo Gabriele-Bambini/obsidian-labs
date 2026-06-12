@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E05 · Spatial transcriptomics and tissue graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no RNG, no clock) ───────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the note's Section-5 worked example (5-spot cross, VEGFA gradient)
+  // ════════════════════════════════════════════════════════════════════════
+  // Physical coords (μm) on a Visium-style cross. y is "north", z is depth.
+  // S1 (0,55) core · S2 (-55,0) core · S3 (0,0) core · S4 (55,0) edge · S5 (0,-55) stroma
+  const SPOTS=[
+    {id:"S1", x: 0.0, y: 1.0, region:"tumor core", CD274:8.5, VEGFA:7.2, CD3E:0.0, ACTA2:0.0},
+    {id:"S2", x:-1.0, y: 0.0, region:"tumor core", CD274:8.1, VEGFA:6.9, CD3E:0.0, ACTA2:0.0},
+    {id:"S3", x: 0.0, y: 0.0, region:"tumor core", CD274:7.8, VEGFA:6.5, CD3E:0.5, ACTA2:0.0},
+    {id:"S4", x: 1.0, y: 0.0, region:"tumor edge", CD274:4.2, VEGFA:4.1, CD3E:5.5, ACTA2:0.0},
+    {id:"S5", x: 0.0, y:-1.0, region:"stroma",     CD274:0.5, VEGFA:1.2, CD3E:0.0, ACTA2:8.8}
+  ];
+  // hex-grid kNN edges of the 5-spot cross (Visium default): S3 is the hub.
+  const HEX_EDGES=[[0,2],[1,2],[2,3],[2,4]];                       // S1-S3,S2-S3,S3-S4,S3-S5
+  // Delaunay triangulation over the 5 coords adds the diagonal rim edges.
+  const DEL_EDGES=[[0,2],[1,2],[2,3],[2,4],[0,1],[0,3],[1,4],[3,4]];
+  const GENES=["VEGFA","CD274","CD3E","ACTA2"];
+  const GENE_COL={VEGFA:"amber",CD274:"cyan",CD3E:"green",ACTA2:"violet"};
+  // BANKSY mixing recommendation by platform (note Section 4 / misconception 4)
+  // Visium spots (55 μm) → lambda ≈ 0.3-0.5 ; MERFISH single-cell → ≈ 0.1-0.2.
+
+  let sceneSnap={};
+
+  // ── geometry helpers ─────────────────────────────────────────────────────
+  const SCALE=2.4;                              // world units per cross arm
+  function spotPos(s){return [s.x*SCALE, 0, -s.y*SCALE];}   // map (x,y μm) → (x,z) plane
+
+  function edgesFor(method,radius){
+    if(method===0) return HEX_EDGES.slice();
+    if(method===1) return DEL_EDGES.slice();
+    // radius graph (method 2): connect pairs whose μm distance <= r.
+    const out=[]; const rArm=radius/55;          // radius in "arm" units (55 μm = 1 arm)
+    for(let i=0;i<SPOTS.length;i++)for(let j=i+1;j<SPOTS.length;j++){
+      const dx=SPOTS[i].x-SPOTS[j].x, dy=SPOTS[i].y-SPOTS[j].y;
+      if(Math.sqrt(dx*dx+dy*dy)<=rArm+1e-9) out.push([i,j]);
+    }
+    return out;
+  }
+
+  // ── Moran's I (binary symmetric adjacency, both directions) ──────────────
+  function morans(gene, edges){
+    const x=SPOTS.map(s=>s[gene]);
+    const N=x.length;
+    const mean=x.reduce((a,b)=>a+b,0)/N;
+    const dev=x.map(v=>v-mean);
+    let num=0;                                   // sum over both directions
+    edges.forEach(([a,b])=>{ num += 2*dev[a]*dev[b]; });
+    const den=dev.reduce((a,d)=>a+d*d,0);
+    const W=2*edges.length;                      // sum of weights, both directions
+    const I=(den>1e-9 && W>0)? (N/W)*(num/den) : 0;
+    return {mean,dev,num,den,W,N,I};
+  }
+
+  // ── STAGATE / BANKSY: neighbour-smoothing of a feature (CD274) ────────────
+  // GAT attention from S3 weights same-domain neighbours higher than cross-domain.
+  function attentionFromHub(hubIdx, edges){
+    // similarity = exp(-||x_i - x_hub|| / tau) over 4-gene expression
+    const tau=4.0;
+    const xi=SPOTS[hubIdx];
+    const nbrs=[];
+    edges.forEach(([a,b])=>{ if(a===hubIdx)nbrs.push(b); else if(b===hubIdx)nbrs.push(a); });
+    const raw=nbrs.map(j=>{
+      const s=SPOTS[j];
+      const d=Math.sqrt((s.CD274-xi.CD274)**2+(s.VEGFA-xi.VEGFA)**2+(s.CD3E-xi.CD3E)**2+(s.ACTA2-xi.ACTA2)**2);
+      return Math.exp(-d/tau);
+    });
+    const Z=raw.reduce((a,b)=>a+b,0)||1;
+    return nbrs.map((j,k)=>({j,alpha:raw[k]/Z}));
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const method=Math.round(s.method);           // 0 hex, 1 delaunay, 2 radius
+    const radius=s.radius;                        // μm
+    const lambda=s.lambda;                        // BANKSY mixing
+    const segMethod=Math.round(s.segMethod);      // 0 STAGATE,1 BANKSY,2 GraphST
+    const geneIdx=Math.round(s.gene);             // index into GENES
+    const gene=GENES[geneIdx];
+
+    const gGraph =api.group("graph");
+    const gEdges =api.group("edges");
+    const gField =api.group("field");
+    const gLabels=api.group("labels");
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const COREc="cyan", EDGEc="green", STROMAc="violet";
+    const regionCol=r=> r==="tumor core"?COREc : r==="tumor edge"?EDGEc : STROMAc;
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: tissue-graph  — physical-proximity edges vs expression similarity
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="tissue-graph"){
+      const edges=edgesFor(method,radius);
+      // baseplate
+      api.plane([0,-0.02,0],{w:9,h:9,color:"#0b1722",opacity:0.5,group:"field"});
+
+      // edges (physical proximity)
+      edges.forEach(([a,b])=>{
+        api.edge(spotPos(SPOTS[a]),spotPos(SPOTS[b]),{color:"#2f4a63",width:0.05,group:"edges"});
+      });
+
+      // spots coloured by tissue region
+      SPOTS.forEach((sp,i)=>{
+        const p=spotPos(sp);
+        const c=regionCol(sp.region);
+        api.node(p,{r:0.42,color:c,group:"graph",label:sp.id,labelColor:"#dceaf6",
+          pick:{spot:sp.id,region:sp.region,deg:edges.filter(e=>e[0]===i||e[1]===i).length}});
+        slbl(sp.region,c,0.32,p[0],0.06,p[2]+0.78);
+      });
+
+      // contrast: a *false* expression-kNN edge S1<->? that physical graph omits.
+      // S1 (core) and S4 (edge) are NOT physical neighbours under hex grid, but
+      // an expression-kNN graph might wrongly link distant similar spots.
+      if(method===0){
+        api.edge(spotPos(SPOTS[0]),spotPos(SPOTS[3]),{color:"#7a2b3a",width:0.03,dashed:true,opacity:0.8,group:"edges"});
+        lbl("expression-kNN ≠ tissue edge","#f0728a",1.0,0,1.3,0);
+      }
+
+      const deg=SPOTS.map((_,i)=>edges.filter(e=>e[0]===i||e[1]===i).length);
+      const medDeg=deg.slice().sort((a,b)=>a-b)[2];
+      const methodName=["hex grid k=6","Delaunay","radius "+radius.toFixed(0)+"μm"][method];
+      lbl("tissue graph · "+methodName,"#7fd2ff",1.15,0,2.0,0);
+
+      api.legend([
+        {color:COREc,label:"tumor core"},
+        {color:EDGEc,label:"tumor edge"},
+        {color:STROMAc,label:"stroma"}
+      ],{corner:"bl"});
+
+      api.setMetric("nEdges",""+edges.length);
+      api.setMetric("medDeg",medDeg.toFixed(1));
+      api.setMetric("moranI","—");
+      api.setMetric("boundary","—");
+
+      sceneSnap={mode,method,radius:+radius.toFixed(0),nEdges:edges.length,medianDegree:medDeg,
+                 moranI:null,lambda,segMethod,gene};
+      return {
+        badge:"Tissue graph · "+methodName+" · "+edges.length+" edges",
+        formula:"E_spatial defined by P (coords) — NOT by X (expression)",
+        insight:"A tissue-graph edge means two spots are physically adjacent in the section, so they can signal by paracrine / juxtacrine contact. Edges come from coordinates alone: S3 is the hub of the 5-spot cross. The dashed rose link is an expression-kNN edge a similarity graph would add — physically wrong, because S1 (core) and S4 (edge) are not neighbours.",
+        state:"Method "+methodName+": "+edges.length+" edges, median degree "+medDeg.toFixed(0)+". Hex grid gives the canonical k-neighbour Visium lattice; Delaunay adds rim edges; radius graph grows with r.",
+        metrics:{nEdges:""+edges.length,medDeg:medDeg.toFixed(1),moranI:"—",boundary:"—"},
+        focus:{center:[0,0.5,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: morans-i  — spatially-variable-gene detection on the 5-spot cross
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="morans-i"){
+      const edges=edgesFor(method,radius);
+      const m=morans(gene,edges);
+      const gc=GENE_COL[gene];
+      api.plane([0,-0.02,0],{w:9,h:9,color:"#0b1722",opacity:0.5,group:"field"});
+
+      // edges
+      edges.forEach(([a,b])=>{
+        api.edge(spotPos(SPOTS[a]),spotPos(SPOTS[b]),{color:"#2f4a63",width:0.05,group:"edges"});
+      });
+
+      // spots: bar height = gene expression; colour = sign of deviation
+      SPOTS.forEach((sp,i)=>{
+        const p=spotPos(sp);
+        const val=sp[gene];
+        const h=0.2+val*0.42;
+        const pos=m.dev[i]>=0;
+        const c=pos?gc:"rose";
+        const bar=new T.Mesh(new T.BoxGeometry(0.62,h,0.62),api.mat(c,{emissive:0.5}));
+        bar.position.set(p[0],h/2,p[2]);
+        gGraph.add(bar);
+        api.pick(bar,{spot:sp.id,gene,value:val,dev:+m.dev[i].toFixed(2)});
+        lbl(val.toFixed(1),pos?api.col(gc):"#f0728a",1.0,p[0],h+0.4,p[2]);
+        slbl(sp.id,"#9fb4c8",0.3,p[0],0.05,p[2]+0.55);
+      });
+
+      // mean plane (reference) at scaled mean height
+      const meanH=0.2+m.mean*0.42;
+      api.plane([0,meanH,0],{w:7.5,h:7.5,color:gc,opacity:0.12,group:"field"});
+      lbl("mean "+m.mean.toFixed(2),api.col(gc),1.0,3.4,meanH+0.1,0);
+
+      lbl(gene+" · Moran's I = "+m.I.toFixed(3),api.col(gc),1.3,0,3.4,0);
+      const verdict = Math.abs(m.I)<0.15?"random pattern":(m.I>0?"clusters spatially (SVG)":"checkerboard");
+      lbl(verdict,"#9fb4c8",1.0,0,2.7,0);
+
+      api.setMetric("nEdges",""+edges.length);
+      api.setMetric("medDeg","—");
+      api.setMetric("moranI",m.I.toFixed(3));
+      api.setMetric("boundary","—");
+
+      sceneSnap={mode,method,gene,radius:+radius.toFixed(0),nEdges:edges.length,
+                 moranI:+m.I.toFixed(4),moranNum:+m.num.toFixed(2),moranDen:+m.den.toFixed(2),
+                 moranMean:+m.mean.toFixed(2),lambda,segMethod,medianDegree:null};
+      return {
+        badge:"Moran's I · "+gene+" = "+m.I.toFixed(3),
+        formula:"I = (N/W)·Σ_ij w_ij·dev_i·dev_j / Σ_i dev_i²",
+        insight:"Moran's I scores spatial autocorrelation. Bars are gene expression; rose bars sit below the mean plane. For VEGFA on only 5 spots, the one stromal outlier (S5) drags the numerator negative, so I = -0.084 — near zero despite a visible gradient. With 3,000-5,000 Visium spots VEGFA would reach I ≈ +0.5 to +0.8. A flat housekeeping gene gives I = 0.",
+        state:gene+": mean "+m.mean.toFixed(2)+", numerator "+m.num.toFixed(2)+", denominator "+m.den.toFixed(2)+", N/W = "+m.N+"/"+m.W+" → I = "+m.I.toFixed(3)+" ("+verdict+").",
+        metrics:{nEdges:""+edges.length,medDeg:"—",moranI:m.I.toFixed(3),boundary:"—"},
+        focus:{center:[0,1.2,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: domains  — STAGATE (GAT) vs BANKSY (λ-mix) vs GraphST (contrastive)
+    // ════════════════════════════════════════════════════════════════════
+    {
+      const edges=edgesFor(method,radius);
+      api.plane([0,-0.02,0],{w:9,h:9,color:"#0b1722",opacity:0.5,group:"field"});
+
+      // edges
+      edges.forEach(([a,b])=>{
+        api.edge(spotPos(SPOTS[a]),spotPos(SPOTS[b]),{color:"#2f4a63",width:0.05,group:"edges"});
+      });
+
+      const hub=2;                                // S3 is the hub spot
+      const att=attentionFromHub(hub,edges);
+      const attMap={}; att.forEach(a=>attMap[a.j]=a.alpha);
+
+      // each spot: smoothed CD274 latent under the chosen segmentation method.
+      // STAGATE: attention-weighted neighbour mix · BANKSY: (1-λ)x + λ·mean(N) ·
+      // GraphST: contrastive pull toward neighbour mean (∝ adjacency, uniform).
+      const smoothed=SPOTS.map((sp,i)=>{
+        const nbrs=[]; edges.forEach(([a,b])=>{ if(a===i)nbrs.push(b); else if(b===i)nbrs.push(a); });
+        if(nbrs.length===0) return sp.CD274;
+        if(segMethod===0){ // STAGATE GAT — attention weights from this spot
+          const a2=attentionFromHub(i,edges);
+          let acc=0; a2.forEach(o=>acc+=o.alpha*SPOTS[o.j].CD274);
+          return acc;
+        }
+        const mean=nbrs.reduce((a,j)=>a+SPOTS[j].CD274,0)/nbrs.length;
+        if(segMethod===1) return (1-lambda)*sp.CD274 + lambda*mean;   // BANKSY
+        return 0.5*sp.CD274 + 0.5*mean;                                // GraphST (fixed pull)
+      });
+
+      // domain assignment threshold on smoothed CD274 (tumor if > 4.0)
+      const dom=smoothed.map(v=> v>4.0?0:1);                          // 0 tumor, 1 non-tumor
+      // boundary sharpness: |smoothed gap| across the tumor/stroma edge S3-S5
+      const gapSharp=Math.abs(smoothed[2]-smoothed[4]);
+
+      SPOTS.forEach((sp,i)=>{
+        const p=spotPos(sp);
+        const isTumor=dom[i]===0;
+        const c=isTumor?"cyan":"violet";
+        const r=0.38+smoothed[i]*0.018;
+        api.node(p,{r:r,color:c,group:"graph",label:sp.id,labelColor:"#dceaf6",
+          pick:{spot:sp.id,smoothedCD274:+smoothed[i].toFixed(2),domain:isTumor?"tumor":"non-tumor"}});
+        lbl(smoothed[i].toFixed(1),api.col(c),0.95,p[0],r+0.7,p[2]);
+      });
+
+      // STAGATE: draw attention arrows from hub S3 to its neighbours, width ∝ α
+      if(segMethod===0){
+        att.forEach(o=>{
+          const w=0.03+o.alpha*0.16;
+          api.arrow(spotPos(SPOTS[hub]),spotPos(SPOTS[o.j]),{color:"amber",width:w,head:0.26,group:"field",
+            label:"α "+o.alpha.toFixed(2),labelColor:"#fbbf24"});
+        });
+        lbl("STAGATE · GAT attention from S3","#fbbf24",1.2,0,3.2,0);
+      } else if(segMethod===1){
+        lbl("BANKSY · λ = "+lambda.toFixed(2)+" neighbour mix","#a78bfa",1.2,0,3.2,0);
+      } else {
+        lbl("GraphST · contrastive (adjacency=signal)","#34d399",1.2,0,3.2,0);
+      }
+
+      api.legend([
+        {color:"cyan",label:"tumor domain"},
+        {color:"violet",label:"non-tumor"}
+      ],{corner:"bl"});
+
+      const segName=["STAGATE","BANKSY","GraphST"][segMethod];
+      api.setMetric("nEdges",""+edges.length);
+      api.setMetric("medDeg","—");
+      api.setMetric("moranI","—");
+      api.setMetric("boundary",gapSharp.toFixed(2));
+
+      sceneSnap={mode,method,segMethod,lambda:+lambda.toFixed(2),gene,radius:+radius.toFixed(0),
+                 nEdges:edges.length,boundarySharpness:+gapSharp.toFixed(3),
+                 hubSmoothedCD274:+smoothed[hub].toFixed(3),tumorSpots:dom.filter(d=>d===0).length,
+                 moranI:null,medianDegree:null};
+      return {
+        badge:"Domains · "+segName+" · boundary "+gapSharp.toFixed(2),
+        formula:segMethod===1?"x_BANKSY = (1−λ)·x_i + λ·mean_{j∈N(i)} x_j"
+               :segMethod===0?"h_i⁽¹⁾ = Σ_j α_ij·W·h_j   (GAT attention)"
+               :"L = −Σ_(i,j)∈E log softmax sim(z_i, z_j)",
+        insight:"All three smooth CD274 over the tissue graph to find domains. STAGATE's GAT (amber arrows from S3) attends more to same-domain core spots (S1,S2) than across the tumor-stroma boundary to S5, giving a sharp boundary. BANKSY mixes a spot with its neighbour mean by λ (Visium ≈ 0.3-0.5). GraphST pulls adjacent spots together by contrastive loss. Boundary sharpness = |CD274(S3) − CD274(S5)| after smoothing.",
+        state:segName+": hub S3 smoothed CD274 = "+smoothed[hub].toFixed(2)+", tumor-stroma boundary sharpness = "+gapSharp.toFixed(2)+". "+(segMethod===0?"GAT keeps the boundary crisp by down-weighting the cross-domain S5 message.":segMethod===1?"Higher λ blurs the boundary toward the neighbour mean.":"Contrastive pull is uniform over adjacency."),
+        metrics:{nEdges:""+edges.length,medDeg:"—",moranI:"—",boundary:gapSharp.toFixed(2)},
+        focus:{center:[0,0.6,0],radius:11}
+      };
+    }
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e05",
+    kind:"spatial-transcriptomics-tissue-graph",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E05 · Spatial transcriptomics and tissue graphs",
+    subtitle:"A 5-spot Visium cross with a VEGFA gradient. Three views: build the tissue graph from coordinates, score spatially-variable genes with Moran's I, and segment domains with STAGATE / BANKSY / GraphST.",
+    selectedLabel:"Spot",
+    selectedHint:"Click a spot, bar, or arrow.",
+    modes:[
+      {value:"tissue-graph", label:"Tissue graph (hex / Delaunay / radius)"},
+      {value:"morans-i",     label:"Moran's I (spatially-variable genes)"},
+      {value:"domains",      label:"Domains (STAGATE / BANKSY / GraphST)"}
+    ],
+    params:[
+      {key:"method",   label:"edge method (0=hex 1=Delaunay 2=radius)",min:0,max:2,step:1,value:0,
+       fmt:v=>["hex grid","Delaunay","radius"][Math.round(v)]},
+      {key:"radius",   label:"radius graph r (μm)",min:55,max:130,step:5,value:78,
+       fmt:v=>v.toFixed(0)+"μm",modes:["tissue-graph","morans-i"]},
+      {key:"gene",     label:"gene (0=VEGFA 1=CD274 2=CD3E 3=ACTA2)",min:0,max:3,step:1,value:0,
+       fmt:v=>["VEGFA","CD274","CD3E","ACTA2"][Math.round(v)],modes:["morans-i"]},
+      {key:"segMethod",label:"segmenter (0=STAGATE 1=BANKSY 2=GraphST)",min:0,max:2,step:1,value:0,
+       fmt:v=>["STAGATE","BANKSY","GraphST"][Math.round(v)],modes:["domains"]},
+      {key:"lambda",   label:"BANKSY λ (neighbour mix)",min:0,max:1,step:0.05,value:0.4,
+       fmt:v=>v.toFixed(2),modes:["domains"]}
+    ],
+    metrics:[
+      {key:"nEdges",  label:"Spatial edges",accent:"cyan"},
+      {key:"medDeg",  label:"Median degree",accent:"green"},
+      {key:"moranI",  label:"Moran's I",accent:"amber"},
+      {key:"boundary",label:"Boundary sharpness",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"Spots"},
+      {group:"edges",  label:"Spatial edges"},
+      {group:"field",  label:"Field / attention"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"VEGFA Moran's I",
+      on:api=>{api.setMode("morans-i");api.setParam("gene",0);api.setParam("method",0);}
+    },
+    secondary:{
+      label:"STAGATE domains",
+      on:api=>{api.setMode("domains");api.setParam("segMethod",0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.72,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=tumor core · <span style="color:#34d399">green</span>=tumor edge · <span style="color:#a78bfa">violet</span>=stroma/non-tumor · <span style="color:#fbbf24">amber</span>=VEGFA / GAT attention · <span style="color:#f0728a">rose</span>=below-mean / expression-kNN edge.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="morans-i") api.frame([0,1.2,0],11);
+      else api.frame([0,0.6,0],11);
+    },
+    onSelect(api,d){
+      if(d.spot && d.region!=null) api.setSelected(d.spot+" · "+d.region+" · degree "+d.deg);
+      else if(d.spot && d.gene!=null) api.setSelected(d.spot+" · "+d.gene+" "+d.value.toFixed(1)+" · dev "+d.dev);
+      else if(d.spot && d.smoothedCD274!=null) api.setSelected(d.spot+" · smoothed CD274 "+d.smoothedCD274+" · "+d.domain);
+      else if(d.spot) api.setSelected(d.spot);
+    },
+    build,
+    snapshot(s){
+      const method=Math.round(s.method);
+      const edges = method===0?HEX_EDGES : method===1?DEL_EDGES : edgesFor(method,s.radius);
+      const gene=GENES[Math.round(s.gene)];
+      const m=morans(gene,edges);
+      const deg=SPOTS.map((_,i)=>edges.filter(e=>e[0]===i||e[1]===i).length);
+      const medDeg=deg.slice().sort((a,b)=>a-b)[2];
+      return {
+        mode:s.mode,
+        method,
+        radius:+s.radius.toFixed(0),
+        gene,
+        segMethod:Math.round(s.segMethod),
+        lambda:+s.lambda.toFixed(2),
+        nEdges:edges.length,
+        medianDegree:medDeg,
+        moranI_VEGFA:+morans("VEGFA",edges).I.toFixed(4),
+        moranI_selectedGene:+m.I.toFixed(4),
+        spatialEdgesFromCoords:true
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

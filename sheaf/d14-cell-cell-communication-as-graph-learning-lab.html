@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D14 · Cell-cell communication as graph learning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random hash (no nondeterministic calls) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── lesson FACTS (Section 5: colorectal cancer TME, 7 cell types) ────────
+  // mean log-normalized expression for the genes that drive the 4 axes.
+  const CELLS=[
+    {name:"Cancer_epi", n:3120, PDL1:2.8, PD1:0.1, TGFb1:1.2, TGFBR2:0.3, CD80:0.0, CTLA4:0.0, IL10:0.0, IL10RA:0.2},
+    {name:"CAF",        n:890,  PDL1:0.8, PD1:0.1, TGFb1:3.4, TGFBR2:0.4, CD80:0.0, CTLA4:0.0, IL10:0.2, IL10RA:0.1},
+    {name:"TAM",        n:1240, PDL1:1.9, PD1:0.3, TGFb1:2.1, TGFBR2:0.8, CD80:1.2, CTLA4:0.1, IL10:2.8, IL10RA:0.3},
+    {name:"CTL",        n:780,  PDL1:0.1, PD1:3.2, TGFb1:0.1, TGFBR2:1.9, CD80:0.0, CTLA4:2.8, IL10:0.1, IL10RA:2.2},
+    {name:"Treg",       n:430,  PDL1:0.2, PD1:1.8, TGFb1:0.8, TGFBR2:1.1, CD80:0.1, CTLA4:3.1, IL10:1.4, IL10RA:1.8},
+    {name:"DC",         n:380,  PDL1:0.1, PD1:0.4, TGFb1:0.3, TGFBR2:0.7, CD80:2.9, CTLA4:0.2, IL10:0.3, IL10RA:1.1},
+    {name:"NK",         n:403,  PDL1:0.2, PD1:1.6, TGFb1:0.1, TGFBR2:1.0, CD80:0.0, CTLA4:1.1, IL10:0.3, IL10RA:1.9}
+  ];
+  // 4 ligand->receptor axes: ligand gene on sender, receptor gene on receiver
+  const AXES=[
+    {key:"PDL1",  lig:"PDL1",  rec:"PD1",    label:"PD-L1 → PD-1",    drug:"anti-PD-1 / anti-PD-L1", col:"cyan"},
+    {key:"TGFb",  lig:"TGFb1", rec:"TGFBR2", label:"TGF-β1 → TGFBR2", drug:"TGF-β inhibitor",        col:"green"},
+    {key:"CD80",  lig:"CD80",  rec:"CTLA4",  label:"CD80 → CTLA-4",   drug:"anti-CTLA-4 (ipi)",      col:"amber"},
+    {key:"IL10",  lig:"IL10",  rec:"IL10RA", label:"IL-10 → IL10RA",  drug:"anti-IL10 / repolarize", col:"violet"}
+  ];
+
+  // Hill function (n=2, K_half=1.0 per Section 8 solution sketch)
+  function hill(x,nH,kH){const xn=Math.pow(x,nH);return xn/(Math.pow(kH,nH)+xn);}
+
+  // CellChat communication probability sender i -> receiver j on axis a
+  function commProb(i,j,a,nH,kH){
+    const ax=AXES[a];
+    const L=hill(CELLS[i][ax.lig],nH,kH);
+    const R=hill(CELLS[j][ax.rec],nH,kH);
+    return L*R;
+  }
+
+  // 2D ring layout for the 7 cell-type nodes (deterministic)
+  function ringPos(i,R){
+    const ang=(-Math.PI/2)+i/CELLS.length*Math.PI*2;
+    return [Math.cos(ang)*R,0,Math.sin(ang)*R];
+  }
+  // spatial (x,z) tissue coordinates for the spatial mode
+  // contact pairs (DC-Treg, Cancer-CTL) near; NK far.
+  const TISSUE=[
+    [-2.2,0, 1.4],  // Cancer_epi
+    [ 2.4,0, 1.0],  // CAF
+    [ 0.4,0,-2.2],  // TAM
+    [-1.0,0, 0.2],  // CTL  (near Cancer_epi)
+    [ 1.4,0,-0.6],  // Treg (near DC)
+    [ 2.2,0,-0.4],  // DC
+    [-3.0,0,-2.6]   // NK   (far corner)
+  ];
+  function dist2D(a,b){const dx=TISSUE[a][0]-TISSUE[b][0],dz=TISSUE[a][2]-TISSUE[b][2];return Math.sqrt(dx*dx+dz*dz);}
+  // scene unit ~ 60 µm so a contact pair (~1 unit) ≈ 60µm
+  const UM=60;
+  function fSpatial(dUnits,sigmaUm){
+    if(sigmaUm>=9999) return 1.0;             // endocrine: no spatial gating
+    const dUm=dUnits*UM;
+    return Math.exp(-(dUm*dUm)/(2*sigmaUm*sigmaUm));
+  }
+
+  // NicheNet ligand activity scores (Section 3/4 illustrative): ligand->TF->target
+  const NICHE=[
+    {lig:"PD-L1",  score:0.38, tf:"NFATC1", target:"TOX"},
+    {lig:"TGF-β1", score:0.31, tf:"SMAD3",  target:"LAG3"},
+    {lig:"IL-10",  score:0.22, tf:"STAT3",  target:"PDCD1"},
+    {lig:"CD80",   score:0.18, tf:"IRF4",   target:"TIGIT"}
+  ];
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const nH=s.nHill;                 // Hill coefficient 1..4
+    const kH=s.kHalf;                 // half-saturation 0.5..2.5
+    const axIdx=Math.round(s.axis);   // 0..3 active LR axis
+    const sigmaUm=s.sigma;            // spatial decay µm (used in spatial mode)
+    const thr=s.thresh;               // edge display / activity threshold
+
+    const gNodes =api.group("nodes");
+    const gEdges =api.group("edges");
+    const gAux   =api.group("aux");
+    const gLabels=api.group("labels");
+
+    const colHex={cyan:"#4dd7ff",green:"#34d399",amber:"#fbbf24",violet:"#a78bfa",rose:"#fb7185",slate:"#54667c"};
+    const axCol=colHex[AXES[axIdx].col];
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSm(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE: cellchat — law-of-mass-action communication probability tensor
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="cellchat"){
+      const R=3.6;
+      const pos=CELLS.map((_,i)=>ringPos(i,R));
+      const ax=AXES[axIdx];
+      CELLS.forEach((c,i)=>{
+        const ligX=hill(c[ax.lig],nH,kH);   // 0..1 sender strength
+        const recX=hill(c[ax.rec],nH,kH);   // 0..1 receiver strength
+        const r=0.28+0.10*Math.log10(c.n);  // size ~ population
+        let cName="slate";
+        if(ligX>0.5&&recX>0.5) cName="amber";
+        else if(ligX>0.5)      cName="cyan";
+        else if(recX>0.5)      cName="green";
+        api.node(pos[i],{r,color:cName,group:"nodes",label:c.name,labelColor:"#cfe0f0",
+          pick:{cell:c.name,n:c.n,lig:+ligX.toFixed(2),rec:+recX.toFixed(2)}});
+      });
+      // strongest channel (un-normalized, matches Section-5 numbers)
+      let maxP=0, topI=0, topJ=0;
+      for(let i=0;i<CELLS.length;i++) for(let j=0;j<CELLS.length;j++){
+        if(i===j) continue;
+        const P=commProb(i,j,axIdx,nH,kH);
+        if(P>maxP){maxP=P;topI=i;topJ=j;}
+      }
+      const normMax=maxP>0?maxP:1;
+      let nEdges=0, sumP=0;
+      for(let i=0;i<CELLS.length;i++) for(let j=0;j<CELLS.length;j++){
+        if(i===j) continue;
+        const P=commProb(i,j,axIdx,nH,kH)/normMax;   // CellChat per-layer normalization
+        if(P<thr) continue;
+        const a=new T.Vector3(pos[i][0],pos[i][1],pos[i][2]);
+        const b=new T.Vector3(pos[j][0],pos[j][1],pos[j][2]);
+        api.arrow(a,b,{color:ax.col,width:0.03+0.085*P,head:0.18+0.12*P,opacity:0.35+0.6*P,group:"edges"});
+        nEdges++; sumP+=P;
+      }
+      const meanP=nEdges?sumP/nEdges:0;
+      const topRaw=commProb(topI,topJ,axIdx,nH,kH);
+
+      addLbl(ax.label,axCol,1.5,0,2.5,0);
+      addSm("sender → receiver, P = hill(L)·hill(R)","#8a99ad",0.42,0,-2.4,0);
+
+      sceneSnap={mode,axis:axIdx,nHill:+nH.toFixed(2),kHalf:+kH.toFixed(2),thresh:+thr.toFixed(2),
+        sigmaUm:null,topProb:+topRaw.toFixed(3),activeEdges:nEdges,meanProb:+meanP.toFixed(3),nicheScore:null};
+
+      return {
+        badge:"CellChat · "+ax.label+" · "+nEdges+" edges ≥ "+thr.toFixed(2),
+        formula:"P(c_i→c_j | L,R) = hill(L(c_i))·hill(R(c_j)),  hill(x)=x^n/(K^n+x^n)",
+        insight:"Law of mass action: communication probability is the product of a Hill term on the sender's ligand and the receiver's cognate receptor. For "+ax.label+", the strongest channel is "+CELLS[topI].name+" → "+CELLS[topJ].name+" at P = "+topRaw.toFixed(2)+". Raise the Hill coefficient n to sharpen co-expression into a switch; raise K_half to demand higher expression before a channel lights up.",
+        state:"Top channel "+CELLS[topI].name+"→"+CELLS[topJ].name+" P="+topRaw.toFixed(2)+" · "+nEdges+" channels above threshold · mean normalized P="+meanP.toFixed(2)+".",
+        metrics:{topProb:topRaw.toFixed(2),activeEdges:""+nEdges,meanProb:meanP.toFixed(2),nicheScore:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE: spatial — gate communication by physical proximity exp(-d²/2σ²)
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="spatial"){
+      const ax=AXES[axIdx];
+      api.plane([0,-0.02,0],{w:9,h:9,color:"slate",opacity:0.10,group:"aux"});
+      const pos=TISSUE.map(p=>[p[0],0,p[2]]);
+      CELLS.forEach((c,i)=>{
+        const r=0.26+0.09*Math.log10(c.n);
+        const ligX=hill(c[ax.lig],nH,kH), recX=hill(c[ax.rec],nH,kH);
+        let cName="slate";
+        if(ligX>0.5&&recX>0.5) cName="amber";
+        else if(ligX>0.5) cName="cyan";
+        else if(recX>0.5) cName="green";
+        api.node(pos[i],{r,color:cName,group:"nodes",label:c.name,labelColor:"#cfe0f0",
+          pick:{cell:c.name,n:c.n}});
+      });
+      // top molecular sender->receiver pair (pre-gating) for σ-ring center
+      let maxMol=0, si=0;
+      for(let i=0;i<CELLS.length;i++) for(let j=0;j<CELLS.length;j++){
+        if(i===j) continue;
+        const P=commProb(i,j,axIdx,nH,kH);
+        if(P>maxMol){maxMol=P;si=i;}
+      }
+      const reachUnits=Math.min(6,(sigmaUm>=9999?6:sigmaUm/UM));
+      const segs=48, ringPts=[];
+      for(let k=0;k<=segs;k++){const a=k/segs*Math.PI*2;ringPts.push(new T.Vector3(pos[si][0]+Math.cos(a)*reachUnits,0.01,pos[si][2]+Math.sin(a)*reachUnits));}
+      gAux.add(new T.Line(new T.BufferGeometry().setFromPoints(ringPts),new T.LineBasicMaterial({color:0x4dd7ff,transparent:true,opacity:0.5})));
+
+      let nGated=0, sumGated=0, topGated=0, tgI=si, tgJ=0;
+      for(let i=0;i<CELLS.length;i++) for(let j=0;j<CELLS.length;j++){
+        if(i===j) continue;
+        const Pmol=commProb(i,j,axIdx,nH,kH);
+        const g=fSpatial(dist2D(i,j),sigmaUm);
+        const Ps=Pmol*g;
+        if(Ps>topGated){topGated=Ps;tgI=i;tgJ=j;}
+        if(Ps<thr) continue;
+        const a=new T.Vector3(pos[i][0],0.04,pos[i][2]);
+        const b=new T.Vector3(pos[j][0],0.04,pos[j][2]);
+        api.arrow(a,b,{color:ax.col,width:0.03+0.08*Ps,head:0.16+0.1*Ps,opacity:0.3+0.65*Ps,group:"edges"});
+        nGated++; sumGated+=Ps;
+      }
+      const meanG=nGated?sumGated/nGated:0;
+      const regime=sigmaUm<=50?"contact-dependent":(sigmaUm<=500?"paracrine":"endocrine");
+
+      addLbl(ax.label+" · σ="+(sigmaUm>=9999?"∞":sigmaUm+"µm"),axCol,1.4,0,2.6,0);
+      addSm("P_spatial = P_CellChat · exp(−d²/2σ²)","#8a99ad",0.42,0,-3.0,0);
+
+      sceneSnap={mode,axis:axIdx,nHill:+nH.toFixed(2),kHalf:+kH.toFixed(2),thresh:+thr.toFixed(2),
+        sigmaUm:Math.round(sigmaUm),topProb:+topGated.toFixed(3),activeEdges:nGated,meanProb:+meanG.toFixed(3),nicheScore:null};
+
+      return {
+        badge:"Spatial · "+regime+" · σ="+(sigmaUm>=9999?"∞":sigmaUm+"µm")+" · "+nGated+" edges",
+        formula:"P_spatial(c_i,c_j) = P_CellChat · exp(−d_ij² / 2σ²)",
+        insight:"Physical proximity gates molecular communication. At σ≈30µm only touching cells signal (Notch/Ephrin); at σ≈200µm paracrine factors like TGF-β reach further; σ=∞ is endocrine, where spatial gating is dropped. Top surviving channel: "+CELLS[tgI].name+" → "+CELLS[tgJ].name+" at P="+topGated.toFixed(2)+". The cyan ring is the σ reach around "+CELLS[si].name+".",
+        state:regime+" regime · σ="+(sigmaUm>=9999?"∞":sigmaUm+"µm")+" · "+nGated+" channels survive gating · top "+CELLS[tgI].name+"→"+CELLS[tgJ].name+" P="+topGated.toFixed(2)+".",
+        metrics:{topProb:topGated.toFixed(2),activeEdges:""+nGated,meanProb:meanG.toFixed(2),nicheScore:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE: nichenet — prior network: ligand → receptor → TF → target gene
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="nichenet"){
+      const colX=[-4.5,-1.5,1.5,4.5];
+      const layerNames=["ligand","receptor (CTL)","signaling TF","target gene"];
+      const layerCol=["cyan","green","amber","violet"];
+      const recGene=["PD-1","TGFBR2","IL10RA","CTLA-4"];
+      const N=NICHE.length;
+      const yFor=k=>2.7-k*1.8;
+      function place(colIdx,k,name,cname,pickExtra){
+        const y=yFor(k);
+        api.node([colX[colIdx],y,0],{r:0.30,color:cname,group:"nodes",label:name,labelColor:"#cfe0f0",
+          pick:Object.assign({col:layerNames[colIdx],name:name},pickExtra||{})});
+        return new T.Vector3(colX[colIdx],y,0);
+      }
+      const actIdx=Math.min(N-1,axIdx);
+      const ligPts=[],recPts=[],tfPts=[],tgPts=[];
+      for(let k=0;k<N;k++){
+        const isAct=(k===actIdx) && (NICHE[k].score>=thr);
+        const lc=isAct?"cyan":"slate", gc=isAct?"green":"slate", tc=isAct?"amber":"slate", vc=isAct?"violet":"slate";
+        ligPts.push(place(0,k,NICHE[k].lig,lc,{score:NICHE[k].score}));
+        recPts.push(place(1,k,recGene[k],gc));
+        tfPts.push(place(2,k,NICHE[k].tf,tc));
+        tgPts.push(place(3,k,NICHE[k].target,vc));
+      }
+      let topScore=0, topK=0;
+      for(let k=0;k<N;k++){
+        if(NICHE[k].score>topScore){topScore=NICHE[k].score;topK=k;}
+        const isAct=(k===actIdx)&&(NICHE[k].score>=thr);
+        const op=isAct?0.95:0.12+0.18*(NICHE[k].score/0.4);
+        const w=isAct?0.06:0.03;
+        const ec=isAct?"violet":"slate";
+        api.arrow(ligPts[k],recPts[k],{color:ec,width:w,head:0.14,opacity:op,group:"edges"});
+        api.arrow(recPts[k],tfPts[k],{color:ec,width:w,head:0.14,opacity:op,group:"edges"});
+        api.arrow(tfPts[k],tgPts[k],{color:ec,width:w,head:0.14,opacity:op,group:"edges"});
+      }
+      for(let c=0;c<4;c++) addLbl(layerNames[c],colHex[layerCol[c]],0.95,colX[c],3.9,0);
+      addSm("score(L | G_diff) = Pearson r( prior-net signal , ΔE )","#8a99ad",0.42,0,-4.3,0);
+      const act=NICHE[actIdx];
+      addLbl("active: "+act.lig+" (r="+act.score.toFixed(2)+")","#a78bfa",1.1,0,-3.2,0);
+
+      sceneSnap={mode,axis:axIdx,nHill:+nH.toFixed(2),kHalf:+kH.toFixed(2),thresh:+thr.toFixed(2),
+        sigmaUm:null,topProb:null,activeEdges:(act.score>=thr?3:0),meanProb:null,nicheScore:+act.score.toFixed(3)};
+
+      return {
+        badge:"NicheNet · "+act.lig+" → "+act.tf+" → "+act.target+" · r="+act.score.toFixed(2),
+        formula:"Score(L | G_diff) = Pearson( signal_{L→TF→target} , ΔE_{receiver} )",
+        insight:"Unlike CellChat, NicheNet links a ligand to specific downstream target genes through a prior regulatory network: ligand → receptor → signaling TF → target gene. The active chain "+act.lig+" → "+recGene[actIdx]+" → "+act.tf+" → "+act.target+" scores r="+act.score.toFixed(2)+". The highest-scoring ligand overall is "+NICHE[topK].lig+" (r="+topScore.toFixed(2)+"), explaining the CTL exhaustion signature. NicheNet gains mechanism; it cannot discover pairs missing from the prior network.",
+        state:"Active chain "+act.lig+"→"+recGene[actIdx]+"→"+act.tf+"→"+act.target+" · ligand activity r="+act.score.toFixed(2)+" · top ligand "+NICHE[topK].lig+" r="+topScore.toFixed(2)+".",
+        metrics:{topProb:"—",activeEdges:(act.score>=thr?"3":"0"),meanProb:"—",nicheScore:act.score.toFixed(2)},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    return {badge:"D14",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d14",
+    kind:"cell-cell-communication",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D14 · Cell-cell communication as graph learning",
+    subtitle:"Colorectal-cancer tumor microenvironment: 7 cell types, 4 ligand–receptor axes. Three views — CellChat law of mass action, spatial gating, and the NicheNet prior network.",
+    selectedLabel:"Element",
+    selectedHint:"Click a cell-type node or a communication arrow.",
+    modes:[
+      {value:"cellchat",  label:"CellChat (law of mass action)"},
+      {value:"spatial",   label:"Spatial gating (proximity)"},
+      {value:"nichenet",  label:"NicheNet (prior network)"}
+    ],
+    params:[
+      {key:"axis",   label:"LR axis (0=PD-L1 1=TGF-β 2=CD80 3=IL-10)",min:0,max:3,step:1,value:0,
+       fmt:v=>["PD-L1→PD-1","TGF-β→TGFBR2","CD80→CTLA-4","IL-10→IL10RA"][Math.round(v)]},
+      {key:"nHill",  label:"Hill coefficient n",min:1,max:4,step:0.5,value:2,
+       fmt:v=>v.toFixed(1),modes:["cellchat","spatial"]},
+      {key:"kHalf",  label:"half-saturation K_half",min:0.5,max:2.5,step:0.1,value:1.0,
+       fmt:v=>v.toFixed(1),modes:["cellchat","spatial"]},
+      {key:"sigma",  label:"spatial decay σ (µm; 9999=∞)",min:30,max:9999,step:10,value:200,
+       fmt:v=>v>=9999?"∞ (endocrine)":Math.round(v)+"µm",modes:["spatial"]},
+      {key:"thresh", label:"display / activity threshold",min:0,max:0.6,step:0.02,value:0.10,
+       fmt:v=>v.toFixed(2)}
+    ],
+    metrics:[
+      {key:"topProb",    label:"Top channel P",   accent:"cyan"},
+      {key:"activeEdges",label:"Active channels", accent:"amber"},
+      {key:"meanProb",   label:"Mean P (active)", accent:"green"},
+      {key:"nicheScore", label:"NicheNet r",      accent:"violet"}
+    ],
+    layers:[
+      {group:"nodes", label:"Cell types"},
+      {group:"edges", label:"Communication"},
+      {group:"aux",   label:"Tissue / σ ring"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Contact (σ=30µm)",
+      on:api=>{api.setParam("sigma",30);}
+    },
+    secondary:{
+      label:"Endocrine (σ=∞)",
+      on:api=>{api.setParam("sigma",9999);}
+    },
+    defaultCam:{theta:-0.5,phi:0.8,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=sender (ligand high) · <span style="color:#34d399">green</span>=receiver (receptor high) · <span style="color:#fbbf24">amber</span>=both · <span style="color:#a78bfa">violet</span>=active NicheNet chain · grey=off. Arrow = sender→receiver, weight = P.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="nichenet") api.frame([0,0,0],12);
+      else api.frame([0,0,0],11);
+    },
+    onSelect(api,d){
+      if(d.cell)  api.setSelected(d.cell+" · "+d.n+" cells"+(d.lig!=null?(" · L="+d.lig+" R="+d.rec):""));
+      if(d.col)   api.setSelected(d.name+" · "+d.col+(d.score!=null?(" · r="+d.score.toFixed(2)):""));
+    },
+    build,
+    snapshot(s){
+      const ax=Math.round(s.axis);
+      const nH=s.nHill, kH=s.kHalf, thr=s.thresh, sig=s.sigma;
+      // ungated CellChat top channel (matches Section-5 numbers)
+      let topRaw=0, ti=0, tj=0;
+      for(let i=0;i<CELLS.length;i++) for(let j=0;j<CELLS.length;j++){
+        if(i===j) continue;
+        const P=commProb(i,j,ax,nH,kH);
+        if(P>topRaw){topRaw=P;ti=i;tj=j;}
+      }
+      // spatially-gated top channel (σ-sensitive) for the spatial mode
+      let topGated=0, gi=0, gj=0;
+      for(let i=0;i<CELLS.length;i++) for(let j=0;j<CELLS.length;j++){
+        if(i===j) continue;
+        const Ps=commProb(i,j,ax,nH,kH)*fSpatial(dist2D(i,j),sig);
+        if(Ps>topGated){topGated=Ps;gi=i;gj=j;}
+      }
+      const act=NICHE[Math.min(NICHE.length-1,ax)];
+      const isSpat=s.mode==="spatial";
+      const topReported=s.mode==="nichenet"?null:+(isSpat?topGated:topRaw).toFixed(3);
+      return {
+        mode:s.mode,
+        axis:ax,
+        nHill:+nH.toFixed(2),
+        kHalf:+kH.toFixed(2),
+        thresh:+thr.toFixed(2),
+        sigmaUm:isSpat?Math.round(sig):null,
+        topProb:topReported,
+        topGatedProb:isSpat?+topGated.toFixed(3):null,
+        topSender:(isSpat?CELLS[gi]:CELLS[ti]).name,
+        topReceiver:(isSpat?CELLS[gj]:CELLS[tj]).name,
+        nicheScore:s.mode==="nichenet"?+act.score.toFixed(3):null,
+        immunosuppressive:(isSpat?topGated:topRaw)>0.5
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure D01 — One dataset, three graphs — each edge is a different claim</title>
+<desc id="d">Four-panel captioned figure: One dataset, three graphs — each edge is a different claim</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE D01 · BLOCK D · BIOLOGY GRAPHS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="22" font-weight="700">One dataset, three graphs — each edge is a different claim</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">One raw assay</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">1200</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">genes</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">18000</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">assay</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">10x scRNA-seq</text>
+<text x="56" y="207" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#34d399"/>
+<circle cx="510" cy="108" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="510" y="113" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Cell graph (kNN)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">A_ij = 1/d  if  j ∈ kNN(i)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">k = 15 · PCA 50-D</text>
+<text x="502" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">1200</text>
+<text x="502" y="207.5" fill="#34d399" font-size="11.5" font-weight="700">edges</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">~9000</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Gene graph (co-expr)</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">edge  if  |ρ(i,j)| &gt; τ</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">τ = 0.6</text>
+<text x="56" y="349.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">2000</text>
+<text x="56" y="369.5" fill="#fbbf24" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">~12000</text>
+<text x="56" y="397" fill="#8a99ad" font-size="11">Claim: co-expression ⇒ shared module. Undirected.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Regulatory graph (GRN)</text>
+<text x="502" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">TF→g  if  motif ∧ |ρ| &gt; 0.3</text>
+<text x="502" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">sign ∈ {+1, −1}</text>
+<text x="502" y="349.5" fill="#a78bfa" font-size="11.5" font-weight="700">TFs</text>
+<text x="642" y="349.5" fill="#9fb4cc" font-size="11.5">200</text>
+<text x="502" y="369.5" fill="#4dd7ff" font-size="11.5" font-weight="700">targets</text>
+<text x="642" y="369.5" fill="#9fb4cc" font-size="11.5">1800</text>
+<text x="502" y="397" fill="#8a99ad" font-size="11">Strongest claim: directed, signed control.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure D01. </text>
+<text x="140.59" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="156.71" y="538" fill="#c7d2dd" font-size="13">single </text>
+<text x="213.13" y="538" fill="#c7d2dd" font-size="13">10x </text>
+<text x="245.37" y="538" fill="#c7d2dd" font-size="13">scRNA-seq </text>
+<text x="325.97" y="538" fill="#c7d2dd" font-size="13">organoid </text>
+<text x="398.51" y="538" fill="#c7d2dd" font-size="13">dataset </text>
+<text x="462.99" y="538" fill="#c7d2dd" font-size="13">(1200 </text>
+<text x="511.35" y="538" fill="#c7d2dd" font-size="13">cells, </text>
+<text x="567.77" y="538" fill="#c7d2dd" font-size="13">18000 </text>
+<text x="616.13" y="538" fill="#c7d2dd" font-size="13">genes) </text>
+<text x="672.55" y="538" fill="#c7d2dd" font-size="13">becomes </text>
+<text x="737.03" y="538" fill="#c7d2dd" font-size="13">three </text>
+<text x="785.39" y="538" fill="#c7d2dd" font-size="13">different</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">graphs. </text>
+<text x="104.48" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="138.01" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="170.25" y="559" fill="#c7d2dd" font-size="13">raw </text>
+<text x="202.49" y="559" fill="#c7d2dd" font-size="13">assay </text>
+<text x="250.85" y="559" fill="#c7d2dd" font-size="13">carries </text>
+<text x="315.33" y="559" fill="#c7d2dd" font-size="13">no </text>
+<text x="339.51" y="559" fill="#c7d2dd" font-size="13">edges. </text>
+<text x="395.93" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="429.46" y="559" fill="#c7d2dd" font-size="13">A </text>
+<text x="445.58" y="559" fill="#c7d2dd" font-size="13">cell-cell </text>
+<text x="526.18" y="559" fill="#c7d2dd" font-size="13">kNN </text>
+<text x="558.42" y="559" fill="#c7d2dd" font-size="13">graph </text>
+<text x="606.78" y="559" fill="#c7d2dd" font-size="13">(k=15, </text>
+<text x="663.2" y="559" fill="#c7d2dd" font-size="13">PCA </text>
+<text x="695.44" y="559" fill="#c7d2dd" font-size="13">50-D) </text>
+<text x="743.8" y="559" fill="#c7d2dd" font-size="13">gives </text>
+<text x="792.16" y="559" fill="#c7d2dd" font-size="13">~9000</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">undirected </text>
+<text x="128.66" y="580" fill="#c7d2dd" font-size="13">edges </text>
+<text x="177.02" y="580" fill="#c7d2dd" font-size="13">and </text>
+<text x="209.26" y="580" fill="#c7d2dd" font-size="13">asks </text>
+<text x="249.56" y="580" fill="#c7d2dd" font-size="13">about </text>
+<text x="297.92" y="580" fill="#c7d2dd" font-size="13">cell-state. </text>
+<text x="394.64" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="428.17" y="580" fill="#c7d2dd" font-size="13">A </text>
+<text x="444.29" y="580" fill="#c7d2dd" font-size="13">gene </text>
+<text x="484.59" y="580" fill="#c7d2dd" font-size="13">co-expression </text>
+<text x="597.43" y="580" fill="#c7d2dd" font-size="13">graph </text>
+<text x="645.79" y="580" fill="#c7d2dd" font-size="13">(|ρ|&gt;0.6) </text>
+<text x="726.39" y="580" fill="#c7d2dd" font-size="13">gives </text>
+<text x="774.75" y="580" fill="#c7d2dd" font-size="13">~12000</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">undirected </text>
+<text x="128.66" y="601" fill="#c7d2dd" font-size="13">edges </text>
+<text x="177.02" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="209.26" y="601" fill="#c7d2dd" font-size="13">asks </text>
+<text x="249.56" y="601" fill="#c7d2dd" font-size="13">about </text>
+<text x="297.92" y="601" fill="#c7d2dd" font-size="13">modules. </text>
+<text x="370.46" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="403.99" y="601" fill="#c7d2dd" font-size="13">A </text>
+<text x="420.11" y="601" fill="#c7d2dd" font-size="13">motif-gated </text>
+<text x="516.83" y="601" fill="#c7d2dd" font-size="13">TF→gene </text>
+<text x="587.76" y="601" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="620" y="601" fill="#c7d2dd" font-size="13">is </text>
+<text x="644.18" y="601" fill="#c7d2dd" font-size="13">directed </text>
+<text x="716.72" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="748.96" y="601" fill="#c7d2dd" font-size="13">signed </text>
+<text x="805.38" y="601" fill="#c7d2dd" font-size="13">— </text>
+<text x="827.95" y="601" fill="#c7d2dd" font-size="13">the</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">strongest, </text>
+<text x="128.66" y="622" fill="#c7d2dd" font-size="13">least </text>
+<text x="177.02" y="622" fill="#c7d2dd" font-size="13">reversible </text>
+<text x="265.68" y="622" fill="#c7d2dd" font-size="13">claim.</text>
+</svg>

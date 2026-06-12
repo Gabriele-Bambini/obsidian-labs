@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F16 — Same genome, different GRN: context conditioning vs pooling</title>
+<desc id="d">Four-panel captioned figure: Same genome, different GRN: context conditioning vs pooling</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F16 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="22" font-weight="700">Same genome, different GRN: context conditioning vs pooling</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Two cell types, one gene set</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TFs</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">target genes</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">contexts</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">2 (Type A, Type B)</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">shared gene set V</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">yes</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Pooled vs context weight (TF2→GeneB)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">pooled  w = 0.68  (inflated)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">u_A: 0.04   u_B: 0.91</text>
+<text x="502" y="187.5" fill="#fbbf24" font-size="11.5" font-weight="700">pooled w</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.68</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Pooling confounds identity</text>
+<text x="56" y="301.5" fill="#4dd7ff" font-size="11.5" font-weight="700">true TF2→B in A</text>
+<text x="196" y="301.5" fill="#9fb4cc" font-size="11.5">0.04</text>
+<text x="56" y="321.5" fill="#fbbf24" font-size="11.5" font-weight="700">pooled TF2→B</text>
+<text x="196" y="321.5" fill="#9fb4cc" font-size="11.5">0.68</text>
+<text x="56" y="341.5" fill="#fb7185" font-size="11.5" font-weight="700">spurious TF1→B</text>
+<text x="196" y="341.5" fill="#9fb4cc" font-size="11.5">0.42</text>
+<text x="56" y="369" fill="#9fb4cc" font-size="11">TF1 and GeneB are both high in Type A cells, so pooling</text>
+<text x="56" y="389" fill="#9fb4cc" font-size="11">reports a phantom TF1→GeneB edge (0.42) that is</text>
+<text x="56" y="409" fill="#9fb4cc" font-size="11">cell-type identity, not regulation.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Four strategies, one floor</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">separate/type</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">CellOracle</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">context-GNN</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">LINGER (u_c)</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">multi-task</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">shared θ + heads</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">min cells/type</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">~200</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F16. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">4 </text>
+<text x="159.22" y="538" fill="#c7d2dd" font-size="13">TFs, </text>
+<text x="201.94" y="538" fill="#c7d2dd" font-size="13">4 </text>
+<text x="218.06" y="538" fill="#c7d2dd" font-size="13">genes, </text>
+<text x="274.48" y="538" fill="#c7d2dd" font-size="13">2 </text>
+<text x="290.6" y="538" fill="#c7d2dd" font-size="13">cell </text>
+<text x="330.9" y="538" fill="#c7d2dd" font-size="13">types, </text>
+<text x="387.32" y="538" fill="#c7d2dd" font-size="13">one </text>
+<text x="419.56" y="538" fill="#c7d2dd" font-size="13">shared </text>
+<text x="475.98" y="538" fill="#c7d2dd" font-size="13">gene </text>
+<text x="516.28" y="538" fill="#c7d2dd" font-size="13">set. </text>
+<text x="556.58" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="590.11" y="538" fill="#c7d2dd" font-size="13">TF1 </text>
+<text x="624.77" y="538" fill="#c7d2dd" font-size="13">masters </text>
+<text x="689.25" y="538" fill="#c7d2dd" font-size="13">Type </text>
+<text x="730.76" y="538" fill="#c7d2dd" font-size="13">A, </text>
+<text x="756.15" y="538" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="790.81" y="538" fill="#c7d2dd" font-size="13">masters </text>
+<text x="855.29" y="538" fill="#c7d2dd" font-size="13">Type</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">B, </text>
+<text x="65.39" y="559" fill="#c7d2dd" font-size="13">TF3 </text>
+<text x="100.05" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="124.23" y="559" fill="#c7d2dd" font-size="13">shared. </text>
+<text x="188.71" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="222.24" y="559" fill="#c7d2dd" font-size="13">TF2→GeneB </text>
+<text x="314.12" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="338.3" y="559" fill="#c7d2dd" font-size="13">0.68 </text>
+<text x="378.6" y="559" fill="#c7d2dd" font-size="13">pooled </text>
+<text x="435.02" y="559" fill="#c7d2dd" font-size="13">but </text>
+<text x="467.26" y="559" fill="#c7d2dd" font-size="13">0.04 </text>
+<text x="507.56" y="559" fill="#c7d2dd" font-size="13">/ </text>
+<text x="523.68" y="559" fill="#c7d2dd" font-size="13">0.91 </text>
+<text x="563.98" y="559" fill="#c7d2dd" font-size="13">under </text>
+<text x="612.34" y="559" fill="#c7d2dd" font-size="13">u_A </text>
+<text x="645.79" y="559" fill="#c7d2dd" font-size="13">/ </text>
+<text x="661.91" y="559" fill="#c7d2dd" font-size="13">u_B. </text>
+<text x="703.42" y="559" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="736.95" y="559" fill="#c7d2dd" font-size="13">Pooling </text>
+<text x="802.64" y="559" fill="#c7d2dd" font-size="13">invents </text>
+<text x="867.12" y="559" fill="#c7d2dd" font-size="13">a</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">spurious </text>
+<text x="112.54" y="580" fill="#c7d2dd" font-size="13">TF1→GeneB </text>
+<text x="204.42" y="580" fill="#c7d2dd" font-size="13">edge </text>
+<text x="244.72" y="580" fill="#c7d2dd" font-size="13">(0.42). </text>
+<text x="309.2" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="342.73" y="580" fill="#c7d2dd" font-size="13">CellOracle, </text>
+<text x="441.87" y="580" fill="#c7d2dd" font-size="13">LINGER </text>
+<text x="505.55" y="580" fill="#c7d2dd" font-size="13">(u_c), </text>
+<text x="561.97" y="580" fill="#c7d2dd" font-size="13">and </text>
+<text x="594.21" y="580" fill="#c7d2dd" font-size="13">multi-task </text>
+<text x="682.87" y="580" fill="#c7d2dd" font-size="13">models </text>
+<text x="739.29" y="580" fill="#c7d2dd" font-size="13">trade </text>
+<text x="787.65" y="580" fill="#c7d2dd" font-size="13">specificity</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">against </text>
+<text x="104.48" y="601" fill="#c7d2dd" font-size="13">a </text>
+<text x="120.6" y="601" fill="#c7d2dd" font-size="13">~200-cell </text>
+<text x="201.2" y="601" fill="#c7d2dd" font-size="13">floor.</text>
+</svg>

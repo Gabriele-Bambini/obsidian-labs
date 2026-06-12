@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K05 · Molecular graph foundation models</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no nondeterministic calls) ─
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the note's Section-5 worked example (TF-DNA binding via ESM-2)
+  // 5 bHLH-family transcription factors; ESM-2 6M model, 320-dim per residue,
+  // mean-pooled over the DNA-binding domain (first 4 components shown).
+  // ════════════════════════════════════════════════════════════════════════
+  const TFS=[
+    {id:"MYC",  e:[0.92,0.81,0.13,0.07], fam:"bHLH", ebox:0.89, note:"canonical E-box target"},
+    {id:"MAX",  e:[0.90,0.79,0.14,0.08], fam:"bHLH", ebox:0.85, note:"obligate partner / hub"},
+    {id:"MAD1", e:[0.88,0.75,0.15,0.09], fam:"bHLH", ebox:0.78, note:"binds E-box via MAX"},
+    {id:"USF1", e:[0.71,0.62,0.22,0.19], fam:"bHLH", ebox:0.62, note:"diverged, prefers CACCTG"},
+    {id:"E2F1", e:[0.31,0.28,0.74,0.61], fam:"non-bHLH", ebox:0.12, note:"different fold, binds TTTCGCGC"}
+  ];
+  // TF-TF interaction edges (STRING) — undirected, all incident on MAX
+  const TF_EDGES=[["MYC","MAX"],["MAD1","MAX"],["USF1","MAX"]];
+  // The 5 molecular foundation models compared (Section 4 table)
+  const MODELS=[
+    {id:"ESM-2",     input:"AA sequence",  dim:1280, d3:0,  view:0, col:"cyan"},
+    {id:"ESM-3",     input:"Seq+Str+Fn",   dim:1536, d3:1,  view:2, col:"violet"},
+    {id:"ChemBERTa", input:"SMILES",       dim:768,  d3:0,  view:0, col:"amber"},
+    {id:"MolBERT",   input:"SMILES",       dim:768,  d3:0,  view:1, col:"amber"},
+    {id:"Uni-Mol",   input:"3D coords",    dim:512,  d3:1,  view:2, col:"green"}
+  ];
+  // three molecular representation views of one molecule (aspirin SMILES)
+  const SMILES="CC(=O)Oc1ccccc1C(=O)O";
+
+  // cosine similarity helper
+  function cos(a,b){let d=0,na=0,nb=0;for(let i=0;i<a.length;i++){d+=a[i]*b[i];na+=a[i]*a[i];nb+=b[i]*b[i];}return d/(Math.sqrt(na)*Math.sqrt(nb)+1e-9);}
+
+  function idxOf(id){for(let i=0;i<TFS.length;i++)if(TFS[i].id===id)return i;return -1;}
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const layers=Math.round(s.layers);      // 0..2 message-passing rounds
+    const focusTF=Math.round(s.focusTF);    // 0..4 selected TF
+    const repView=Math.round(s.repView);    // 0=SMILES 1=2D 2=3D
+    const modelSel=Math.round(s.modelSel);  // 0..4 model index
+
+    const gMain  =api.group("graph");
+    const gAux   =api.group("aux");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // bHLH / sequence
+    const GR=new T.Color("#34d399");   // 3D / Uni-Mol
+    const AM=new T.Color("#fbbf24");   // SMILES / divergence
+    const VI=new T.Color("#a78bfa");   // multimodal / context
+    const RO=new T.Color("#fb7185");   // non-bHLH / mismatch
+    const SL=new T.Color("#54667c");
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: representations — three views of ONE molecule
+    //   the lesson's central hypothesis: SMILES vs 2D graph vs 3D geometry
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="representations"){
+      const viewNames=["SMILES string (1D)","2D atom-bond graph","3D geometry"];
+      const viewCols=[AM,CY,GR];
+      const granularity=[0.34,0.66,1.00];       // fineness of representation
+      const stereoOK=[0,0,1];                    // captures stereochemistry?
+
+      // ── SMILES strip (always shown as the source, dim when not active) ──
+      const toks=SMILES.split("");
+      const active=repView;
+      toks.forEach((ch,i)=>{
+        const x=-5.2+i*0.52;
+        const isAtom=/[A-Za-z]/.test(ch);
+        const baseCol=isAtom?AM.clone():SL.clone();
+        const dimIt=(active!==0);
+        const box=new T.Mesh(new T.BoxGeometry(0.46,0.46,0.18),
+          new T.MeshStandardMaterial({color:baseCol,emissive:baseCol.clone().multiplyScalar(dimIt?0.12:0.6),
+          emissiveIntensity:dimIt?0.15:0.55,roughness:0.5,transparent:dimIt,opacity:dimIt?0.4:1}));
+        box.position.set(x,3.3,0);
+        gAux.add(box);
+        if(!dimIt){const lb=api.label(ch,"#fde68a",0.34);lb.position.set(x,3.3,0.2);gLabels.add(lb);}
+        api.pick(box,{token:{ch,i}});
+      });
+      addSlbl("SMILES tokens","#fbbf24",0.4,-5.2+toks.length*0.26,3.95,0);
+
+      // atom layout (benzene ring + carbonyls/ester) shared by 2D and 3D views
+      const atoms=[];
+      const ringR=1.5, cz0=-0.3;
+      for(let k=0;k<6;k++){const a=k/6*Math.PI*2;atoms.push({x:Math.cos(a)*ringR,y:Math.sin(a)*ringR-0.2,z:cz0,el:"C",ar:true});}
+      atoms.push({x:-2.7,y: 1.1,z:cz0,el:"O",ar:false});
+      atoms.push({x:-3.2,y:-0.4,z:cz0,el:"C",ar:false});
+      atoms.push({x:-2.6,y:-1.7,z:cz0,el:"O",ar:false});
+      atoms.push({x: 2.7,y:-0.9,z:cz0,el:"C",ar:false});
+      atoms.push({x: 3.5,y: 0.3,z:cz0,el:"O",ar:false});
+
+      const elCol={C:CY,O:RO};
+      atoms.forEach((at,i)=>{
+        // in 3D view, push atoms apart in z to show depth; in 2D keep planar
+        const zz=(active===2)?(cz0+(prand(i*9+3)-0.5)*2.2):cz0;
+        const yy=(active===2)?(at.y+(prand(i*5+1)-0.5)*0.8):at.y;
+        const r=(active===0)?0.16:0.30;
+        const c=(elCol[at.el]||CY).clone();
+        const dimIt=(active===0);
+        const m=new T.Mesh(new T.SphereGeometry(r,16,12),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(dimIt?0.15:0.6),
+          emissiveIntensity:dimIt?0.2:0.62,roughness:0.4,transparent:dimIt,opacity:dimIt?0.35:1}));
+        m.position.set(at.x,yy,zz);
+        gMain.add(m);
+        at._p=new T.Vector3(at.x,yy,zz);
+        api.pick(m,{atom:{i,el:at.el}});
+      });
+      // ring bonds + substituent bonds (only meaningful in 2D / 3D)
+      const bonds=[[0,1],[1,2],[2,3],[3,4],[4,5],[5,0],[0,6],[6,7],[7,8],[3,9],[9,10]];
+      if(active!==0){
+        bonds.forEach(b=>{
+          const p=atoms[b[0]]._p,q=atoms[b[1]]._p;
+          gMain.add(new T.Line(new T.BufferGeometry().setFromPoints([p,q]),
+            new T.LineBasicMaterial({color:viewCols[active].getHex(),transparent:true,opacity:0.7})));
+        });
+      }
+
+      // a "stereo center" marker shown only in 3D
+      if(active===2){
+        const sc=new T.Mesh(new T.TorusGeometry(0.45,0.07,8,20),new T.MeshBasicMaterial({color:GR.getHex()}));
+        sc.position.copy(atoms[7]._p);
+        gMain.add(sc);
+        addLbl("3D contact / stereo","#34d399",1.1,atoms[7]._p.x,atoms[7]._p.y-1.0,atoms[7]._p.z);
+      }
+
+      // granularity bar gauge (right side)
+      const g=granularity[active];
+      const bar=new T.Mesh(new T.BoxGeometry(0.7,0.15+g*3.4,0.7),
+        new T.MeshStandardMaterial({color:viewCols[active],emissive:viewCols[active],emissiveIntensity:0.6,roughness:0.4}));
+      bar.position.set(5.1,(0.15+g*3.4)/2-1.6,0);
+      gBars.add(bar);
+      addLbl("granularity "+g.toFixed(2),viewCols[active].getStyle(),1.05,5.1,0.15+g*3.4-1.0,0);
+
+      addLbl(viewNames[active],viewCols[active].getStyle(),1.55,0,-3.0,0);
+      addLbl("aspirin  "+SMILES,"#7c8aa0",0.95,0,-3.7,0);
+
+      sceneSnap={mode,repView,granularity:+g.toFixed(3),stereoCaptured:stereoOK[active],
+        is3D:active===2?1:0,nAtoms:atoms.length,modelSel,layers,focusTF};
+
+      return {
+        badge:"Representations · "+viewNames[active],
+        formula:"molecule → { SMILES (1D),  G=(atoms,bonds) (2D),  {rᵢ}∈ℝ³ (3D) }",
+        insight:"One molecule, three hypotheses about what geometry matters. SMILES (amber) is a 1D token string — fast, but ring topology is only implicit and stereochemistry is a flat token. The 2D graph (cyan) makes bond topology explicit. 3D geometry (green) adds atomic coordinates: only this view distinguishes enantiomers and 3D binding contacts. Granularity rises "+granularity[0].toFixed(2)+" → "+granularity[2].toFixed(2)+".",
+        state:"View: "+viewNames[active]+" · granularity "+g.toFixed(2)+" · stereochemistry "+(stereoOK[active]?"captured":"lost")+". Drag repView to switch the lens on the same aspirin molecule.",
+        metrics:{granularity:g.toFixed(2),stereo:stereoOK[active]?"yes":"no",neighborSim:"—",eboxScore:"—"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: embeddings — 5 TF DBDs in ESM-2 space (first 3 PCs as x,y,z)
+    //   shows MYC/MAX/MAD1 cluster, USF1 diverges, E2F1 separate fold
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="embeddings"){
+      // map 320-dim embedding to 3D scene using first 3 shown components
+      // e=[bHLH-axis1, bHLH-axis2, fold-axis1, fold-axis2]
+      function pos(e){return new T.Vector3((e[0]-0.6)*8.0,(e[1]-0.55)*7.5,(e[2]-0.3)*6.5);}
+      const fIdx=focusTF;
+      const fpos=pos(TFS[fIdx].e);
+
+      // reference anchor at the bHLH centroid
+      let cx=0,cy=0,cz=0;[0,1,2].forEach(k=>{const p=pos(TFS[k].e);cx+=p.x;cy+=p.y;cz+=p.z;});
+      cx/=3;cy/=3;cz/=3;
+      const centroid=new T.Vector3(cx,cy,cz);
+      const cen=new T.Mesh(new T.SphereGeometry(0.18,12,10),new T.MeshBasicMaterial({color:0x33485e}));
+      cen.position.copy(centroid);gAux.add(cen);
+      addSlbl("bHLH centroid","#6b7a8d",0.34,cx,cy+0.5,cz);
+
+      TFS.forEach((tf,i)=>{
+        const p=pos(tf.e);
+        const isFocus=(i===fIdx);
+        const isB=tf.fam==="bHLH";
+        const base=isB?(i<=2?CY:AM):RO;
+        const col=base.clone();
+        const m=new T.Mesh(new T.SphereGeometry(isFocus?0.5:0.36,20,16),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(isFocus?0.9:0.5),
+          emissiveIntensity:isFocus?0.85:0.5,roughness:0.35}));
+        m.position.copy(p);
+        gMain.add(m);
+        api.pick(m,{tf:{id:tf.id,fam:tf.fam,sim:cos(tf.e,TFS[fIdx].e)}});
+        addLbl(tf.id,col.getStyle(),isFocus?1.5:1.2,p.x,p.y+(isFocus?0.85:0.62),p.z);
+
+        // line from focus TF to every other, length = embedding distance
+        if(!isFocus){
+          const sim=cos(tf.e,TFS[fIdx].e);
+          const lc=new T.Color().copy(sim>0.97?GR:(sim>0.9?CY:RO));
+          gAux.add(new T.Line(new T.BufferGeometry().setFromPoints([fpos,p]),
+            new T.LineBasicMaterial({color:lc.getHex(),transparent:true,opacity:0.55})));
+          const mid=fpos.clone().lerp(p,0.5);
+          addSlbl(sim.toFixed(2),lc.getStyle(),0.34,mid.x,mid.y+0.25,mid.z);
+        }
+      });
+
+      // halo on the non-bHLH outlier (E2F1)
+      const e2=pos(TFS[4].e);
+      const ring=new T.Mesh(new T.TorusGeometry(0.85,0.05,8,24),new T.MeshBasicMaterial({color:RO.getHex()}));
+      ring.position.copy(e2);ring.rotation.x=Math.PI/2.4;gMain.add(ring);
+      addLbl("different fold","#fb7185",1.0,e2.x,e2.y-1.0,e2.z);
+
+      // similarity readouts vs focus
+      const sims=TFS.map(t=>cos(t.e,TFS[fIdx].e));
+      const nearest=sims.map((v,i)=>({v,i})).filter(o=>o.i!==fIdx).sort((a,b)=>b.v-a.v)[0];
+      const meanBHLHsim=(cos(TFS[0].e,TFS[1].e)+cos(TFS[0].e,TFS[2].e)+cos(TFS[1].e,TFS[2].e))/3;
+      const e2fSim=cos(TFS[4].e,TFS[0].e);
+
+      sceneSnap={mode,focusTF,nearestSim:+nearest.v.toFixed(3),nearestId:TFS[nearest.i].id,
+        meanBHLHsim:+meanBHLHsim.toFixed(3),e2f1MycSim:+e2fSim.toFixed(3),modelSel,repView,layers};
+
+      return {
+        badge:"ESM-2 space · focus "+TFS[fIdx].id+" ("+TFS[fIdx].fam+")",
+        formula:"e_TF = ESM2_mean_pool(DBD) ∈ ℝ³²⁰ ;  sim = cos(e_i, e_j)",
+        insight:"ESM-2 is a sequence model, yet its embeddings already separate folds before any fine-tuning. MYC/MAX/MAD1 (cyan) cluster tightly — co-evolutionary E-box contact residues constrain the bHLH sequence. USF1 (amber) is same-family but diverged. E2F1 (rose) sits in a different region — a non-bHLH fold the model resolves from sequence alone. bHLH internal sim ≈ "+meanBHLHsim.toFixed(2)+", but E2F1↔MYC ≈ "+e2fSim.toFixed(2)+".",
+        state:"Focus "+TFS[fIdx].id+": nearest neighbour "+TFS[nearest.i].id+" at cos="+nearest.v.toFixed(2)+". bHLH-internal "+meanBHLHsim.toFixed(2)+" vs E2F1↔MYC "+e2fSim.toFixed(2)+". Drag focusTF to re-anchor.",
+        metrics:{granularity:"—",stereo:"—",neighborSim:nearest.v.toFixed(2),eboxScore:"—"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: gnn-context — TF interaction graph + L message-passing layers
+    //   + E-box CACGTG binding scores per TF (the head prediction)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="gnn-context"){
+      // fixed layout: MAX hub at center, others on a ring
+      const layout={MAX:new T.Vector3(0,0,0)};
+      const ring=["MYC","MAD1","USF1","E2F1"];
+      ring.forEach((id,k)=>{const a=k/ring.length*Math.PI*2+Math.PI/4;layout[id]=new T.Vector3(Math.cos(a)*3.2,Math.sin(a)*3.2,0);});
+
+      // degree of each node within this subgraph (E2F1 has 0)
+      const deg={};TFS.forEach(t=>deg[t.id]=0);
+      TF_EDGES.forEach(([a,b])=>{deg[a]++;deg[b]++;});
+
+      // simple 2-layer message passing simulation on the E-box score:
+      // after L rounds, score gets pulled toward the mean of bHLH neighbours.
+      function propagate(L){
+        let h=TFS.map(t=>t.ebox);
+        for(let r=0;r<L;r++){
+          const nh=h.slice();
+          TFS.forEach((t,i)=>{
+            let acc=h[i],cnt=1;
+            TF_EDGES.forEach(([a,b])=>{
+              if(a===t.id){acc+=h[idxOf(b)];cnt++;}
+              if(b===t.id){acc+=h[idxOf(a)];cnt++;}
+            });
+            nh[i]=0.6*h[i]+0.4*(acc/cnt);   // partial smoothing
+          });
+          h=nh;
+        }
+        return h;
+      }
+      const scores=propagate(layers);
+
+      // draw edges
+      TF_EDGES.forEach(([a,b])=>{
+        gAux.add(new T.Line(new T.BufferGeometry().setFromPoints([layout[a],layout[b]]),
+          new T.LineBasicMaterial({color:0x2b4a66,transparent:true,opacity:0.8})));
+      });
+
+      TFS.forEach((tf,i)=>{
+        const p=layout[tf.id];
+        const sc=scores[i];
+        const isHub=(tf.id==="MAX");
+        const isOrphan=(deg[tf.id]===0);
+        const base=isOrphan?RO:(tf.id==="USF1"?AM:CY);
+        const col=base.clone();
+        const rad=0.30+sc*0.42;
+        const m=new T.Mesh(new T.SphereGeometry(rad,20,16),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),
+          emissiveIntensity:isHub?0.8:0.55,roughness:0.35}));
+        m.position.copy(p);m.position.z=0;
+        gMain.add(m);
+        api.pick(m,{tfn:{id:tf.id,deg:deg[tf.id],ebox:sc}});
+        addLbl(tf.id,col.getStyle(),isHub?1.5:1.2,p.x,p.y+rad+0.4,0);
+
+        // E-box binding score bar rising in +z
+        const h=0.1+sc*3.2;
+        const bar=new T.Mesh(new T.BoxGeometry(0.5,0.5,h),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.5,roughness:0.4,transparent:true,opacity:0.85}));
+        bar.position.set(p.x,p.y,h/2);
+        gBars.add(bar);
+        addSlbl(sc.toFixed(2),col.getStyle(),0.4,p.x,p.y,h+0.4);
+
+        if(isOrphan){
+          const x=new T.Mesh(new T.RingGeometry(0.55,0.66,18),new T.MeshBasicMaterial({color:RO.getHex(),side:T.DoubleSide}));
+          x.position.copy(p);gMain.add(x);
+        }
+      });
+      addLbl("MAX = hub (degree "+deg.MAX+")","#4dd7ff",1.1,0,-4.0,0);
+      addLbl("E-box CACGTG binding score = bar height (+z)","#7c8aa0",0.95,0,-4.7,0);
+      addLbl(layers+" message-passing layer"+(layers===1?"":"s"),"#a78bfa",1.2,0,4.4,0);
+
+      const myc=scores[idxOf("MYC")], e2f=scores[idxOf("E2F1")];
+      const spread=Math.max(...scores)-Math.min(...scores);
+
+      sceneSnap={mode,layers,maxDegree:deg.MAX,mycEbox:+myc.toFixed(3),e2f1Ebox:+e2f.toFixed(3),
+        scoreSpread:+spread.toFixed(3),focusTF,modelSel,repView};
+
+      return {
+        badge:"GNN context · "+layers+" MP layer"+(layers===1?"":"s")+" · E-box CACGTG",
+        formula:"h⁽ˡ⁺¹⁾ = 0.6·h⁽ˡ⁾ + 0.4·mean_{j∈N(i)∪i} h⁽ˡ⁾ ;  score = head([h⁽²⁾, e_CACGTG])",
+        insight:"MAX is the obligate hub: every binding bHLH passes context through it. Message passing pulls MYC/MAX/MAD1 toward a shared E-box signal, sharpening the canonical-target cluster. E2F1 (rose, degree 0) gets NO graph context — its low score 0.12 stays low because it binds TTTCGCGC, not CACGTG. Add layers to watch the bHLH scores converge while E2F1 is left out.",
+        state:"At "+layers+" layers: MYC "+myc.toFixed(2)+", E2F1 "+e2f.toFixed(2)+", score spread "+spread.toFixed(2)+". MAX degree "+deg.MAX+". Remove MAX (drag focus elsewhere conceptually) and MAD1 loses its E-box context.",
+        metrics:{granularity:"—",stereo:"—",neighborSim:"—",eboxScore:myc.toFixed(2)},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: model-zoo — 5 foundation models on input view & 3D-awareness
+    //   ESM-2 / ESM-3 / ChemBERTa / MolBERT / Uni-Mol
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="model-zoo"){
+      const colMap={cyan:CY,violet:VI,amber:AM,green:GR};
+      const viewLabel=["sequence","2D graph","3D geometry"];
+      const xPos=[-4.4,-2.2,0,2.2,4.4];
+      const sel=modelSel;
+
+      MODELS.forEach((md,i)=>{
+        const x=xPos[i];
+        const c=colMap[md.col].clone();
+        const isSel=(i===sel);
+        // bar height encodes output dim (log-scaled to keep panel modest)
+        const hh=0.4+(Math.log2(md.dim)-9)*0.9;       // 512→0.4, 1536→~1.6
+        const bar=new T.Mesh(new T.BoxGeometry(1.4,Math.max(0.4,hh),1.2),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(isSel?0.85:0.22),
+          emissiveIntensity:isSel?0.72:0.2,roughness:0.4,transparent:!isSel,opacity:isSel?1:0.5}));
+        const H=Math.max(0.4,hh);
+        bar.position.set(x,H/2,0);
+        gBars.add(bar);
+        api.pick(bar,{model:{id:md.id,dim:md.dim,input:md.input,d3:md.d3}});
+        addLbl(md.id,c.getStyle(),isSel?1.45:1.15,x,H+0.85,0);
+        addSlbl(md.dim+"d",c.getStyle(),0.4,x,H+0.35,0);
+        addSlbl(md.input,"#7c8aa0",0.34,x,-0.55,0);
+
+        // 3D-aware marker: green sphere above bar; sequence-only = grey
+        const mk=new T.Mesh(new T.SphereGeometry(0.22,14,12),
+          new T.MeshStandardMaterial({color:md.d3?GR:SL,emissive:md.d3?GR:SL,emissiveIntensity:md.d3?0.7:0.25,roughness:0.4}));
+        mk.position.set(x,H+1.5,0);gBars.add(mk);
+      });
+      // baseline
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5.4,0,0),new T.Vector3(5.4,0,0)]),
+        new T.LineBasicMaterial({color:0x1e3046})));
+      addLbl("green dot = 3D-aware · grey = sequence/2D only","#34d399",1.0,0,-1.4,0);
+      addLbl("bar height = output dim (log)","#7c8aa0",0.95,0,4.7,0);
+
+      const md=MODELS[sel];
+      const n3d=MODELS.filter(m=>m.d3).length;
+      sceneSnap={mode,modelSel,selDim:md.dim,sel3D:md.d3,selView:md.view,n3DAware:n3d,
+        focusTF,repView,layers};
+
+      return {
+        badge:"Model zoo · "+md.id+" · "+md.input+" · "+md.dim+"d",
+        formula:"ESM-2 (seq) · ESM-3 (seq+str+fn) · ChemBERTa/MolBERT (SMILES) · Uni-Mol (3D)",
+        insight:"Five pretrained encoders, three input views. ESM-2 (cyan) and ESM-3 (violet) read proteins; ChemBERTa & MolBERT (amber) read SMILES; Uni-Mol (green) reads 3D coordinates. Only ESM-3 and Uni-Mol are 3D-aware (green markers) — "+n3d+" of 5. Selected: "+md.id+", input '"+md.input+"', view '"+viewLabel[md.view]+"', "+md.dim+"-dim, "+(md.d3?"3D-equivariant":"sequence/2D only")+". The biological task — not the leaderboard — picks the model.",
+        state:md.id+": "+md.input+" → "+md.dim+"d · "+(md.d3?"3D-aware ✓":"no 3D ✗")+". 3D-aware models: "+n3d+"/5 (ESM-3, Uni-Mol). Drag modelSel to inspect each.",
+        metrics:{granularity:"—",stereo:md.d3?"yes":"no",neighborSim:"—",eboxScore:"—"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    return {badge:"K05",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"k05",
+    kind:"molecular-foundation-models",
+    eyebrow:"Block K · Graph Foundation Models",
+    title:"K05 · Molecular graph foundation models",
+    subtitle:"One molecule, three representations — SMILES, 2D graph, 3D geometry — and five pretrained encoders that disagree about what a molecule is. Worked on the bHLH TF-DNA binding example (MYC/MAX/MAD1/USF1/E2F1) with ESM-2.",
+    selectedLabel:"Element",
+    selectedHint:"Click a token, atom, TF node, bar, or model.",
+    modes:[
+      {value:"representations", label:"Representations (SMILES / 2D / 3D)"},
+      {value:"embeddings",      label:"ESM-2 embedding space (5 TFs)"},
+      {value:"gnn-context",     label:"GNN context + E-box scores"},
+      {value:"model-zoo",       label:"Model zoo (5 foundation models)"}
+    ],
+    params:[
+      {key:"repView", label:"representation (0=SMILES 1=2D 2=3D)",min:0,max:2,step:1,value:2,
+       fmt:v=>["SMILES","2D graph","3D"][Math.round(v)],modes:["representations"]},
+      {key:"focusTF", label:"focus TF (0=MYC..4=E2F1)",min:0,max:4,step:1,value:0,
+       fmt:v=>["MYC","MAX","MAD1","USF1","E2F1"][Math.round(v)],modes:["embeddings"]},
+      {key:"layers",  label:"message-passing layers",min:0,max:2,step:1,value:2,
+       fmt:v=>Math.round(v).toString(),modes:["gnn-context"]},
+      {key:"modelSel",label:"model (0=ESM-2..4=Uni-Mol)",min:0,max:4,step:1,value:0,
+       fmt:v=>["ESM-2","ESM-3","ChemBERTa","MolBERT","Uni-Mol"][Math.round(v)],modes:["model-zoo"]}
+    ],
+    metrics:[
+      {key:"granularity",  label:"Representation granularity",accent:"amber"},
+      {key:"stereo",       label:"Stereochemistry captured",accent:"green"},
+      {key:"neighborSim",  label:"Nearest-TF cosine sim",accent:"cyan"},
+      {key:"eboxScore",    label:"E-box binding (MYC)",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"Molecule / TF nodes"},
+      {group:"aux",    label:"Edges / similarity lines"},
+      {group:"bars",   label:"Bars / gauges"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"3D view",
+      on:api=>{if(api.state.mode==="representations")api.setParam("repView",2);
+               else if(api.state.mode==="gnn-context")api.setParam("layers",2);
+               else if(api.state.mode==="model-zoo")api.setParam("modelSel",4);}
+    },
+    secondary:{
+      label:"SMILES view",
+      on:api=>{if(api.state.mode==="representations")api.setParam("repView",0);
+               else if(api.state.mode==="gnn-context")api.setParam("layers",0);
+               else if(api.state.mode==="model-zoo")api.setParam("modelSel",0);}
+    },
+    defaultCam:{theta:-0.45,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=sequence/bHLH · <span style="color:#fbbf24">amber</span>=SMILES/diverged · <span style="color:#34d399">green</span>=3D-aware · <span style="color:#a78bfa">violet</span>=multimodal/context · <span style="color:#fb7185">rose</span>=non-bHLH / mismatch.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="model-zoo") api.frame([0,2,0],13);
+      else api.frame([0,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.token) api.setSelected("SMILES token '"+d.token.ch+"' @ "+d.token.i);
+      if(d.atom)  api.setSelected("Atom "+d.atom.i+" · element "+d.atom.el);
+      if(d.tf)    api.setSelected(d.tf.id+" ("+d.tf.fam+") · cos to focus "+d.tf.sim.toFixed(2));
+      if(d.tfn)   api.setSelected(d.tfn.id+" · degree "+d.tfn.deg+" · E-box "+d.tfn.ebox.toFixed(2));
+      if(d.model) api.setSelected(d.model.id+" · "+d.model.input+" · "+d.model.dim+"d · "+(d.model.d3?"3D-aware":"seq/2D"));
+    },
+    build,
+    snapshot(s){
+      const repView=Math.round(s.repView);
+      const focusTF=Math.round(s.focusTF);
+      const layers=Math.round(s.layers);
+      const modelSel=Math.round(s.modelSel);
+      const granularity=[0.34,0.66,1.00][repView];
+      const nearestSim=(()=>{const sims=TFS.map(t=>cos(t.e,TFS[focusTF].e));
+        return Math.max(...sims.filter((v,i)=>i!==focusTF));})();
+      const md=MODELS[modelSel];
+      const n3d=MODELS.filter(m=>m.d3).length;
+      return {
+        mode:s.mode,
+        repView,focusTF,layers,modelSel,
+        granularity:+granularity.toFixed(3),
+        stereoCaptured:repView===2?1:0,
+        nearestTFsim:+nearestSim.toFixed(3),
+        mycEbox:0.89,
+        selModelDim:md.dim,
+        selModel3D:md.d3,
+        n3DAware:n3d,
+        threeViews:3,
+        nTFs:TFS.length
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

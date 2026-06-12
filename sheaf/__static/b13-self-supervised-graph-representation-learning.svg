@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure B13 — One graph, three pretext tasks — the safe-augmentation bargain</title>
+<desc id="d">Four-panel captioned figure: One graph, three pretext tasks — the safe-augmentation bargain</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE B13 · BLOCK B · GNN ARCHITECTURES</text>
+<text x="40" y="62" fill="#e8eef6" font-size="21" font-weight="700">One graph, three pretext tasks — the safe-augmentation bargain</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Tiny GRN + evidence tier</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">hi-confidence</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">+3</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">lo-confidence</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">+1</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Contrastive (InfoNCE)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">L = −log[ e^(sim⁺/τ) / Σ e^(sim/τ) ]</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">τ = 0.50</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">sim(TF v1, TF v2)</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.996</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Masked (GraphMAE)</text>
+<text x="56" y="301.5" fill="#4dd7ff" font-size="11.5" font-weight="700">true x(G1)</text>
+<text x="196" y="301.5" fill="#9fb4cc" font-size="11.5">0.60</text>
+<text x="56" y="321.5" fill="#34d399" font-size="11.5" font-weight="700">dec(h_G1)</text>
+<text x="196" y="321.5" fill="#9fb4cc" font-size="11.5">0.58</text>
+<text x="56" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">sq. error</text>
+<text x="196" y="341.5" fill="#9fb4cc" font-size="11.5">0.0004</text>
+<text x="56" y="369" fill="#8a99ad" font-size="11">Hide expression on G1, reconstruct from neighbours (TF,</text>
+<text x="56" y="389" fill="#8a99ad" font-size="11">G3). A small error is good — but check it learned</text>
+<text x="56" y="409" fill="#8a99ad" font-size="11">mechanism, not batch effect.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">The bargain</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">contrastive</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">two safe views agree</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">masked</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">fill from context</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">bootstrap</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">no negatives → collapse risk</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">always</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">preserve the biology</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure B13. </text>
+<text x="140.59" y="538" fill="#c7d2dd" font-size="13">One </text>
+<text x="172.83" y="538" fill="#c7d2dd" font-size="13">tiny </text>
+<text x="213.13" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="245.37" y="538" fill="#c7d2dd" font-size="13">(TF, </text>
+<text x="285.67" y="538" fill="#c7d2dd" font-size="13">G1, </text>
+<text x="317.91" y="538" fill="#c7d2dd" font-size="13">G2, </text>
+<text x="350.15" y="538" fill="#c7d2dd" font-size="13">G3, </text>
+<text x="382.39" y="538" fill="#c7d2dd" font-size="13">state; </text>
+<text x="438.81" y="538" fill="#c7d2dd" font-size="13">3 </text>
+<text x="454.93" y="538" fill="#c7d2dd" font-size="13">hi-confidence, </text>
+<text x="575.83" y="538" fill="#c7d2dd" font-size="13">1 </text>
+<text x="591.95" y="538" fill="#c7d2dd" font-size="13">lo-confidence </text>
+<text x="704.79" y="538" fill="#c7d2dd" font-size="13">edges) </text>
+<text x="761.21" y="538" fill="#c7d2dd" font-size="13">drives </text>
+<text x="817.63" y="538" fill="#c7d2dd" font-size="13">three</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">pretext </text>
+<text x="104.48" y="559" fill="#c7d2dd" font-size="13">tasks. </text>
+<text x="160.9" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="194.43" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="226.67" y="559" fill="#c7d2dd" font-size="13">evidence </text>
+<text x="299.21" y="559" fill="#c7d2dd" font-size="13">tier </text>
+<text x="339.51" y="559" fill="#c7d2dd" font-size="13">decides </text>
+<text x="403.99" y="559" fill="#c7d2dd" font-size="13">what </text>
+<text x="444.29" y="559" fill="#c7d2dd" font-size="13">augmentation </text>
+<text x="549.07" y="559" fill="#c7d2dd" font-size="13">may </text>
+<text x="581.31" y="559" fill="#c7d2dd" font-size="13">drop. </text>
+<text x="629.67" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="663.2" y="559" fill="#c7d2dd" font-size="13">Contrastive </text>
+<text x="759.92" y="559" fill="#c7d2dd" font-size="13">InfoNCE </text>
+<text x="824.4" y="559" fill="#c7d2dd" font-size="13">pulls</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="72.24" y="580" fill="#c7d2dd" font-size="13">two </text>
+<text x="104.48" y="580" fill="#c7d2dd" font-size="13">TF </text>
+<text x="128.66" y="580" fill="#c7d2dd" font-size="13">views </text>
+<text x="177.02" y="580" fill="#c7d2dd" font-size="13">together </text>
+<text x="249.56" y="580" fill="#c7d2dd" font-size="13">(sim </text>
+<text x="289.86" y="580" fill="#c7d2dd" font-size="13">0.996 </text>
+<text x="338.22" y="580" fill="#c7d2dd" font-size="13">vs </text>
+<text x="362.4" y="580" fill="#c7d2dd" font-size="13">G3 </text>
+<text x="386.58" y="580" fill="#c7d2dd" font-size="13">negative </text>
+<text x="459.12" y="580" fill="#c7d2dd" font-size="13">0.428): </text>
+<text x="523.6" y="580" fill="#c7d2dd" font-size="13">p=0.757, </text>
+<text x="596.14" y="580" fill="#c7d2dd" font-size="13">loss </text>
+<text x="636.44" y="580" fill="#c7d2dd" font-size="13">0.278 </text>
+<text x="684.8" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="708.98" y="580" fill="#c7d2dd" font-size="13">τ=0.50. </text>
+<text x="773.46" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="806.99" y="580" fill="#c7d2dd" font-size="13">Masked</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">GraphMAE </text>
+<text x="112.54" y="601" fill="#c7d2dd" font-size="13">reconstructs </text>
+<text x="217.32" y="601" fill="#c7d2dd" font-size="13">G1 </text>
+<text x="241.5" y="601" fill="#c7d2dd" font-size="13">0.58 </text>
+<text x="281.8" y="601" fill="#c7d2dd" font-size="13">vs </text>
+<text x="305.98" y="601" fill="#c7d2dd" font-size="13">true </text>
+<text x="346.28" y="601" fill="#c7d2dd" font-size="13">0.60 </text>
+<text x="386.58" y="601" fill="#c7d2dd" font-size="13">(SE </text>
+<text x="418.82" y="601" fill="#c7d2dd" font-size="13">0.0004). </text>
+<text x="491.36" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="524.89" y="601" fill="#c7d2dd" font-size="13">The </text>
+<text x="557.13" y="601" fill="#c7d2dd" font-size="13">best </text>
+<text x="597.43" y="601" fill="#c7d2dd" font-size="13">setting </text>
+<text x="661.91" y="601" fill="#c7d2dd" font-size="13">preserves </text>
+<text x="742.51" y="601" fill="#c7d2dd" font-size="13">biology, </text>
+<text x="815.05" y="601" fill="#c7d2dd" font-size="13">not</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">maximal </text>
+<text x="104.48" y="622" fill="#c7d2dd" font-size="13">agreement.</text>
+</svg>

@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G05 · Sheaf Attention Networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG, no clock) ───────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS: the note's Section-5 worked example (3-node GRN) ──────────────
+  // Node features h = (expression, accessibility) in R^2.
+  const F={
+    hTF1:[3.0,2.5], hA:[2.5,2.0], hB:[0.2,0.8],
+    // base restriction maps (TF side); gene side = identity
+    RA:[[0.85,0.10],[0.05,0.80]],   // activation: positive dominant eigenvalue
+    RB:[[-0.70,0.00],[0.00,-0.55]], // repression: negative dominant eigenvalue
+    Watt:0.5,                       // W_att = 0.5 * I
+    // base attention logits at the reference state
+    eA:5.0, eB:3.25,
+    alphaA:0.852, alphaB:0.148
+  };
+
+  // ── small linear-algebra helpers ─────────────────────────────────────────
+  const frob=M=>Math.sqrt(M[0][0]*M[0][0]+M[0][1]*M[0][1]+M[1][0]*M[1][0]+M[1][1]*M[1][1]);
+  const scaleM=(M,s)=>[[M[0][0]*s,M[0][1]*s],[M[1][0]*s,M[1][1]*s]];
+  // dominant (largest-magnitude) eigenvalue of a 2x2 matrix (real here)
+  function domEig(M){
+    const tr=M[0][0]+M[1][1], det=M[0][0]*M[1][1]-M[0][1]*M[1][0];
+    const disc=tr*tr-4*det;
+    if(disc<0) return tr/2;            // complex: use real part
+    const s=Math.sqrt(disc);
+    const l1=(tr+s)/2, l2=(tr-s)/2;
+    return Math.abs(l1)>=Math.abs(l2)?l1:l2;
+  }
+
+  // ── attention model (deterministic, drives the sliders) ──────────────────
+  // Logit e_{uv} = a^T[W_att h_u || W_att h_v]; with W_att=0.5·I and a=1 this is
+  // 0.5·(Σh_TF1 + Σh_target). tfActivity scales the target's contribution, so a
+  // highly-active TF discriminates its strong target (GeneA) from its weak one
+  // (GeneB) — this widens the logit gap and sharpens attention.
+  // Reference state (tfActivity=1, τ=1) reproduces the note: eA=5.0, eB=3.25,
+  // alphaA=0.852, alphaB=0.148.
+  function attention(tfActivity,attnTemp){
+    const tfTerm=F.Watt*(F.hTF1[0]+F.hTF1[1]);          // 2.75 (shared)
+    const eA=tfTerm + tfActivity*F.Watt*(F.hA[0]+F.hA[1]); // ref 5.00
+    const eB=tfTerm + tfActivity*F.Watt*(F.hB[0]+F.hB[1]); // ref 3.25
+    const lA=eA/attnTemp, lB=eB/attnTemp;
+    const m=Math.max(lA,lB);
+    const wA=Math.exp(lA-m), wB=Math.exp(lB-m);
+    const Z=wA+wB;
+    return {eA:eA,eB:eB,alphaA:wA/Z,alphaB:wB/Z};
+  }
+
+  // attention entropy (collapse diagnostic, Section 6)
+  const entropy=(a,b)=>{
+    let h=0;
+    if(a>1e-9) h-=a*Math.log(a);
+    if(b>1e-9) h-=b*Math.log(b);
+    return h;
+  };
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const tfActivity=s.tfActivity;     // 0.1..2  (FOXA2 availability / cell context)
+    const attnTemp=s.attnTemp;         // 0.4..3  (softmax temperature)
+    const rNorm=s.rNorm;               // 0.5..2  (Frobenius scale of base R maps)
+    const method=Math.round(s.method); // 0=GAT 1=NSD 2=SAT (compare mode)
+
+    const gNodes =api.group("nodes");
+    const gEdges =api.group("edges");
+    const gMaps  =api.group("maps");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // TF1 / structure
+    const GR=new T.Color("#34d399");   // activation (GeneA)
+    const RS=new T.Color("#fb7185");   // repression (GeneB)
+    const AM=new T.Color("#fbbf24");   // attention strength
+    const VI=new T.Color("#a78bfa");   // attended map / energy
+    const SL=new T.Color("#54667c");
+
+    // attention for the current control state
+    const att=attention(tfActivity,attnTemp);
+    const alphaA=att.alphaA, alphaB=att.alphaB;
+
+    // base restriction maps scaled by rNorm
+    const RA=scaleM(F.RA,rNorm), RB=scaleM(F.RB,rNorm);
+    // attended restriction maps
+    const RAatt=scaleM(RA,alphaA), RBatt=scaleM(RB,alphaB);
+    const eigA=domEig(RAatt), eigB=domEig(RBatt);
+    const Hattn=entropy(alphaA,alphaB);
+
+    // node world positions: TF1 top, GeneA lower-left (activated), GeneB lower-right (repressed)
+    const pTF=new T.Vector3(0,2.4,0);
+    const pA =new T.Vector3(-3.4,-1.6,0);
+    const pB =new T.Vector3(3.4,-1.6,0);
+
+    function addNode(p,r,col,emi){
+      const m=new T.Mesh(new T.SphereGeometry(r,22,16),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(emi),emissiveIntensity:0.6,roughness:0.35}));
+      m.position.copy(p); gNodes.add(m); return m;
+    }
+    function addEdge(a,b,col,op,w){
+      const g=new T.BufferGeometry().setFromPoints([a,b]);
+      gEdges.add(new T.Line(g,new T.LineBasicMaterial({color:col,transparent:true,opacity:op})));
+    }
+    // a small oriented "restriction tile" floating on an edge: a quad whose
+    // tilt/colour encode the (attended) map. width ∝ Frobenius norm.
+    function addTile(mid,col,w,h,tilt){
+      const geo=new T.PlaneGeometry(w,h);
+      const m=new T.Mesh(geo,new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),
+        emissiveIntensity:0.55,roughness:0.4,side:T.DoubleSide,transparent:true,opacity:0.92}));
+      m.position.copy(mid); m.rotation.z=tilt; gMaps.add(m);
+      api.pick(m,{tile:true}); return m;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: factorize — the worked example: attended map = alpha * R
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="factorize"){
+      // nodes
+      const nTF=addNode(pTF,0.55,CY,0.9); api.pick(nTF,{node:"TF1",h:F.hTF1});
+      const nA =addNode(pA,0.46,GR,0.8);  api.pick(nA,{node:"GeneA",h:F.hA,role:"activated"});
+      const nB =addNode(pB,0.40,RS,0.7);  api.pick(nB,{node:"GeneB",h:F.hB,role:"repressed"});
+      L("TF1","#4dd7ff",1.5,pTF.x,pTF.y+0.95,0);
+      L("GeneA","#34d399",1.25,pA.x,pA.y-0.95,0);
+      L("GeneB","#fb7185",1.25,pB.x,pB.y-0.95,0);
+
+      // edge widths encode attention; colours encode sign of R's dominant eig
+      const midA=pTF.clone().lerp(pA,0.5), midB=pTF.clone().lerp(pB,0.5);
+      addEdge(pTF,pA,GR,0.35+0.6*alphaA,1);
+      addEdge(pTF,pB,RS,0.35+0.6*alphaB,1);
+
+      // attention "halo" rings on each edge: radius ∝ alpha
+      function ring(p,a,col){
+        const r=0.25+1.0*a;
+        const ringMesh=new T.Mesh(new T.RingGeometry(r*0.82,r,40),
+          new T.MeshBasicMaterial({color:col,transparent:true,opacity:0.5,side:T.DoubleSide}));
+        ringMesh.position.copy(p); gMaps.add(ringMesh);
+      }
+      ring(midA,alphaA,AM); ring(midB,alphaB,AM);
+      L("α="+alphaA.toFixed(3),"#fbbf24",1.15,midA.x-0.2,midA.y+0.9,0);
+      L("α="+alphaB.toFixed(3),"#fbbf24",1.15,midB.x+0.2,midB.y+0.9,0);
+
+      // attended restriction tiles: width ∝ Frobenius norm of alpha*R, tilt ∝ off-diagonal
+      const wA=0.5+2.2*frob(RAatt), wB=0.5+2.2*frob(RBatt);
+      addTile(midA.clone().add(new T.Vector3(0,0,0.6)),GR,wA,1.0,RAatt[1][0]*0.8);
+      addTile(midB.clone().add(new T.Vector3(0,0,0.6)),RS,wB,1.0,RBatt[1][0]*0.8);
+
+      // legend bars: alpha (strength) vs |dom eig of attended R| (mechanism magnitude)
+      const bx=[-1.0,1.0,3.0], lab=["α·A","α·B","|λ|att"];
+      const vals=[alphaA,alphaB,Math.max(Math.abs(eigA),Math.abs(eigB))];
+      const cols=[GR,RS,VI];
+      vals.forEach((v,i)=>{
+        const h=0.2+v*3.4, x=bx[i];
+        const bar=new T.Mesh(new T.BoxGeometry(0.55,h,0.55),
+          new T.MeshStandardMaterial({color:cols[i],emissive:cols[i].clone().multiplyScalar(0.4),emissiveIntensity:0.5,roughness:0.4}));
+        bar.position.set(x,-4.2+h/2,2.4); gBars.add(bar);
+        L(v.toFixed(2),cols[i].getStyle(),1.1,x,-4.2+h+0.4,2.4);
+        l(lab[i],"#8a99ad",0.34,x,-4.5,2.4);
+      });
+
+      sceneSnap={mode,method:2,alphaA:+alphaA.toFixed(3),alphaB:+alphaB.toFixed(3),
+        attnEntropy:+Hattn.toFixed(3),domEigA:+eigA.toFixed(3),domEigB:+eigB.toFixed(3),
+        attendedFrobA:+frob(RAatt).toFixed(3),attendedFrobB:+frob(RBatt).toFixed(3),
+        energy:null};
+
+      api.setMetric("alphaA",alphaA.toFixed(3));
+      api.setMetric("alphaB",alphaB.toFixed(3));
+      api.setMetric("attnEntropy",Hattn.toFixed(2)+" nat");
+      api.setMetric("domEig",eigA.toFixed(2)+" / "+eigB.toFixed(2));
+
+      return {
+        badge:"Factorize · α(strength) × R(mechanism) · α_A="+alphaA.toFixed(3),
+        formula:"R<sup>att</sup><sub>u→e</sub> = α<sub>uv</sub> · R<sub>u→e</sub> &nbsp;·&nbsp; α<sub>A</sub>="+alphaA.toFixed(3)+", α<sub>B</sub>="+alphaB.toFixed(3),
+        insight:"SAT splits an edge into two independent knobs. Attention α (amber rings) says HOW STRONGLY TF1 regulates each target in this cell state — wider ring = more attention. The restriction map R (coloured tiles) says HOW the regulation transforms features: green = activating (λ>0), rose = repressing (λ<0). The attended map α·R combines both. TF1 attends "+(alphaA/alphaB).toFixed(1)+"× more to GeneA than GeneB.",
+        state:"α_A="+alphaA.toFixed(3)+", α_B="+alphaB.toFixed(3)+" (entropy "+Hattn.toFixed(2)+" nat). Attended dom eigenvalues: λ_A="+eigA.toFixed(2)+" (activation), λ_B="+eigB.toFixed(2)+" (repression). Frob‖α·R_A‖="+frob(RAatt).toFixed(2)+".",
+        metrics:{alphaA:alphaA.toFixed(3),alphaB:alphaB.toFixed(3),attnEntropy:Hattn.toFixed(2)+" nat",domEig:eigA.toFixed(2)+" / "+eigB.toFixed(2)},
+        focus:{center:[0,-0.6,0.5],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: compare — GAT vs NSD vs SAT on the same TF1→GeneA/GeneB edges
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="compare"){
+      // Per method, what each can express on the two edges:
+      //  GAT: scalar alpha only, shared W  → sign/direction BLIND
+      //  NSD: restriction map R only       → direction yes, no separate strength
+      //  SAT: alpha AND R                  → both
+      const mName=["GAT","NSD","SAT"][method];
+      const canDir =[false,true,true][method];
+      const canStr =[true,false,true][method];
+
+      const nTF=addNode(pTF,0.55,CY,0.9); api.pick(nTF,{node:"TF1",h:F.hTF1});
+      const nA =addNode(pA,0.46,GR,0.8);  api.pick(nA,{node:"GeneA"});
+      const nB =addNode(pB,0.40,RS,0.7);  api.pick(nB,{node:"GeneB"});
+      L("TF1","#4dd7ff",1.5,pTF.x,pTF.y+0.95,0);
+      L("GeneA (act)","#34d399",1.1,pA.x,pA.y-0.95,0);
+      L("GeneB (rep)","#fb7185",1.1,pB.x,pB.y-0.95,0);
+
+      const midA=pTF.clone().lerp(pA,0.5), midB=pTF.clone().lerp(pB,0.5);
+
+      // edge colour: GAT renders BOTH edges the same (cyan) — sign-blind.
+      const eColA=canDir?GR:CY, eColB=canDir?RS:CY;
+      const eWA=canStr?(0.3+0.6*alphaA):0.6;
+      const eWB=canStr?(0.3+0.6*alphaB):0.6;
+      addEdge(pTF,pA,eColA,eWA,1);
+      addEdge(pTF,pB,eColB,eWB,1);
+
+      // attention rings only when the method has separate strength (GAT, SAT)
+      if(canStr){
+        function ring(p,a){const r=0.25+1.0*a;const m=new T.Mesh(new T.RingGeometry(r*0.82,r,40),
+          new T.MeshBasicMaterial({color:AM,transparent:true,opacity:0.5,side:T.DoubleSide}));m.position.copy(p);gMaps.add(m);}
+        ring(midA,alphaA); ring(midB,alphaB);
+      }
+      // restriction tiles only when the method has direction (NSD, SAT)
+      if(canDir){
+        const Ra=method===2?RAatt:RA, Rb=method===2?RBatt:RB;
+        addTile(midA.clone().add(new T.Vector3(0,0,0.6)),GR,0.5+2.2*frob(Ra),0.9,Ra[1][0]*0.8);
+        addTile(midB.clone().add(new T.Vector3(0,0,0.6)),RS,0.5+2.2*frob(Rb),0.9,Rb[1][0]*0.8);
+      }
+
+      // capability matrix as three glowing chips on the right
+      const caps=[["sign / direction",canDir],["context strength",canStr],
+                  ["disentangled",method===2]];
+      caps.forEach((c,i)=>{
+        const y=1.5-i*1.4, on=c[1];
+        const chip=new T.Mesh(new T.BoxGeometry(0.9,0.9,0.2),
+          new T.MeshStandardMaterial({color:on?VI:SL,emissive:(on?VI:SL).clone().multiplyScalar(on?0.6:0.15),
+            emissiveIntensity:on?0.7:0.2,roughness:0.4}));
+        chip.position.set(5.0,y,0); gMaps.add(chip);
+        l(c[0],on?"#c4b5fd":"#54667c",0.36,6.4,y,0);
+        L(on?"✓":"✗",on?"#a78bfa":"#54667c",1.2,5.0,y,0.2);
+      });
+
+      // the misclassification GAT makes: it sees activation==repression
+      const gatConfuses=!canDir;
+      sceneSnap={mode,method,alphaA:+alphaA.toFixed(3),alphaB:+alphaB.toFixed(3),
+        canDirection:canDir,canStrength:canStr,disentangled:method===2,
+        signBlind:gatConfuses,attnEntropy:+Hattn.toFixed(3),
+        domEigA:+(canDir?eigA:0).toFixed(3),domEigB:+(canDir?eigB:0).toFixed(3),energy:null};
+
+      api.setMetric("alphaA",canStr?alphaA.toFixed(3):"shared W");
+      api.setMetric("alphaB",canStr?alphaB.toFixed(3):"shared W");
+      api.setMetric("attnEntropy",mName);
+      api.setMetric("domEig",canDir?(eigA.toFixed(2)+" / "+eigB.toFixed(2)):"— (blind)");
+
+      return {
+        badge:"Compare · "+mName+(gatConfuses?" · sign-BLIND":" · sign-aware"),
+        formula:mName==="GAT"?"h<sub>v</sub>'=σ(W h<sub>v</sub> + Σ α<sub>uv</sub> W h<sub>u</sub>) &nbsp;·&nbsp; shared W → no sign":
+                mName==="NSD"?"h<sub>v</sub>'=σ(W h<sub>v</sub> + Σ R<sub>u→e</sub><sup>⊤</sup>R<sub>v→e</sub> h<sub>u</sub>) &nbsp;·&nbsp; R encodes sign":
+                "h<sub>v</sub>'=σ(W h<sub>v</sub> + Σ α<sub>uv</sub><sup>2</sup> R<sub>u→e</sub><sup>⊤</sup>R<sub>v→e</sub> h<sub>u</sub>) &nbsp;·&nbsp; α + R",
+        insight:mName==="GAT"?"GAT scales every neighbour through the SAME W, so the activating TF1→GeneA edge and the repressing TF1→GeneB edge look identical (both cyan). Attention α controls magnitude but cannot encode whether an edge activates or represses — sign is invisible.":
+                mName==="NSD"?"NSD predicts a restriction map R per edge, so direction and sign are encoded (green vs rose tiles). But there is no separate strength knob: regulatory magnitude is tangled inside R and changes only as features change across layers.":
+                "SAT keeps BOTH: amber rings = attention α (cell-context strength), coloured tiles = R (invariant mechanism / sign). The two factors are disentangled — α moves with cell state while R stays fixed. Only SAT lights all three capability chips.",
+        state:mName+": direction "+(canDir?"YES":"NO")+", context-strength "+(canStr?"YES":"NO")+", disentangled "+(method===2?"YES":"NO")+". "+(gatConfuses?"GAT cannot tell activation from repression — both edges drawn cyan.":"Edges coloured by R sign: green=activate, rose=repress."),
+        metrics:{alphaA:canStr?alphaA.toFixed(3):"shared W",alphaB:canStr?alphaB.toFixed(3):"shared W",attnEntropy:mName,domEig:canDir?(eigA.toFixed(2)+" / "+eigB.toFixed(2)):"— (blind)"},
+        focus:{center:[1.2,-0.4,0.3],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: laplacian — assemble the attended sheaf Laplacian off-diagonal
+    //                   block and read its energy (Step 4 of the note)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="laplacian"){
+      // off-diagonal block for (TF1,GeneA) = -(R^att_{TF1->eA})^T R^att_{GeneA->eA}
+      // gene-side map = identity, so block = -(R^att)^T
+      const blkA=[[-RAatt[0][0],-RAatt[1][0]],[-RAatt[0][1],-RAatt[1][1]]];
+      const blkB=[[-RBatt[0][0],-RBatt[1][0]],[-RBatt[0][1],-RBatt[1][1]]];
+
+      // Dirichlet / sheaf energy contributed by each edge under the attended map:
+      //  E_e = || R^att_{u->e} h_u - R^att_{v->e} h_v ||^2 ; gene side identity.
+      function mv(M,v){return [M[0][0]*v[0]+M[0][1]*v[1],M[1][0]*v[0]+M[1][1]*v[1]];}
+      const ra=mv(RAatt,F.hTF1), rb=mv(RBatt,F.hTF1);
+      const dA=[ra[0]-F.hA[0],ra[1]-F.hA[1]], dB=[rb[0]-F.hB[0],rb[1]-F.hB[1]];
+      const eA=dA[0]*dA[0]+dA[1]*dA[1], eB=dB[0]*dB[0]+dB[1]*dB[1];
+      const energy=eA+eB;
+      // note: alpha^2 dampening — encode it for the snapshot
+      const dampA=alphaA*alphaA, dampB=alphaB*alphaB;
+
+      // nodes
+      const nTF=addNode(pTF,0.5,CY,0.9);
+      const nA =addNode(pA,0.42,GR,0.8);
+      const nB =addNode(pB,0.38,RS,0.7);
+      L("TF1","#4dd7ff",1.4,pTF.x,pTF.y+0.9,0);
+      L("GeneA","#34d399",1.1,pA.x,pA.y-0.9,0);
+      L("GeneB","#fb7185",1.1,pB.x,pB.y-0.9,0);
+      addEdge(pTF,pA,GR,0.3+0.6*alphaA,1);
+      addEdge(pTF,pB,RS,0.3+0.6*alphaB,1);
+
+      // render the 2x2 off-diagonal block for the (TF1,GeneA) edge as a tile grid
+      function blockGrid(blk,ox,oy,title,titleCol){
+        const tile=0.95, gap=0.12;
+        for(let r=0;r<2;r++)for(let c=0;c<2;c++){
+          const v=blk[r][c];
+          const mag=Math.min(1,Math.abs(v)/0.75);
+          const col=v>=0?GR.clone():RS.clone();
+          const cell=new T.Mesh(new T.BoxGeometry(tile,tile,0.18+mag*0.7),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.3+mag*0.5),
+              emissiveIntensity:0.55,roughness:0.4}));
+          cell.position.set(ox+c*(tile+gap),oy-r*(tile+gap),0);
+          gMaps.add(cell);
+          api.pick(cell,{cell:v.toFixed(3),block:title});
+          L(v.toFixed(2),"#e8eef6",0.95,ox+c*(tile+gap),oy-r*(tile+gap),0.55);
+        }
+        l(title,titleCol,0.4,ox+0.5,oy+1.1,0);
+      }
+      blockGrid(blkA,-4.3,-3.0,"−(α·R_A)ᵀ  block(TF1,GeneA)","#34d399");
+      blockGrid(blkB, 2.0,-3.0,"−(α·R_B)ᵀ  block(TF1,GeneB)","#fb7185");
+
+      // energy bars per edge
+      const ebx=[-1.0,1.0], evals=[eA,eB], ecol=[GR,RS];
+      const emax=Math.max(0.01,Math.max(eA,eB));
+      evals.forEach((v,i)=>{
+        const h=0.2+(v/emax)*3.2, x=ebx[i];
+        const bar=new T.Mesh(new T.BoxGeometry(0.5,h,0.5),
+          new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.4}));
+        bar.position.set(x,2.0+h/2,2.6); gBars.add(bar);
+        L(v.toFixed(2),"#c4b5fd",1.0,x,2.0+h+0.35,2.6);
+        l(ecol[i]===GR?"E(eA)":"E(eB)",ecol[i].getStyle(),0.34,x,1.8,2.6);
+      });
+
+      sceneSnap={mode,method:2,alphaA:+alphaA.toFixed(3),alphaB:+alphaB.toFixed(3),
+        energy:+energy.toFixed(3),energyA:+eA.toFixed(3),energyB:+eB.toFixed(3),
+        blockA00:+blkA[0][0].toFixed(3),blockB00:+blkB[0][0].toFixed(3),
+        alphaSqA:+dampA.toFixed(3),alphaSqB:+dampB.toFixed(3),attnEntropy:+Hattn.toFixed(3)};
+
+      api.setMetric("alphaA",alphaA.toFixed(3));
+      api.setMetric("alphaB",alphaB.toFixed(3));
+      api.setMetric("attnEntropy",energy.toFixed(2));
+      api.setMetric("domEig",blkA[0][0].toFixed(2)+" / "+blkB[0][0].toFixed(2));
+
+      return {
+        badge:"Laplacian · sheaf energy E="+energy.toFixed(2)+" · α² damp",
+        formula:"Γ<sub>e</sub><sup>att</sup>[off] = −(α<sub>uv</sub>R<sub>u→e</sub>)<sup>⊤</sup>(α<sub>uv</sub>R<sub>v→e</sub>) ⇒ α<sup>2</sup> · (−R<sub>u→e</sub><sup>⊤</sup>R<sub>v→e</sub>)",
+        insight:"The attended Laplacian's off-diagonal block for an edge is −(α·R_u)ᵀ(α·R_v). Because BOTH sides carry α, the block scales as α² — low-attention edges are quadratically dampened (α²_B="+dampB.toFixed(3)+" here), effectively pruned from the regulatory graph. The (TF1,GeneA) block is large and negative-dominant: diffusion strongly pulls GeneA toward TF1 through the activation map. The (TF1,GeneB) block is tiny — repression barely couples.",
+        state:"Sheaf energy E="+energy.toFixed(2)+" (E_A="+eA.toFixed(2)+", E_B="+eB.toFixed(2)+"). α² damping: edge A "+dampA.toFixed(3)+", edge B "+dampB.toFixed(3)+". Block(TF1,GeneA)[0,0]="+blkA[0][0].toFixed(2)+", Block(TF1,GeneB)[0,0]="+blkB[0][0].toFixed(2)+".",
+        metrics:{alphaA:alphaA.toFixed(3),alphaB:alphaB.toFixed(3),attnEntropy:energy.toFixed(2),domEig:blkA[0][0].toFixed(2)+" / "+blkB[0][0].toFixed(2)},
+        focus:{center:[-1,-0.6,0.6],radius:12}
+      };
+    }
+
+    return {badge:"G05",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g05",
+    kind:"sheaf-attention-networks",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G05 · Sheaf Attention Networks",
+    subtitle:"Attention weights the restriction maps: R^att = α·R. Disentangle regulatory STRENGTH (α, cell-context) from MECHANISM (R, invariant) on a 3-node TF→gene GRN.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, tile, or Laplacian cell.",
+    modes:[
+      {value:"factorize", label:"Factorize (α strength × R mechanism)"},
+      {value:"compare",   label:"Compare (GAT vs NSD vs SAT)"},
+      {value:"laplacian", label:"Attended Laplacian (α² damping + energy)"}
+    ],
+    params:[
+      {key:"tfActivity", label:"TF1 activity (cell context)",min:0.1,max:2,step:0.05,value:1,
+       fmt:v=>v.toFixed(2)+"×"},
+      {key:"attnTemp",   label:"softmax temperature τ",min:0.4,max:3,step:0.05,value:1,
+       fmt:v=>"τ="+v.toFixed(2)},
+      {key:"rNorm",      label:"restriction ‖R‖ scale",min:0.5,max:2,step:0.05,value:1,
+       fmt:v=>v.toFixed(2)+"×",modes:["factorize","laplacian"]},
+      {key:"method",     label:"method (0=GAT 1=NSD 2=SAT)",min:0,max:2,step:1,value:2,
+       fmt:v=>["GAT","NSD","SAT"][Math.round(v)],modes:["compare"]}
+    ],
+    metrics:[
+      {key:"alphaA",      label:"α  TF1→GeneA (act)",accent:"green"},
+      {key:"alphaB",      label:"α  TF1→GeneB (rep)",accent:"rose"},
+      {key:"attnEntropy", label:"attn entropy / energy",accent:"amber"},
+      {key:"domEig",      label:"dom λ  A / B",accent:"violet"}
+    ],
+    layers:[
+      {group:"nodes", label:"Nodes (TF / genes)"},
+      {group:"edges", label:"Edges"},
+      {group:"maps",  label:"Maps / blocks / rings"},
+      {group:"bars",  label:"Bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Hepatocyte (TF active)",
+      on:api=>{api.setParam("tfActivity",2);}
+    },
+    secondary:{
+      label:"T cell (TF off)",
+      on:api=>{api.setParam("tfActivity",0.1);}
+    },
+    defaultCam:{theta:-0.35,phi:0.5,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF1 · <span style="color:#34d399">green</span>=activation (λ&gt;0) · <span style="color:#fb7185">rose</span>=repression (λ&lt;0) · <span style="color:#fbbf24">amber</span>=attention α · <span style="color:#a78bfa">violet</span>=attended map / energy.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="compare") api.frame([1.2,-0.4,0.3],12);
+      else if(s.mode==="laplacian") api.frame([-1,-0.6,0.6],12);
+      else api.frame([0,-0.6,0.5],11);
+    },
+    onSelect(api,d){
+      if(d.node)  api.setSelected(d.node+(d.h?" · h=["+d.h[0]+","+d.h[1]+"]":"")+(d.role?" · "+d.role:""));
+      if(d.tile)  api.setSelected("Attended restriction tile · width ∝ ‖α·R‖, tilt ∝ off-diagonal");
+      if(d.cell)  api.setSelected("Laplacian block "+d.block+" entry = "+d.cell);
+    },
+    build,
+    snapshot(s){
+      const att=attention(s.tfActivity,s.attnTemp);
+      const rNorm=s.rNorm;
+      const RAatt=[[F.RA[0][0]*rNorm*att.alphaA,F.RA[0][1]*rNorm*att.alphaA],
+                   [F.RA[1][0]*rNorm*att.alphaA,F.RA[1][1]*rNorm*att.alphaA]];
+      const RBatt=[[F.RB[0][0]*rNorm*att.alphaB,F.RB[0][1]*rNorm*att.alphaB],
+                   [F.RB[1][0]*rNorm*att.alphaB,F.RB[1][1]*rNorm*att.alphaB]];
+      const fA=Math.sqrt(RAatt[0][0]*RAatt[0][0]+RAatt[0][1]*RAatt[0][1]+RAatt[1][0]*RAatt[1][0]+RAatt[1][1]*RAatt[1][1]);
+      const fB=Math.sqrt(RBatt[0][0]*RBatt[0][0]+RBatt[0][1]*RBatt[0][1]+RBatt[1][0]*RBatt[1][0]+RBatt[1][1]*RBatt[1][1]);
+      const H=entropy(att.alphaA,att.alphaB);
+      return {
+        mode:s.mode,
+        method:Math.round(s.method),
+        alphaA:+att.alphaA.toFixed(3),
+        alphaB:+att.alphaB.toFixed(3),
+        attentionRatio:+(att.alphaA/Math.max(1e-6,att.alphaB)).toFixed(3),
+        attnEntropy:+H.toFixed(3),
+        attnCollapsed:H<1.0,
+        attendedFrobA:+fA.toFixed(3),
+        attendedFrobB:+fB.toFixed(3),
+        alphaSqA:+(att.alphaA*att.alphaA).toFixed(3),
+        alphaSqB:+(att.alphaB*att.alphaB).toFixed(3)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

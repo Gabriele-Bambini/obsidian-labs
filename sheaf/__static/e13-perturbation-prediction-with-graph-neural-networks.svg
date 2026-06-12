@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure E13 — Predict the unseen knockout: transfer through the gene functional graph</title>
+<desc id="d">Four-panel captioned figure: Predict the unseen knockout: transfer through the gene functional graph</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE E13 · BLOCK E · SINGLE-CELL &amp; MULTI-OMICS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="18" font-weight="700">Predict the unseen knockout: transfer through the gene functional graph</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">GO co-function graph (3 TFs)</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TFs</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">3 (GATA1,KLF1,NFE2)</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">targets</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">GO edges</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">2</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">GATA1–NFE2</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">no direct edge</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">GEARS transfer to unseen NFE2</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">Δ(NFE2) = α·Δ(GATA1) + (1−α)·Δ(KLF1)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">HBB = 0.3·(-3.2) + 0.7·(-2.8)</text>
+<text x="502" y="187.5" fill="#a78bfa" font-size="11.5" font-weight="700">predicted HBB</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">-2.96</text>
+<text x="502" y="207.5" fill="#fbbf24" font-size="11.5" font-weight="700">true HBB</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">-2.50</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Beats the mean baseline</text>
+<rect x="56" y="332.47" width="12" height="23.53" rx="2" fill="#fb7185"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">mean</text>
+<rect x="113" y="301.41" width="12" height="54.59" rx="2" fill="#a78bfa"/>
+<text x="119" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">zero-shot</text>
+<rect x="170" y="292" width="12" height="64" rx="2" fill="#4dd7ff"/>
+<text x="176" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">GEARS</text>
+<line x1="56" y1="332.47" x2="227" y2="332.47" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393.5" fill="#fbbf24" font-size="11.5" font-weight="700">GEARS r</text>
+<text x="196" y="393.5" fill="#9fb4cc" font-size="11.5">0.68</text>
+<text x="56" y="413.5" fill="#fbbf24" font-size="11.5" font-weight="700">mean r</text>
+<text x="196" y="413.5" fill="#9fb4cc" font-size="11.5">0.25</text>
+<text x="56" y="433.5" fill="#fbbf24" font-size="11.5" font-weight="700">gain</text>
+<text x="196" y="433.5" fill="#9fb4cc" font-size="11.5">+0.43</text>
+<text x="56" y="461" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Double KO hits a floor</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">additive HBB</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">-6.0</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">true HBB</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">-5.8</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">GEARS embed</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">h(g1)+h(g2)</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">CellOracle</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">GRN trace</text>
+<text x="502" y="389" fill="#9fb4cc" font-size="11">GATA1+KLF1 sums to −6.0, but expression floors at</text>
+<text x="502" y="409" fill="#9fb4cc" font-size="11">−5.8: epistasis the additive baseline misses.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure E13. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">3-TF </text>
+<text x="203.15" y="538" fill="#c7d2dd" font-size="13">/ </text>
+<text x="219.27" y="538" fill="#c7d2dd" font-size="13">5-target </text>
+<text x="291.81" y="538" fill="#c7d2dd" font-size="13">erythroid </text>
+<text x="372.41" y="538" fill="#c7d2dd" font-size="13">perturbation-prediction </text>
+<text x="565.85" y="538" fill="#c7d2dd" font-size="13">example. </text>
+<text x="638.39" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="671.92" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="705.37" y="538" fill="#c7d2dd" font-size="13">GO </text>
+<text x="731.97" y="538" fill="#c7d2dd" font-size="13">graph </text>
+<text x="780.33" y="538" fill="#c7d2dd" font-size="13">links</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">GATA1–KLF1 </text>
+<text x="143.57" y="559" fill="#c7d2dd" font-size="13">and </text>
+<text x="175.81" y="559" fill="#c7d2dd" font-size="13">KLF1–NFE2 </text>
+<text x="270.11" y="559" fill="#c7d2dd" font-size="13">but </text>
+<text x="302.35" y="559" fill="#c7d2dd" font-size="13">has </text>
+<text x="334.59" y="559" fill="#c7d2dd" font-size="13">no </text>
+<text x="358.77" y="559" fill="#c7d2dd" font-size="13">direct </text>
+<text x="415.19" y="559" fill="#c7d2dd" font-size="13">GATA1–NFE2 </text>
+<text x="518.76" y="559" fill="#c7d2dd" font-size="13">edge. </text>
+<text x="567.12" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="600.65" y="559" fill="#c7d2dd" font-size="13">GEARS </text>
+<text x="655.06" y="559" fill="#c7d2dd" font-size="13">predicts </text>
+<text x="727.6" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="759.84" y="559" fill="#c7d2dd" font-size="13">unseen </text>
+<text x="816.26" y="559" fill="#c7d2dd" font-size="13">NFE2 </text>
+<text x="860.19" y="559" fill="#c7d2dd" font-size="13">KO</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">as </text>
+<text x="64.18" y="580" fill="#c7d2dd" font-size="13">Δ=α·Δ(GATA1)+(1−α)·Δ(KLF1); </text>
+<text x="311.22" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="335.4" y="580" fill="#c7d2dd" font-size="13">α=0.3, </text>
+<text x="391.82" y="580" fill="#c7d2dd" font-size="13">HBB=-2.96 </text>
+<text x="476.05" y="580" fill="#c7d2dd" font-size="13">vs </text>
+<text x="500.23" y="580" fill="#c7d2dd" font-size="13">true </text>
+<text x="540.53" y="580" fill="#c7d2dd" font-size="13">-2.5. </text>
+<text x="588.89" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="622.42" y="580" fill="#c7d2dd" font-size="13">GEARS </text>
+<text x="676.82" y="580" fill="#c7d2dd" font-size="13">reaches </text>
+<text x="741.3" y="580" fill="#c7d2dd" font-size="13">Pearson </text>
+<text x="806.99" y="580" fill="#c7d2dd" font-size="13">r=0.68 </text>
+<text x="863.41" y="580" fill="#c7d2dd" font-size="13">vs</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="72.24" y="601" fill="#c7d2dd" font-size="13">mean </text>
+<text x="112.54" y="601" fill="#c7d2dd" font-size="13">baseline </text>
+<text x="185.08" y="601" fill="#c7d2dd" font-size="13">0.25 </text>
+<text x="225.38" y="601" fill="#c7d2dd" font-size="13">(gain </text>
+<text x="273.74" y="601" fill="#c7d2dd" font-size="13">+0.43). </text>
+<text x="338.22" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="371.75" y="601" fill="#c7d2dd" font-size="13">The </text>
+<text x="405.2" y="601" fill="#c7d2dd" font-size="13">GATA1+KLF1 </text>
+<text x="502.32" y="601" fill="#c7d2dd" font-size="13">double </text>
+<text x="558.74" y="601" fill="#c7d2dd" font-size="13">KO </text>
+<text x="585.34" y="601" fill="#c7d2dd" font-size="13">sums </text>
+<text x="625.64" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="649.82" y="601" fill="#c7d2dd" font-size="13">-6.0 </text>
+<text x="690.12" y="601" fill="#c7d2dd" font-size="13">but </text>
+<text x="722.36" y="601" fill="#c7d2dd" font-size="13">floors </text>
+<text x="778.78" y="601" fill="#c7d2dd" font-size="13">at </text>
+<text x="802.96" y="601" fill="#c7d2dd" font-size="13">-5.8 </text>
+<text x="843.26" y="601" fill="#c7d2dd" font-size="13">—</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">epistasis </text>
+<text x="120.6" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="152.84" y="622" fill="#c7d2dd" font-size="13">additive </text>
+<text x="225.38" y="622" fill="#c7d2dd" font-size="13">baseline </text>
+<text x="297.92" y="622" fill="#c7d2dd" font-size="13">misses.</text>
+</svg>

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 900 230" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-label="Figure F07 inline">
+<rect x="0" y="0" width="900" height="230" fill="#070b14"/>
+<text x="40" y="30" fill="#4dd7ff" font-size="11" font-weight="700" letter-spacing="2.2">F07 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="56" fill="#8a99ad" font-size="11">edge score</text>
+<rect x="40" y="80" width="14" height="70" rx="2" fill="#34d399"/>
+<text x="57.86" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">G→HBB</text>
+<rect x="94" y="85.16" width="14" height="64.84" rx="2" fill="#34d399"/>
+<text x="101" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">PU1→LYZ</text>
+<rect x="148" y="141.16" width="14" height="8.84" rx="2" fill="#fb7185"/>
+<text x="155" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">G→LYZ</text>
+<line x1="40" y1="87.37" x2="202" y2="87.37" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="270" y="124" fill="#8a99ad" font-size="26" text-anchor="middle">→</text>
+<rect x="310" y="78" width="70" height="40" rx="6" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<text x="345" y="93" fill="#8a99ad" font-size="9" text-anchor="middle">AUROC</text>
+<text x="345" y="110" fill="#9fe0ff" font-size="13" font-weight="700" text-anchor="middle">1.00</text>
+<rect x="388" y="78" width="70" height="40" rx="6" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<text x="423" y="93" fill="#8a99ad" font-size="9" text-anchor="middle">τ</text>
+<text x="423" y="110" fill="#c4b5fd" font-size="13" font-weight="700" text-anchor="middle">0.85</text>
+<line x1="470" y1="60" x2="470" y2="178" stroke="rgba(150,170,200,.2)" stroke-width="1"/>
+<text x="500" y="86" fill="#34d399" font-size="11.5" font-weight="700">pos</text>
+<text x="620" y="86" fill="#9fb4cc" font-size="11.5">+5</text>
+<text x="500" y="110" fill="#fb7185" font-size="11.5" font-weight="700">neg</text>
+<text x="620" y="110" fill="#9fb4cc" font-size="11.5">−3</text>
+<text x="500" y="134" fill="#4dd7ff" font-size="11.5" font-weight="700">genes</text>
+<text x="620" y="134" fill="#9fb4cc" font-size="11.5">6</text>
+<text x="500" y="158" fill="#fbbf24" font-size="11.5" font-weight="700">d HBB·ALAS2</text>
+<text x="620" y="158" fill="#9fb4cc" font-size="11.5">0.12</text>
+<text x="450" y="210" fill="#c7d2dd" font-size="12" text-anchor="middle">GCN ties z_HBB≈z_ALAS2 (dist 0.12); the MLP scores 5 positives ≥ 0.88, 3 negatives ≤ 0.12 → precision =…</text>
+</svg>

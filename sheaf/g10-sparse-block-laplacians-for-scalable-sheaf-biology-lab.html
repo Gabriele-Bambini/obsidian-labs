@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G10 · Sparse block Laplacians for scalable sheaf biology</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no Math.random / Date) ───────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS: the note's Section-5 worked example (4-node chain, d=2) ────────
+  // Nodes A,B,C,D ; edges e1=(A,B), e2=(B,C), e3=(C,D)
+  const NODE=["A","B","C","D"];
+  const X=[[1,0],[0,1],[1,1],[0,0]];                 // node sections x_v ∈ R^2
+  // restriction maps (2×2). R_src on tail, R_dst on head, per edge.
+  const I2=[[1,0],[0,1]];                              // identity
+  const SWAP=[[0,1],[1,0]];                            // coordinate swap (e1 head)
+  const EDGES=[
+    {u:0,v:1,Rsrc:I2,Rdst:SWAP},   // e1 = (A,B)  : swap aligns A,B  → consistent
+    {u:1,v:2,Rsrc:I2,Rdst:I2  },   // e2 = (B,C)
+    {u:2,v:3,Rsrc:I2,Rdst:I2  }    // e3 = (C,D)
+  ];
+  function mv(M,x){return [M[0][0]*x[0]+M[0][1]*x[1], M[1][0]*x[0]+M[1][1]*x[1]];}
+  function mvT(M,x){return [M[0][0]*x[0]+M[1][0]*x[1], M[0][1]*x[0]+M[1][1]*x[1]];} // M^T x
+  // Step 1 — coboundary (δx)_e = R_src x_u − R_dst x_v
+  function coboundary(){
+    return EDGES.map(e=>{
+      const a=mv(e.Rsrc,X[e.u]), b=mv(e.Rdst,X[e.v]);
+      return [a[0]-b[0], a[1]-b[1]];
+    });
+  }
+  // Step 2 — adjoint:  LFx[u]+= R_src^T δ ;  LFx[v]+= −R_dst^T δ
+  function applyLF(dx){
+    const LFx=[[0,0],[0,0],[0,0],[0,0]];
+    EDGES.forEach((e,k)=>{
+      const cs=mvT(e.Rsrc,dx[k]);          // contrib to source node (+)
+      const cd=mvT(e.Rdst,dx[k]);          // contrib to dest node   (−)
+      LFx[e.u][0]+=cs[0]; LFx[e.u][1]+=cs[1];
+      LFx[e.v][0]-=cd[0]; LFx[e.v][1]-=cd[1];
+    });
+    return LFx;
+  }
+  const DX0=coboundary();                              // [[0,0],[-1,0],[1,1]]
+  const LFX0=applyLF(DX0);                             // [[0,0],[-1,0],[2,1],[-1,-1]]
+  const PE0=DX0.map(d=>d[0]*d[0]+d[1]*d[1]);           // [0,1,2]
+  const ENERGY0=PE0.reduce((a,b)=>a+b,0);              // 3
+
+  // ── scaling-cost model (Section 1 & 4 numbers) ────────────────────────────
+  // presets indexed by "scale" slider 0..3 ; (|V|,|E|) from the note's table
+  const SCALES=[
+    {name:"model GRN",  V:5000,   E:50000,    d:2},   // 100M dense entries
+    {name:"human GRN",  V:20000,  E:500000,   d:4},   // 6.4B
+    {name:"cell atlas", V:50000,  E:2000000,  d:4},   // 40B
+    {name:"interactome",V:100000, E:1000000,  d:8}    // 640B
+  ];
+  // dense flops O((|V| d)^2) ; sparse flops O(|E| d^2) ; speedup |V|^2/|E|
+  function denseFlops(s){const n=s.V*s.d; return n*n;}
+  function sparseFlops(s){return s.E*s.d*s.d;}
+  function speedup(s){return (s.V*s.V)/s.E;}          // = inverse edge density
+  // dense float32 bytes for L_F ; sparse storage = R_src+R_dst tensors
+  function denseBytes(s){const n=s.V*s.d; return n*n*4;}
+  function sparseBytes(s,r){const de=s.d; const rk=Math.max(1,Math.min(s.d,Math.round(r)));
+    // full-rank: 2|E| d_e d ; low-rank r: 2|E| (d_e+d) r
+    return (rk>=s.d) ? 2*s.E*de*s.d*4 : 2*s.E*(de+s.d)*rk*4;}
+
+  let sceneSnap={};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const gNet=api.group("net"), gFlow=api.group("flow"),
+          gCost=api.group("cost"), gLbl=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff"), GR=new T.Color("#34d399"),
+          AM=new T.Color("#fbbf24"), VI=new T.Color("#a78bfa"),
+          RO=new T.Color("#fb7185"), SL=new T.Color("#54667c");
+    const hexOf=c=>"#"+c.getHexString();
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+
+    // chain layout positions for A,B,C,D
+    const NX=[-4.2,-1.4,1.4,4.2];
+    const npos=i=>[NX[i],0,0];
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 1 · dense — the storage wall (dense L_F as a giant d|V|×d|V| block)
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="dense"){
+      const sc=SCALES[Math.round(s.scale)];
+      // draw a coarse block-matrix grid: 4×4 node blocks, each d×d, ALL filled
+      const N=4, d=2, cell=0.62, blk=d*cell, gap=0.22, span=N*blk+(N-1)*gap;
+      const x0=-span/2, y0=span/2;
+      for(let bi=0;bi<N;bi++)for(let bj=0;bj<N;bj++){
+        const isDiag=bi===bj;
+        // every block is "stored" in the dense view
+        for(let r=0;r<d;r++)for(let c=0;c<d;c++){
+          const px=x0+bj*(blk+gap)+c*cell+cell/2;
+          const py=y0-bi*(blk+gap)-r*cell-cell/2;
+          const col=isDiag?CY.clone():VI.clone();
+          const m=new T.Mesh(new T.BoxGeometry(cell*0.86,cell*0.86,0.16),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.4),
+              emissiveIntensity:0.45,roughness:0.5,transparent:true,opacity:isDiag?0.92:0.6}));
+          m.position.set(px,py,0);
+          gNet.add(m);
+        }
+        // block outline
+        const bx=x0+bj*(blk+gap)+blk/2, by=y0-bi*(blk+gap)-blk/2;
+        if(bi<=N-1) l(isDiag?"L["+NODE[bi]+","+NODE[bi]+"]":"L["+NODE[bi]+","+NODE[bj]+"]",
+          isDiag?"#9fd0ff":"#b9a7f0",0.30,bx,by,0.2);
+      }
+      L("dense L_F  ("+(d)+"·|V|)×("+(d)+"·|V|)","#cfe0f0",1.25,0,span/2+0.9,0);
+      L(sc.name+":  "+sc.V.toLocaleString()+" genes · d="+sc.d,"#fbbf24",1.05,0,-span/2-0.9,0);
+
+      const db=denseBytes(sc), gbDense=db/1e9, dflop=denseFlops(sc);
+      L((gbDense>=1?gbDense.toFixed(1)+" GB":(db/1e6).toFixed(0)+" MB")+" dense","#fb7185",1.15,0,-span/2-1.7,0);
+
+      sceneSnap={mode,scale:Math.round(s.scale),lowRank:0,
+        denseGB:+gbDense.toFixed(3),sparseMB:null,speedup:null,energy:null};
+
+      return {
+        badge:"Dense wall · "+sc.name+" · L_F is "+(sc.V*sc.d).toLocaleString()+"²",
+        formula:"L_F ∈ ℝ^{(d·|V|)×(d·|V|)},  dense store = (d·|V|)²·4 bytes",
+        insight:"Stored densely, the sheaf Laplacian fills every d×d block — including the "+
+          "off-diagonal ones (violet) that biology never populates. For "+sc.name+" ("+
+          sc.V.toLocaleString()+" genes, d="+sc.d+") that is a "+(sc.V*sc.d).toLocaleString()+
+          "² matrix = "+(gbDense>=1?gbDense.toFixed(1)+" GB":(db/1e6).toFixed(0)+" MB")+
+          " — more than any single GPU. This is a wall, not an inconvenience.",
+        state:"Dense L_F: "+(sc.V*sc.d).toLocaleString()+"×"+(sc.V*sc.d).toLocaleString()+
+          " → "+(gbDense>=1?gbDense.toFixed(1)+" GB":(db/1e6).toFixed(0)+" MB")+
+          " float32 · "+dflop.toExponential(1)+" flops / layer. Off-diagonal blocks are mostly zero in real GRNs.",
+        metrics:{denseStore:(gbDense>=1?gbDense.toFixed(1)+" GB":(db/1e6).toFixed(0)+" MB"),
+                 sparseStore:"—", speedup:"—", energy:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 2 · matrix-free — the two-step δ / δᵀ algorithm on the 4-node chain
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="matrixfree"){
+      const step=Math.round(s.step);                 // 0=δx (coboundary) 1=δᵀ (adjoint LFx)
+      const dx=DX0, LFx=LFX0;
+
+      // node spheres along the chain, colored by per-node |LFx|
+      const sel=Math.round(s.node);                  // 0..3 highlighted node
+      for(let i=0;i<4;i++){
+        const p=npos(i);
+        const mag=Math.hypot(LFx[i][0],LFx[i][1]);
+        const base=mag<1e-6?SL.clone():GR.clone().lerp(RO,Math.min(1,mag/2.4));
+        const isSel=i===sel;
+        const sph=new T.Mesh(new T.SphereGeometry(isSel?0.46:0.36,28,20),
+          new T.MeshStandardMaterial({color:base,emissive:base.clone().multiplyScalar(isSel?0.9:0.5),
+            emissiveIntensity:isSel?0.8:0.5,roughness:0.35}));
+        sph.position.set(p[0],p[1],p[2]); gNet.add(sph);
+        api.pick(sph,{node:{id:NODE[i],x:X[i],lfx:LFx[i],mag:+mag.toFixed(3)}});
+        L(NODE[i],"#e8eef6",1.05,p[0],0.85,0);
+        l("x="+JSON.stringify(X[i]),"#7f93a8",0.34,p[0],-0.78,0);
+        if(step===1) l("LFx="+JSON.stringify(LFx[i]),mag<1e-6?"#54667c":"#fb9aa8",0.36,p[0],-1.2,0);
+      }
+
+      // edges with coboundary tubes; mismatch shown as an arrow above each edge
+      EDGES.forEach((e,k)=>{
+        const pa=npos(e.u), pb=npos(e.v);
+        api.edge(pa,pb,{color:"#2a3a4e",width:0.05,group:"net"});
+        const energy=PE0[k];
+        const mid=[(pa[0]+pb[0])/2,(pa[1]+pb[1])/2,0];
+        L("e"+(k+1),"#9fb4c8",0.85,mid[0],0.34,0);
+        if(step===0){
+          // coboundary mismatch vector as a vertical bar at the edge midpoint
+          const h=0.15+energy*0.9;
+          const col=energy<1e-6?GR.clone():RO.clone();
+          const bar=new T.Mesh(new T.BoxGeometry(0.5,h,0.5),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+          bar.position.set(mid[0],1.4+h/2,0); gFlow.add(bar);
+          api.pick(bar,{edge:{id:"e"+(k+1),dx:dx[k],energy:+energy.toFixed(3)}});
+          L("δx="+JSON.stringify(dx[k]),energy<1e-6?"#6ee7b7":"#fb9aa8",0.42,mid[0],1.4+h+0.35,0);
+          L("‖δx‖²="+energy,energy<1e-6?"#34d399":"#fb7185",0.5,mid[0],1.4+h+0.78,0);
+        } else {
+          // adjoint: arrows from edge back to its two endpoints (scatter-add)
+          api.arrow(mid,[pa[0],pa[1]+0.05,0],{color:"#4dd7ff",width:0.04,head:0.2,group:"flow"});
+          api.arrow(mid,[pb[0],pb[1]+0.05,0],{color:"#fbbf24",width:0.04,head:0.2,group:"flow"});
+        }
+      });
+
+      if(step===0){
+        L("Step 1 · coboundary  (δx)_e = R_src x_u − R_dst x_v","#cfe0f0",1.2,0,2.9,0);
+      }else{
+        L("Step 2 · adjoint  (L_F x)_v = Σ ±R^T (δx)_e   via scatter-add","#cfe0f0",1.15,0,2.9,0);
+      }
+      // energy readout plane
+      L("E_F(x) = xᵀL_F x = ‖δx‖² = "+ENERGY0,"#a78bfa",1.2,0,-2.2,0);
+
+      sceneSnap={mode,step,node:sel,scale:0,lowRank:0,
+        energy:ENERGY0, e1:PE0[0], e2:PE0[1], e3:PE0[2],
+        lfxSel:+Math.hypot(LFx[sel][0],LFx[sel][1]).toFixed(3)};
+
+      return {
+        badge:"Matrix-free · "+(step===0?"Step 1 coboundary δx":"Step 2 adjoint δᵀ")+" · E_F="+ENERGY0,
+        formula:step===0
+          ? "(δx)_e = R_{u→e} x_u − R_{v→e} x_v"
+          : "(L_F x)_v = Σ_{src} R^T(δx) − Σ_{dst} R^T(δx)",
+        insight:step===0
+          ? "Step 1 computes one mismatch vector per edge — never a matrix. e1=[A,B] is "+
+            "consistent (the swap map aligns x_A and x_B → δx=[0,0]); e2 and e3 disagree, "+
+            "carrying energy 1 and 2. Total E_F = ‖δx‖² = "+ENERGY0+"."
+          : "Step 2 scatters each edge mismatch back onto its endpoints with R^T: source gets +, "+
+            "dest gets −. The result L_F x = [[0,0],[-1,0],[2,1],[-1,-1]] is produced without ever "+
+            "materializing L_F. Both steps cost O(|E|·d²).",
+        state:step===0
+          ? "δx_e1=[0,0] (consistent) · δx_e2=[-1,0] · δx_e3=[1,1]. Per-edge ‖δx‖² = "+PE0.join(", ")+
+            " → E_F="+ENERGY0+"."
+          : "L_F x_A=[0,0], x_B=[-1,0], x_C=[2,1], x_D=[-1,-1]. xᵀ(L_F x)="+ENERGY0+" = ‖δx‖². No L_F matrix built.",
+        metrics:{denseStore:"matrix-free", sparseStore:"2 sparse mat-vec", speedup:"O(|E|·d²)", energy:""+ENERGY0},
+        focus:{center:[0,0.4,0],radius:9}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 3 · scaling — dense vs sparse cost across network sizes
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="scaling"){
+      const lowRank=Math.round(s.lowRank);           // 1..d effective rank of R
+      const xPos=[-4.6,-1.55,1.55,4.6];
+      const yMax=4.4;
+      // log-scale bar heights for dense vs sparse flops
+      const dvals=SCALES.map(denseFlops), svals=SCALES.map(s2=>sparseFlops(s2));
+      const allMax=Math.log10(Math.max.apply(null,dvals));
+      const allMin=Math.log10(Math.min.apply(null,svals));
+      const norm=v=>{const t=(Math.log10(v)-allMin)/(allMax-allMin); return 0.2+Math.max(0,t)*yMax;};
+
+      SCALES.forEach((sc,i)=>{
+        const x=xPos[i];
+        const dh=norm(dvals[i]), sh=norm(svals[i]);
+        // dense bar (rose, tall)
+        const db=new T.Mesh(new T.BoxGeometry(0.62,dh,0.62),
+          new T.MeshStandardMaterial({color:RO,emissive:RO.clone().multiplyScalar(0.4),emissiveIntensity:0.4,roughness:0.45,transparent:true,opacity:0.55}));
+        db.position.set(x-0.42,dh/2,0); gCost.add(db);
+        api.pick(db,{cost:{net:sc.name,kind:"dense",flops:dvals[i]}});
+        // sparse bar (cyan, short)
+        const sb=new T.Mesh(new T.BoxGeometry(0.62,sh,0.62),
+          new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        sb.position.set(x+0.42,sh/2,0); gCost.add(sb);
+        api.pick(sb,{cost:{net:sc.name,kind:"sparse",flops:svals[i]}});
+
+        const sp=speedup(sc);
+        l(sc.name,"#9fb4c8",0.34,x,-0.5,0);
+        l(sc.V.toLocaleString()+"V","#7f93a8",0.30,x,-0.9,0);
+        L(sp>=1000?(sp/1000).toFixed(1)+"k×":Math.round(sp)+"×",
+          "#fbbf24",0.95,x,Math.max(dh,sh)+0.5,0);
+      });
+      L("dense  vs  sparse  flops / diffusion step  (log)","#cfe0f0",1.2,0,yMax+1.4,0);
+      l("rose = dense O((|V|·d)²)","#fb7185",0.40,-3.0,yMax+0.7,0);
+      l("cyan = sparse O(|E|·d²)","#4dd7ff",0.40,2.6,yMax+0.7,0);
+
+      // baseline
+      api.edge([-5.6,0,0],[5.6,0,0],{color:"#1e3046",width:0.03,group:"cost"});
+
+      // low-rank annotation: sparse storage at human-GRN under rank r
+      const human=SCALES[1];
+      const sBytesFull=sparseBytes(human,human.d), sBytesLR=sparseBytes(human,lowRank);
+      const focusSpeed=speedup(human);
+      L("low-rank R: rank "+lowRank+"  → "+(sBytesLR/1e6).toFixed(1)+" MB","#a78bfa",1.0,0,-1.5,0);
+
+      sceneSnap={mode,scale:1,lowRank,
+        denseGB:+(denseBytes(human)/1e9).toFixed(3),
+        sparseMB:+(sBytesLR/1e6).toFixed(3),
+        speedup:Math.round(focusSpeed), energy:null};
+
+      return {
+        badge:"Scaling · sparse beats dense by "+Math.round(focusSpeed)+"× (human GRN)",
+        formula:"speedup = O((|V|·d)²) / O(|E|·d²) = |V|² / |E|  (inverse edge density)",
+        insight:"Sparse cost is O(|E|·d²); dense is O((|V|·d)²). The ratio is the inverse edge "+
+          "density |V|²/|E| — about "+Math.round(focusSpeed)+"× for the human GRN (20k genes, 500k edges). "+
+          "Low-rank restriction maps R=UVᵀ (rank "+lowRank+") shrink storage further to "+
+          (sBytesLR/1e6).toFixed(1)+" MB; rank 1 reduces R to a scalar edge weight.",
+        state:"Human GRN: dense "+(denseBytes(human)/1e9).toFixed(1)+" GB / "+denseFlops(human).toExponential(1)+
+          " flops vs sparse "+(sBytesFull/1e6).toFixed(1)+" MB / "+sparseFlops(human).toExponential(1)+
+          " flops → "+Math.round(focusSpeed)+"× speedup. Low-rank (r="+lowRank+"): "+(sBytesLR/1e6).toFixed(1)+" MB.",
+        metrics:{denseStore:(denseBytes(human)/1e9).toFixed(1)+" GB",
+                 sparseStore:(sBytesLR/1e6).toFixed(1)+" MB",
+                 speedup:Math.round(focusSpeed)+"×", energy:"—"},
+        focus:{center:[0,1.6,0],radius:13}
+      };
+    }
+
+    return {badge:"G10",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g10",
+    kind:"sparse-block-laplacian",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G10 · Sparse block Laplacians for scalable sheaf biology",
+    subtitle:"Why a dense sheaf Laplacian is a wall, how the matrix-free δ/δᵀ algorithm computes L_F x on the 4-node worked example, and how sparse cost scales across real GRNs.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge mismatch, or cost bar.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"dense",      label:"Dense wall (the (d·|V|)² storage)"},
+      {value:"matrixfree", label:"Matrix-free L_F x (δ then δᵀ)"},
+      {value:"scaling",    label:"Scaling (dense vs sparse cost)"}
+    ],
+    params:[
+      {key:"scale",   label:"network preset (0 model · 3 interactome)",min:0,max:3,step:1,value:1,
+       fmt:v=>["model GRN","human GRN","cell atlas","interactome"][Math.round(v)],modes:["dense"]},
+      {key:"step",    label:"algorithm step (0=δx  1=δᵀ)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"1: coboundary δx":"2: adjoint δᵀ",modes:["matrixfree"]},
+      {key:"node",    label:"inspect node (0=A … 3=D)",min:0,max:3,step:1,value:2,
+       fmt:v=>["A","B","C","D"][Math.round(v)],modes:["matrixfree"]},
+      {key:"lowRank", label:"restriction-map rank r",min:1,max:4,step:1,value:4,
+       fmt:v=>"r="+Math.round(v),modes:["scaling"]}
+    ],
+    metrics:[
+      {key:"denseStore",  label:"Dense L_F store",  accent:"rose"},
+      {key:"sparseStore", label:"Sparse store",     accent:"cyan"},
+      {key:"speedup",     label:"Speedup |V|²/|E|", accent:"amber"},
+      {key:"energy",      label:"Sheaf energy E_F", accent:"violet"}
+    ],
+    layers:[
+      {group:"net",    label:"Network / matrix"},
+      {group:"flow",   label:"δ / δᵀ flow"},
+      {group:"cost",   label:"Cost bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Coboundary δx",
+      on:api=>{api.setMode("matrixfree");api.setParam("step",0);}
+    },
+    secondary:{
+      label:"Adjoint δᵀ",
+      on:api=>{api.setMode("matrixfree");api.setParam("step",1);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=diagonal block / sparse cost · <span style="color:#a78bfa">violet</span>=off-diagonal (zero in GRNs) / low-rank · <span style="color:#fb7185">rose</span>=mismatch / dense cost · <span style="color:#34d399">green</span>=consistent · <span style="color:#fbbf24">amber</span>=scale / speedup.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="matrixfree") api.frame([0,0.4,0],9);
+      else if(s.mode==="scaling") api.frame([0,1.6,0],13);
+      else api.frame([0,0,0],11);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected("Node "+d.node.id+" · x="+JSON.stringify(d.node.x)+" · L_F x="+JSON.stringify(d.node.lfx)+" · |L_F x|="+d.node.mag);
+      if(d.edge) api.setSelected(d.edge.id+" · δx="+JSON.stringify(d.edge.dx)+" · ‖δx‖²="+d.edge.energy);
+      if(d.cost) api.setSelected(d.cost.net+" · "+d.cost.kind+" · "+d.cost.flops.toExponential(1)+" flops/step");
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const sc=SCALES[Math.round(s.scale)||0];
+      const human=SCALES[1];
+      const lr=Math.round(s.lowRank);
+      const out={
+        mode,
+        scale:Math.round(s.scale),
+        step:Math.round(s.step),
+        node:Math.round(s.node),
+        lowRank:lr,
+        energy:ENERGY0,
+        e1:PE0[0], e2:PE0[1], e3:PE0[2],
+        denseGB:+(denseBytes(human)/1e9).toFixed(3),
+        sparseMB:+(sparseBytes(human,lr)/1e6).toFixed(3),
+        speedup:Math.round(speedup(human)),
+        denseFlopsHuman:+denseFlops(human).toExponential(2).split('e')[0],
+        consistentE1:DX0[0][0]===0&&DX0[0][1]===0
+      };
+      if(mode==="dense"){
+        out.presetDenseGB=+(denseBytes(sc)/1e9).toFixed(3);
+        out.presetSpeedup=Math.round(speedup(sc));
+      }
+      if(mode==="matrixfree"){
+        const LFx=LFX0, sel=Math.round(s.node);
+        out.lfxSelMag=+Math.hypot(LFx[sel][0],LFx[sel][1]).toFixed(3);
+      }
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

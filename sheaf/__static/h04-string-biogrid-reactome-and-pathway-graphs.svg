@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure H04 — Experimental-channel filtering turns STRING into a clean physical prior</title>
+<desc id="d">Four-panel captioned figure: Experimental-channel filtering turns STRING into a clean physical prior</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE H04 · BLOCK H · BENCHMARKS AND DATASETS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="18" font-weight="700">Experimental-channel filtering turns STRING into a clean physical prior</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">TP53 experimental subgraph</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">TP53 MDM2 MDM4 ATM CHEK2</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">5 (exp ch &gt;= 700)</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TP53-MDM2</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">998</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TP53-CHEK2</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">701</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Co-expression dominance</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">p_comb = 1 - Pi_k (1 - s_k/1000)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">co-expr channel can reach 900</text>
+<text x="502" y="187.5" fill="#fb7185" font-size="11.5" font-weight="700">co-expr ch</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">820</text>
+<text x="502" y="207.5" fill="#34d399" font-size="11.5" font-weight="700">exper. ch</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">350</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Why filter by channel</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">Evaluating expression-based GRNs on combined-score edges</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">is circular. CDKN1A has combined 890 but experimental 0</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">— a transcriptional, not physical, link, so the filter</text>
+<text x="56" y="361" fill="#9fb4cc" font-size="11">drops it.</text>
+<text x="56" y="389.5" fill="#4dd7ff" font-size="11.5" font-weight="700">combined &gt;= 700</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">1.40M</text>
+<text x="56" y="409.5" fill="#34d399" font-size="11.5" font-weight="700">exp &gt;= 700</text>
+<text x="196" y="409.5" fill="#9fb4cc" font-size="11.5">0.095M</text>
+<rect x="56" y="430" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="86" y="451" fill="#e8eef6" font-size="12" text-anchor="middle">1.40</text>
+<rect x="120" y="430" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="150" y="451" fill="#e8eef6" font-size="12" text-anchor="middle">0.095</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">One GCN step on TP53</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">ubiq-ligase</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">0.50</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">chk-kinase</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.50</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">tumor-supp</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">0.25</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">DDR</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">0.75</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure H04. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">Section-5 </text>
+<text x="258.36" y="538" fill="#c7d2dd" font-size="13">TP53 </text>
+<text x="301.08" y="538" fill="#c7d2dd" font-size="13">module </text>
+<text x="357.5" y="538" fill="#c7d2dd" font-size="13">over </text>
+<text x="397.8" y="538" fill="#c7d2dd" font-size="13">STRING's </text>
+<text x="477.59" y="538" fill="#c7d2dd" font-size="13">experimental </text>
+<text x="582.37" y="538" fill="#c7d2dd" font-size="13">channel. </text>
+<text x="654.91" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="688.44" y="538" fill="#c7d2dd" font-size="13">Five </text>
+<text x="729.95" y="538" fill="#c7d2dd" font-size="13">edges </text>
+<text x="778.31" y="538" fill="#c7d2dd" font-size="13">survive </text>
+<text x="842.79" y="538" fill="#c7d2dd" font-size="13">exp </text>
+<text x="875.03" y="538" fill="#c7d2dd" font-size="13">&gt;=</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">700; </text>
+<text x="80.3" y="559" fill="#c7d2dd" font-size="13">TP53-MDM2 </text>
+<text x="166.95" y="559" fill="#c7d2dd" font-size="13">scores </text>
+<text x="223.37" y="559" fill="#c7d2dd" font-size="13">998. </text>
+<text x="263.67" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="297.19" y="559" fill="#c7d2dd" font-size="13">For </text>
+<text x="330.64" y="559" fill="#c7d2dd" font-size="13">PCNA-MCM2 </text>
+<text x="419.71" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="451.95" y="559" fill="#c7d2dd" font-size="13">co-expression </text>
+<text x="564.79" y="559" fill="#c7d2dd" font-size="13">channel </text>
+<text x="629.27" y="559" fill="#c7d2dd" font-size="13">(820) </text>
+<text x="677.63" y="559" fill="#c7d2dd" font-size="13">dominates </text>
+<text x="758.23" y="559" fill="#c7d2dd" font-size="13">experimental</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">(350). </text>
+<text x="96.42" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="129.95" y="580" fill="#c7d2dd" font-size="13">Combined-score </text>
+<text x="252.06" y="580" fill="#c7d2dd" font-size="13">edges </text>
+<text x="300.42" y="580" fill="#c7d2dd" font-size="13">leak </text>
+<text x="340.72" y="580" fill="#c7d2dd" font-size="13">co-expression; </text>
+<text x="461.62" y="580" fill="#c7d2dd" font-size="13">CDKN1A </text>
+<text x="524.08" y="580" fill="#c7d2dd" font-size="13">(comb </text>
+<text x="572.44" y="580" fill="#c7d2dd" font-size="13">890, </text>
+<text x="612.74" y="580" fill="#c7d2dd" font-size="13">exp </text>
+<text x="644.98" y="580" fill="#c7d2dd" font-size="13">0) </text>
+<text x="669.16" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="693.34" y="580" fill="#c7d2dd" font-size="13">dropped </text>
+<text x="757.82" y="580" fill="#c7d2dd" font-size="13">and </text>
+<text x="790.06" y="580" fill="#c7d2dd" font-size="13">coverage</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">falls </text>
+<text x="88.36" y="601" fill="#c7d2dd" font-size="13">1.40M </text>
+<text x="137.93" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="162.11" y="601" fill="#c7d2dd" font-size="13">0.095M. </text>
+<text x="227.8" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="261.33" y="601" fill="#c7d2dd" font-size="13">One </text>
+<text x="294.78" y="601" fill="#c7d2dd" font-size="13">GCN </text>
+<text x="330.64" y="601" fill="#c7d2dd" font-size="13">step </text>
+<text x="370.94" y="601" fill="#c7d2dd" font-size="13">gives </text>
+<text x="419.3" y="601" fill="#c7d2dd" font-size="13">h(TP53)=[0, </text>
+<text x="518.44" y="601" fill="#c7d2dd" font-size="13">0.5, </text>
+<text x="558.74" y="601" fill="#c7d2dd" font-size="13">0.5, </text>
+<text x="599.04" y="601" fill="#c7d2dd" font-size="13">0.25, </text>
+<text x="647.4" y="601" fill="#c7d2dd" font-size="13">0.75].</text>
+</svg>

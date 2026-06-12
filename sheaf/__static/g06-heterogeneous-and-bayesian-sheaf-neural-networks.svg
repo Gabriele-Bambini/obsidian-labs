@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure G06 — Heterogeneous stalks size the maps; Bayesian posteriors score the edges</title>
+<desc id="d">Four-panel captioned figure: Heterogeneous stalks size the maps; Bayesian posteriors score the edges</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE G06 · BLOCK G · SHEAF GNN FOR BIOLOGY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="18" font-weight="700">Heterogeneous stalks size the maps; Bayesian posteriors score the edges</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The typed 4-node GRN</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TF nodes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">TF1, TF2  (R³)</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">gene nodes</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">GeneA, GeneB  (R²)</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edge stalk</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">d_e = 2</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">section dim</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">Σ d_v = 10</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Per-edge energy ‖δx_e‖²</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">(δx)_e = R_{u→e}x_u − R_{v→e}x_v</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">E_F = Σ_e ‖δx_e‖²</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">e1 energy</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.24</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Rectangular maps, signed repair</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">R_{TF→e} is 2×3, R_{gene→e} is 2×2, so the</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">(TF1,GeneA) off-diagonal block is 3×2. For repression,</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">the signed energy lowers e2.</text>
+<text x="56" y="369.5" fill="#fb7185" font-size="11.5" font-weight="700">e2 unsigned</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">4.54</text>
+<text x="56" y="389.5" fill="#fbbf24" font-size="11.5" font-weight="700">e2 signed</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">3.00</text>
+<rect x="56" y="410" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="86" y="431" fill="#e8eef6" font-size="12" text-anchor="middle">2×3</text>
+<rect x="120" y="410" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="150" y="431" fill="#e8eef6" font-size="12" text-anchor="middle">2×2</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Bayesian uncertainty ranks edges</text>
+<text x="502" y="301.5" fill="#34d399" font-size="11.5" font-weight="700">u(e1) tight</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">0.048</text>
+<text x="502" y="321.5" fill="#fb7185" font-size="11.5" font-weight="700">u(e2) wide</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.403</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">ratio</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">8.4×</text>
+<rect x="502" y="416.38" width="12" height="7.62" rx="2" fill="#34d399"/>
+<text x="508" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">e1</text>
+<rect x="520" y="360" width="12" height="64" rx="2" fill="#fb7185"/>
+<text x="526" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">e2</text>
+<line x1="502" y1="360" x2="538" y2="360" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure G06. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">Section-5 </text>
+<text x="258.36" y="538" fill="#c7d2dd" font-size="13">GRN: </text>
+<text x="302.29" y="538" fill="#c7d2dd" font-size="13">TF1, </text>
+<text x="345.01" y="538" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="379.66" y="538" fill="#c7d2dd" font-size="13">(R³) </text>
+<text x="418.76" y="538" fill="#c7d2dd" font-size="13">and </text>
+<text x="451" y="538" fill="#c7d2dd" font-size="13">GeneA, </text>
+<text x="509.83" y="538" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="560.61" y="538" fill="#c7d2dd" font-size="13">(R²), </text>
+<text x="607.76" y="538" fill="#c7d2dd" font-size="13">edge </text>
+<text x="648.06" y="538" fill="#c7d2dd" font-size="13">stalk </text>
+<text x="696.42" y="538" fill="#c7d2dd" font-size="13">d_e=2. </text>
+<text x="752.84" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a)</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">Heterogeneous </text>
+<text x="154.05" y="559" fill="#c7d2dd" font-size="13">stalks </text>
+<text x="210.47" y="559" fill="#c7d2dd" font-size="13">give </text>
+<text x="250.77" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="283.01" y="559" fill="#c7d2dd" font-size="13">section </text>
+<text x="347.49" y="559" fill="#c7d2dd" font-size="13">space </text>
+<text x="395.85" y="559" fill="#c7d2dd" font-size="13">dimension </text>
+<text x="476.45" y="559" fill="#c7d2dd" font-size="13">Σ </text>
+<text x="492.57" y="559" fill="#c7d2dd" font-size="13">d_v </text>
+<text x="524.81" y="559" fill="#c7d2dd" font-size="13">= </text>
+<text x="540.93" y="559" fill="#c7d2dd" font-size="13">10. </text>
+<text x="573.17" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="606.7" y="559" fill="#c7d2dd" font-size="13">Coboundary </text>
+<text x="696.57" y="559" fill="#c7d2dd" font-size="13">energy </text>
+<text x="752.99" y="559" fill="#c7d2dd" font-size="13">gives </text>
+<text x="801.35" y="559" fill="#c7d2dd" font-size="13">e1=0.24,</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">e2=4.54, </text>
+<text x="112.54" y="580" fill="#c7d2dd" font-size="13">e3=0.11 </text>
+<text x="177.02" y="580" fill="#c7d2dd" font-size="13">— </text>
+<text x="199.59" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="231.83" y="580" fill="#c7d2dd" font-size="13">repressor </text>
+<text x="312.43" y="580" fill="#c7d2dd" font-size="13">e2 </text>
+<text x="336.61" y="580" fill="#c7d2dd" font-size="13">dominates </text>
+<text x="417.21" y="580" fill="#c7d2dd" font-size="13">E_F=4.90. </text>
+<text x="500.23" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="533.76" y="580" fill="#c7d2dd" font-size="13">Maps </text>
+<text x="575.26" y="580" fill="#c7d2dd" font-size="13">are </text>
+<text x="607.5" y="580" fill="#c7d2dd" font-size="13">rectangular </text>
+<text x="704.22" y="580" fill="#c7d2dd" font-size="13">(2×3, </text>
+<text x="759.03" y="580" fill="#c7d2dd" font-size="13">2×2), </text>
+<text x="813.84" y="580" fill="#c7d2dd" font-size="13">so </text>
+<text x="838.02" y="580" fill="#c7d2dd" font-size="13">the</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">(TF1,GeneA) </text>
+<text x="141.56" y="601" fill="#c7d2dd" font-size="13">block </text>
+<text x="189.92" y="601" fill="#c7d2dd" font-size="13">is </text>
+<text x="214.1" y="601" fill="#c7d2dd" font-size="13">3×2; </text>
+<text x="260.84" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="293.08" y="601" fill="#c7d2dd" font-size="13">signed </text>
+<text x="349.5" y="601" fill="#c7d2dd" font-size="13">energy </text>
+<text x="405.92" y="601" fill="#c7d2dd" font-size="13">drops </text>
+<text x="454.28" y="601" fill="#c7d2dd" font-size="13">e2 </text>
+<text x="478.46" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="502.64" y="601" fill="#c7d2dd" font-size="13">3.00. </text>
+<text x="551" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="584.53" y="601" fill="#c7d2dd" font-size="13">Bayesian </text>
+<text x="658.28" y="601" fill="#c7d2dd" font-size="13">posteriors </text>
+<text x="746.94" y="601" fill="#c7d2dd" font-size="13">give </text>
+<text x="787.24" y="601" fill="#c7d2dd" font-size="13">u(e1)=0.048</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">vs </text>
+<text x="64.18" y="622" fill="#c7d2dd" font-size="13">u(e2)=0.403 </text>
+<text x="160.9" y="622" fill="#c7d2dd" font-size="13">— </text>
+<text x="183.47" y="622" fill="#c7d2dd" font-size="13">8× </text>
+<text x="214.1" y="622" fill="#c7d2dd" font-size="13">more </text>
+<text x="254.4" y="622" fill="#c7d2dd" font-size="13">certain </text>
+<text x="318.88" y="622" fill="#c7d2dd" font-size="13">about </text>
+<text x="367.24" y="622" fill="#c7d2dd" font-size="13">e1, </text>
+<text x="399.48" y="622" fill="#c7d2dd" font-size="13">so </text>
+<text x="423.66" y="622" fill="#c7d2dd" font-size="13">e1 </text>
+<text x="447.84" y="622" fill="#c7d2dd" font-size="13">is </text>
+<text x="472.02" y="622" fill="#c7d2dd" font-size="13">actionable </text>
+<text x="560.68" y="622" fill="#c7d2dd" font-size="13">and </text>
+<text x="592.92" y="622" fill="#c7d2dd" font-size="13">e2 </text>
+<text x="617.1" y="622" fill="#c7d2dd" font-size="13">is </text>
+<text x="641.28" y="622" fill="#c7d2dd" font-size="13">speculative.</text>
+</svg>

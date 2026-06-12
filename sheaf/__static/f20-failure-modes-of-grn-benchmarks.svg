@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F20 — Same method, four failure modes, four AUROCs</title>
+<desc id="d">Four-panel captioned figure: Same method, four failure modes, four AUROCs</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F20 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Same method, four failure modes, four AUROCs</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">DREAM5 E. coli gold standard</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">gold edges</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">4511</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">top-5 TFs</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">1021 (22.6%)</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">crp alone</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">229 targets</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">honest AUROC</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">0.66</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="510" cy="108" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="510" y="113" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Hub leakage · degree exploit</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">hub-score = #targets(TF)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">AUROC = 0.71  (no expression)</text>
+<rect x="502" y="182" width="12" height="22" rx="2" fill="#4dd7ff"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">hon</text>
+<rect x="531" y="180.33" width="12" height="23.67" rx="2" fill="#fbbf24"/>
+<text x="537" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">hub</text>
+<rect x="560" y="178" width="12" height="26" rx="2" fill="#fb7185"/>
+<text x="566" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">leak</text>
+<line x1="502" y1="182" x2="589" y2="182" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fb7185"/>
+<circle cx="64" cy="270" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="64" y="275" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Organism leakage · prior = gold</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">M(e) = 1[ e ∈ RegulonDB ]</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">AUROC = 0.78</text>
+<text x="56" y="349.5" fill="#fb7185" font-size="11.5" font-weight="700">inflated</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">+0.12</text>
+<text x="56" y="369.5" fill="#a78bfa" font-size="11.5" font-weight="700">residual</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.52</text>
+<text x="56" y="397" fill="#8a99ad" font-size="11">Returning the prior ≈ the eval truth. ~60% of the</text>
+<text x="56" y="417" fill="#8a99ad" font-size="11">with-prior gap is leakage, not biology.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Synthetic mismatch · audit rule</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">SERGIO AUROC</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">0.72</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">real-ChIP</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.58</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">rank ρ</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">0.64</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">audit</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">residual ≥ 0.55?</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F20. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">One </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">method </text>
+<text x="232.97" y="538" fill="#c7d2dd" font-size="13">audited </text>
+<text x="297.45" y="538" fill="#c7d2dd" font-size="13">on </text>
+<text x="321.63" y="538" fill="#c7d2dd" font-size="13">DREAM5 </text>
+<text x="384.1" y="538" fill="#c7d2dd" font-size="13">E. </text>
+<text x="409.49" y="538" fill="#c7d2dd" font-size="13">coli </text>
+<text x="449.79" y="538" fill="#c7d2dd" font-size="13">(4511 </text>
+<text x="498.15" y="538" fill="#c7d2dd" font-size="13">RegulonDB </text>
+<text x="582.37" y="538" fill="#c7d2dd" font-size="13">edges) </text>
+<text x="638.79" y="538" fill="#c7d2dd" font-size="13">through </text>
+<text x="703.27" y="538" fill="#c7d2dd" font-size="13">four </text>
+<text x="743.57" y="538" fill="#c7d2dd" font-size="13">failure </text>
+<text x="808.05" y="538" fill="#c7d2dd" font-size="13">modes. </text>
+<text x="864.47" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a)</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="73.45" y="559" fill="#c7d2dd" font-size="13">benchmark </text>
+<text x="154.05" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="178.23" y="559" fill="#c7d2dd" font-size="13">hub-skewed: </text>
+<text x="274.95" y="559" fill="#c7d2dd" font-size="13">5 </text>
+<text x="291.07" y="559" fill="#c7d2dd" font-size="13">TFs </text>
+<text x="325.73" y="559" fill="#c7d2dd" font-size="13">carry </text>
+<text x="374.09" y="559" fill="#c7d2dd" font-size="13">22.6% </text>
+<text x="428.9" y="559" fill="#c7d2dd" font-size="13">of </text>
+<text x="453.08" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="485.32" y="559" fill="#c7d2dd" font-size="13">truth; </text>
+<text x="541.74" y="559" fill="#c7d2dd" font-size="13">honest </text>
+<text x="598.16" y="559" fill="#c7d2dd" font-size="13">skill </text>
+<text x="646.52" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="670.7" y="559" fill="#c7d2dd" font-size="13">0.66. </text>
+<text x="719.06" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="752.58" y="559" fill="#c7d2dd" font-size="13">Hub </text>
+<text x="786.03" y="559" fill="#c7d2dd" font-size="13">leakage </text>
+<text x="850.51" y="559" fill="#c7d2dd" font-size="13">—</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">ranking </text>
+<text x="104.48" y="580" fill="#c7d2dd" font-size="13">by </text>
+<text x="128.66" y="580" fill="#c7d2dd" font-size="13">TF </text>
+<text x="155.26" y="580" fill="#c7d2dd" font-size="13">degree, </text>
+<text x="219.74" y="580" fill="#c7d2dd" font-size="13">no </text>
+<text x="243.92" y="580" fill="#c7d2dd" font-size="13">expression </text>
+<text x="332.58" y="580" fill="#c7d2dd" font-size="13">data, </text>
+<text x="380.94" y="580" fill="#c7d2dd" font-size="13">scores </text>
+<text x="437.36" y="580" fill="#c7d2dd" font-size="13">0.71. </text>
+<text x="485.72" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="519.25" y="580" fill="#c7d2dd" font-size="13">Organism </text>
+<text x="593" y="580" fill="#c7d2dd" font-size="13">leakage </text>
+<text x="657.48" y="580" fill="#c7d2dd" font-size="13">— </text>
+<text x="680.04" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="696.16" y="580" fill="#c7d2dd" font-size="13">RegulonDB </text>
+<text x="780.39" y="580" fill="#c7d2dd" font-size="13">prior </text>
+<text x="828.75" y="580" fill="#c7d2dd" font-size="13">≈ </text>
+<text x="851.32" y="580" fill="#c7d2dd" font-size="13">the</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">eval </text>
+<text x="80.3" y="601" fill="#c7d2dd" font-size="13">gold </text>
+<text x="120.6" y="601" fill="#c7d2dd" font-size="13">inflates </text>
+<text x="193.14" y="601" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="247.55" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="271.72" y="601" fill="#c7d2dd" font-size="13">0.78, </text>
+<text x="320.08" y="601" fill="#c7d2dd" font-size="13">residual </text>
+<text x="392.63" y="601" fill="#c7d2dd" font-size="13">0.52. </text>
+<text x="440.99" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="474.51" y="601" fill="#c7d2dd" font-size="13">Synthetic </text>
+<text x="556.32" y="601" fill="#c7d2dd" font-size="13">mismatch </text>
+<text x="628.86" y="601" fill="#c7d2dd" font-size="13">— </text>
+<text x="651.43" y="601" fill="#c7d2dd" font-size="13">0.72 </text>
+<text x="691.73" y="601" fill="#c7d2dd" font-size="13">on </text>
+<text x="715.91" y="601" fill="#c7d2dd" font-size="13">SERGIO </text>
+<text x="779.59" y="601" fill="#c7d2dd" font-size="13">drops </text>
+<text x="827.95" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="852.13" y="601" fill="#c7d2dd" font-size="13">0.58</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">on </text>
+<text x="64.18" y="622" fill="#c7d2dd" font-size="13">real </text>
+<text x="104.48" y="622" fill="#c7d2dd" font-size="13">data </text>
+<text x="144.78" y="622" fill="#c7d2dd" font-size="13">(ρ=0.64).</text>
+</svg>

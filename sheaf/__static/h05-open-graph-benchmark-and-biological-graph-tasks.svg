@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure H05 — Principled splits and pos_weight make OGB an honest scale test</title>
+<desc id="d">Four-panel captioned figure: Principled splits and pos_weight make OGB an honest scale test</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE H05 · BLOCK H · BENCHMARKS AND DATASETS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="21" font-weight="700">Principled splits and pos_weight make OGB an honest scale test</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Three OGB graphs</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">ogbn-proteins</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">132K / 79M</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">ogbl-biokg</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">94K / 5.1M</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">ogbg-molhiv</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">41K mols</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">primary</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">node clf</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Species-based split</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">train species ∩ test species = ∅</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">homolog(TP53,Trp53) ≈ 0.95</text>
+<text x="502" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">train nodes</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">~105K</text>
+<text x="502" y="207.5" fill="#fbbf24" font-size="11.5" font-weight="700">test nodes</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">~13.5K</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">pos_weight rescues rare GO</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">Rare GO terms (2% positive) make plain BCE predict</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">all-negative (ROC ~0.5). pos_weight = (1-p)/p amplifies</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">each false negative up to x49, so rare terms become</text>
+<text x="56" y="361" fill="#9fb4cc" font-size="11">learnable.</text>
+<text x="56" y="389.5" fill="#fb7185" font-size="11.5" font-weight="700">plain BCE mean</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">0.68</text>
+<text x="56" y="409.5" fill="#34d399" font-size="11.5" font-weight="700">pos_weight mean</text>
+<text x="196" y="409.5" fill="#9fb4cc" font-size="11.5">0.86</text>
+<rect x="56" y="435.53" width="12" height="28.47" rx="2" fill="#fb7185"/>
+<text x="62" y="476" fill="#8a99ad" font-size="9" text-anchor="middle">plain</text>
+<rect x="107" y="428" width="12" height="36" rx="2" fill="#34d399"/>
+<text x="113" y="476" fill="#8a99ad" font-size="9" text-anchor="middle">weighted</text>
+<line x1="56" y1="434.7" x2="158" y2="434.7" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Scale separates models</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">GCN</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">0.725</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">GraphSAGE</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.767</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">DeeperGCN</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">0.858</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">RevGNN-112</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">0.877</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure H05. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">OGB's </text>
+<text x="195.09" y="538" fill="#c7d2dd" font-size="13">three </text>
+<text x="243.45" y="538" fill="#c7d2dd" font-size="13">biological </text>
+<text x="332.11" y="538" fill="#c7d2dd" font-size="13">graphs </text>
+<text x="388.53" y="538" fill="#c7d2dd" font-size="13">and </text>
+<text x="420.77" y="538" fill="#c7d2dd" font-size="13">the </text>
+<text x="453.01" y="538" fill="#c7d2dd" font-size="13">choices </text>
+<text x="517.49" y="538" fill="#c7d2dd" font-size="13">that </text>
+<text x="557.79" y="538" fill="#c7d2dd" font-size="13">make </text>
+<text x="598.09" y="538" fill="#c7d2dd" font-size="13">them </text>
+<text x="638.39" y="538" fill="#c7d2dd" font-size="13">honest. </text>
+<text x="702.87" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="736.4" y="538" fill="#c7d2dd" font-size="13">ogbn-proteins</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">(132K/79M), </text>
+<text x="139.14" y="559" fill="#c7d2dd" font-size="13">ogbl-biokg </text>
+<text x="227.8" y="559" fill="#c7d2dd" font-size="13">(94K/5.1M), </text>
+<text x="326.94" y="559" fill="#c7d2dd" font-size="13">ogbg-molhiv </text>
+<text x="423.66" y="559" fill="#c7d2dd" font-size="13">(41K </text>
+<text x="465.17" y="559" fill="#c7d2dd" font-size="13">mols). </text>
+<text x="521.59" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="555.11" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="588.56" y="559" fill="#c7d2dd" font-size="13">species </text>
+<text x="653.04" y="559" fill="#c7d2dd" font-size="13">split </text>
+<text x="701.4" y="559" fill="#c7d2dd" font-size="13">holds </text>
+<text x="749.76" y="559" fill="#c7d2dd" font-size="13">out </text>
+<text x="782" y="559" fill="#c7d2dd" font-size="13">3 </text>
+<text x="798.12" y="559" fill="#c7d2dd" font-size="13">organisms</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">(~13.5K </text>
+<text x="105.69" y="580" fill="#c7d2dd" font-size="13">test </text>
+<text x="145.99" y="580" fill="#c7d2dd" font-size="13">nodes), </text>
+<text x="210.47" y="580" fill="#c7d2dd" font-size="13">blocking </text>
+<text x="283.01" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="315.25" y="580" fill="#c7d2dd" font-size="13">0.95-identity </text>
+<text x="428.09" y="580" fill="#c7d2dd" font-size="13">TP53/Trp53 </text>
+<text x="520.38" y="580" fill="#c7d2dd" font-size="13">homology </text>
+<text x="592.92" y="580" fill="#c7d2dd" font-size="13">bridge. </text>
+<text x="657.4" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="690.93" y="580" fill="#c7d2dd" font-size="13">pos_weight </text>
+<text x="779.59" y="580" fill="#c7d2dd" font-size="13">= </text>
+<text x="795.71" y="580" fill="#c7d2dd" font-size="13">(1-p)/p</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">reaches </text>
+<text x="104.48" y="601" fill="#c7d2dd" font-size="13">x49 </text>
+<text x="136.72" y="601" fill="#c7d2dd" font-size="13">for </text>
+<text x="168.96" y="601" fill="#c7d2dd" font-size="13">a </text>
+<text x="185.08" y="601" fill="#c7d2dd" font-size="13">2% </text>
+<text x="215.71" y="601" fill="#c7d2dd" font-size="13">term, </text>
+<text x="264.07" y="601" fill="#c7d2dd" font-size="13">lifting </text>
+<text x="328.55" y="601" fill="#c7d2dd" font-size="13">mean </text>
+<text x="368.85" y="601" fill="#c7d2dd" font-size="13">ROC-AUC </text>
+<text x="440.58" y="601" fill="#c7d2dd" font-size="13">0.68→0.86. </text>
+<text x="535.69" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="569.22" y="601" fill="#c7d2dd" font-size="13">At </text>
+<text x="594.61" y="601" fill="#c7d2dd" font-size="13">scale </text>
+<text x="642.97" y="601" fill="#c7d2dd" font-size="13">GCN </text>
+<text x="678.84" y="601" fill="#c7d2dd" font-size="13">(0.725) </text>
+<text x="743.32" y="601" fill="#c7d2dd" font-size="13">trails </text>
+<text x="799.74" y="601" fill="#c7d2dd" font-size="13">RevGNN-112</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">(0.877).</text>
+</svg>

@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I06 · Ablations for biological graph models</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no nondeterministic calls) ─
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // THE WORKED EXAMPLE — DREAM4 Ecoli1 GRN (note §5)
+  //   N = 10 genes · 100 expression features per node · 14 directed edges.
+  //   Exact src/dst lists copied verbatim from the note.
+  // ════════════════════════════════════════════════════════════════════════
+  const N=10, FEAT=100, NEDGE=14;
+  const SRC=[0,0,1,1,2,2,3,4,4,5,6,7,8,9];
+  const DST=[1,5,2,7,3,8,4,5,9,6,7,8,9,0];
+
+  // in-degree / out-degree of the true GRN (used for the degree-baseline story)
+  const inDeg=new Array(N).fill(0), outDeg=new Array(N).fill(0);
+  for(let e=0;e<NEDGE;e++){outDeg[SRC[e]]++;inDeg[DST[e]]++;}
+
+  // full-model reference AUROC and the contribution table from note §6:
+  //   "Component ablated | AUROC change" + interpretation patterns.
+  const FULL_AUROC=0.75;
+  // delta is the SIGNED change in AUROC when that component is ablated.
+  // (negative = ablation hurts ⇒ component matters.)  Numbers = note §6 table.
+  const ABL={
+    full:            {auroc:0.75, delta: 0.00, sig:"ref"},
+    no_graph_mlp:    {auroc:0.67, delta:-0.08, sig:"***"}, // §6: Remove graph -0.08
+    random_graph:    {auroc:0.70, delta:-0.05, sig:"***"}, // §6: Random graph -0.05
+    undirected:      {auroc:0.69, delta:-0.06, sig:"***"}, // §6: Remove directionality -0.06
+    no_edge_attr:    {auroc:0.74, delta:-0.01, sig:"ns"},  // §6: Remove edge_attr -0.01 (p=0.38)
+    zero_features:   {auroc:0.63, delta:-0.12, sig:"***"}, // §6: Zero features -0.12
+    random_features: {auroc:0.65, delta:-0.10, sig:"***"}, // §6: Random features -0.10
+    shuffled_features:{auroc:0.65,delta:-0.10, sig:"**"},  // ex.4: shuffled 0.65 vs full 0.75
+    depth_1:         {auroc:0.72, delta:-0.03, sig:"ns"},  // §6: Depth 1 vs 2 -0.03 (p=0.06)
+    depth_2:         {auroc:0.75, delta: 0.00, sig:"ref"}, // depth 2 == full
+    depth_3:         {auroc:0.73, delta:-0.02, sig:"ns"},  // §6 pattern6: depth_3 < depth_2 (over-smoothing)
+    sum_aggregation: {auroc:0.77, delta:+0.02, sig:"ns"},  // §6: Sum vs mean +0.02 (p=0.22)
+    attention_gat:   {auroc:0.80, delta:+0.05, sig:"**"}   // §6 pattern7: attention >> full +0.05
+  };
+
+  let sceneSnap={};
+
+  // ── shared node layout: ring of 10 genes ─────────────────────────────────
+  const RING=3.5;
+  function nodePos(i){const a=i/N*Math.PI*2 - Math.PI/2;return [Math.cos(a)*RING,0,Math.sin(a)*RING];}
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const ablIdx=Math.round(s.ablation);   // index into the per-mode ablation list
+    const seeds=Math.round(s.seeds);        // 1..10 random seeds → error bar
+    const effort=Math.round(s.effort);      // # ablation conditions run (story slider)
+    const depth=Math.round(s.depth);        // 1..3 GNN layers (aggregation mode)
+
+    const gGraph =api.group("graph");
+    const gEdges =api.group("edges");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");  // full model / graph kept
+    const GR=new T.Color("#34d399");  // component intact / helps
+    const AM=new T.Color("#fbbf24");  // ablated / degraded
+    const VI=new T.Color("#a78bfa");  // delta / direction
+    const RO=new T.Color("#fb7185");  // breaks / hurts
+    const SL=new T.Color("#54667c");  // muted
+
+    // standard-error of AUROC across seeds (note: small GRN ⇒ high variance,
+    // misconception #4 — run ≥5 seeds).  base sd 0.04 at 1 seed, shrinks ~1/√n.
+    const seedSE=v=>0.04/Math.sqrt(Math.max(1,seeds));
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 · graph  — GRAPH-STRUCTURE ABLATIONS (note class 1, §6 patterns 1-3)
+    //   full · no-graph(MLP) · random-graph · undirected · no-edge-attr
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="graph"){
+      const conds=["full","no_graph_mlp","random_graph","undirected","no_edge_attr"];
+      const names=["full model","no graph (MLP)","random graph","undirected","no edge_attr"];
+      const ci=Math.min(conds.length-1,ablIdx);
+      const cond=conds[ci];
+      const A=ABL[cond];
+
+      // draw the 10-gene ring
+      for(let i=0;i<N;i++){
+        const p=nodePos(i);
+        const isTF=outDeg[i]>=inDeg[i] && outDeg[i]>0;
+        const col=isTF?GR.clone():CY.clone();
+        const sph=new T.Mesh(new T.SphereGeometry(0.30,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        sph.position.set(p[0],p[1],p[2]);
+        gGraph.add(sph);
+        api.pick(sph,{gene:{id:i,inDeg:inDeg[i],outDeg:outDeg[i],role:isTF?"TF/hub":"target"}});
+        addSlbl("g"+i,col.getStyle(),0.30,p[0]*1.18,0.0,p[2]*1.18);
+      }
+
+      // draw edges according to the ablation
+      const drawEdge=(a,b,colHex,directed)=>{
+        const pa=nodePos(a), pb=nodePos(b);
+        gEdges.add(new T.Line(new T.BufferGeometry().setFromPoints(
+          [new T.Vector3(pa[0],0,pa[2]),new T.Vector3(pb[0],0,pb[2])]),
+          new T.LineBasicMaterial({color:colHex,transparent:true,opacity:0.6})));
+        if(directed){
+          const dx=pb[0]-pa[0],dz=pb[2]-pa[2],L=Math.hypot(dx,dz)||1;
+          const mx=pa[0]+dx*0.62, mz=pa[2]+dz*0.62;
+          const cone=new T.Mesh(new T.ConeGeometry(0.10,0.30,8),new T.MeshBasicMaterial({color:colHex}));
+          cone.position.set(mx,0,mz);
+          cone.rotation.y=Math.atan2(dx,dz);
+          cone.rotation.x=Math.PI/2;
+          gEdges.add(cone);
+        }
+      };
+
+      if(cond==="no_graph_mlp"){
+        // A1 — empty edge_index: no message passing.  Show isolated nodes only.
+        addLbl("∅ no edges — MLP on features","#fbbf24",1.25,0,1.5,0);
+      } else if(cond==="random_graph"){
+        // A2 — same edge count, deterministic Erdős–Rényi-style rewiring.
+        for(let e=0;e<NEDGE;e++){
+          const a=Math.floor(prand(e*9+1)*N);
+          let b=Math.floor(prand(e*9+5)*N); if(b===a)b=(b+1)%N;
+          drawEdge(a,b,RO.getHex(),true);
+        }
+        addLbl("random rewire (14 edges)","#fb7185",1.2,0,1.5,0);
+      } else if(cond==="undirected"){
+        // A3 — drop direction: symmetric edges, no arrowheads.
+        for(let e=0;e<NEDGE;e++) drawEdge(SRC[e],DST[e],SL.getHex(),false);
+        addLbl("undirected — no TF→target","#a78bfa",1.2,0,1.5,0);
+      } else {
+        // full · no_edge_attr: the TRUE directed GRN.
+        const eCol=(cond==="no_edge_attr")?SL.getHex():CY.getHex();
+        for(let e=0;e<NEDGE;e++) drawEdge(SRC[e],DST[e],eCol,true);
+        addLbl(cond==="no_edge_attr"?"edge_attr removed (topology kept)":"true directed GRN · 14 edges",
+               cond==="no_edge_attr"?"#54667c":"#4dd7ff",1.2,0,1.5,0);
+      }
+
+      // AUROC bar pair: full vs this ablation
+      const se=seedSE();
+      drawAuroc(api,gBars,gLabels,T,FULL_AUROC,A.auroc,se,A.delta,A.sig,names[ci],CY,AM,VI,RO);
+
+      sceneSnap={mode,ablation:ci,condition:cond,seeds,effort,depth:2,
+        aurocFull:+FULL_AUROC.toFixed(3),aurocAblated:+A.auroc.toFixed(3),
+        deltaAuroc:+A.delta.toFixed(3),stdErr:+se.toFixed(3),significant:A.sig!=="ns"&&A.sig!=="ref"};
+
+      return {
+        badge:"Graph ablation · "+names[ci]+" · AUROC "+A.auroc.toFixed(2),
+        formula:"Δ = AUROC(ablated) − AUROC(full) = "+(A.delta>=0?"+":"")+A.delta.toFixed(2),
+        insight:"Class-1 ablations remove the graph itself. <b>no-graph(MLP)</b> tests pattern&nbsp;1 (Δ"+ABL.no_graph_mlp.delta.toFixed(2)+" ⇒ topology matters). <b>random-graph</b> keeps the 14-edge count but scrambles wiring (Δ"+ABL.random_graph.delta.toFixed(2)+"): much of the signal is in degree, not exact topology. <b>undirected</b> erases TF→target direction (Δ"+ABL.undirected.delta.toFixed(2)+" ⇒ direction is crucial). <b>no-edge_attr</b> drops confidence scores (Δ"+ABL.no_edge_attr.delta.toFixed(2)+", ns ⇒ remove for parsimony).",
+        state:"Condition "+names[ci]+": AUROC "+A.auroc.toFixed(2)+" ± "+se.toFixed(2)+" ("+seeds+" seeds), Δ vs full "+(A.delta>=0?"+":"")+A.delta.toFixed(2)+" "+A.sig+".",
+        metrics:{aurocAblated:A.auroc.toFixed(2),deltaAuroc:(A.delta>=0?"+":"")+A.delta.toFixed(2),stdErr:"±"+se.toFixed(2),verdict:sigVerdict(A)},
+        focus:{center:[0,0.6,1.5],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 · features  — NODE-FEATURE ABLATIONS (note class 2, §6 patterns 4-5)
+    //   full · zero-features · random-features · shuffled-features
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="features"){
+      const conds=["full","zero_features","random_features","shuffled_features"];
+      const names=["full features","zero features","random features","shuffled features"];
+      const ci=Math.min(conds.length-1,ablIdx);
+      const cond=conds[ci];
+      const A=ABL[cond];
+
+      // Each gene carries a 100-dim expression vector. Render as a feature
+      // matrix: 10 rows (genes) × 16 sampled columns of the 100 features.
+      const COLS=16, cw=0.46, rh=0.42;
+      const x0=-COLS*cw/2, z0=-N*rh/2;
+      for(let r=0;r<N;r++){
+        for(let c=0;c<COLS;c++){
+          // deterministic "expression" value for gene r, feature c
+          let val=frac(Math.sin((r*100+c)*12.9898)*43758.5453); // 0..1 baseline
+          let rowSrc=r, label=null;
+          if(cond==="zero_features"){ val=0.04; }
+          else if(cond==="random_features"){ val=prand(r*53+c*7+999); }
+          else if(cond==="shuffled_features"){
+            // B5 — permute ROWS: gene r shows another gene's profile (identity broken)
+            rowSrc=(r*7+3)%N;
+            val=frac(Math.sin((rowSrc*100+c)*12.9898)*43758.5453);
+          }
+          const col=(cond==="zero_features")?SL.clone()
+                   :(cond==="random_features")?RO.clone().lerp(AM,val)
+                   :CY.clone().lerp(GR,val);
+          const cell=new T.Mesh(new T.BoxGeometry(cw*0.86,0.06+val*0.7,rh*0.86),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.5}));
+          cell.position.set(x0+c*cw, (0.06+val*0.7)/2, z0+r*rh);
+          gGraph.add(cell);
+          if(c===0) api.pick(cell,{row:{gene:r,source:rowSrc,broken:rowSrc!==r}});
+        }
+        // row label: which gene identity this row actually carries
+        const broke=(cond==="shuffled_features")&&((r*7+3)%N)!==r;
+        addSlbl(broke?("g"+r+"←g"+((r*7+3)%N)):"g"+r, broke?RO.getStyle():"#9fb4cc",0.30,x0-1.0,0.1,z0+r*rh);
+      }
+      addLbl("gene × expression-feature matrix (10×100)","#8a99ad",1.1,0,1.55,z0-0.9);
+      if(cond==="shuffled_features") addLbl("rows permuted — identity broken, stats kept","#fb7185",1.05,0,1.05,z0-0.5);
+      else if(cond==="zero_features") addLbl("x ← 0 : only graph structure left","#54667c",1.05,0,1.05,z0-0.5);
+      else if(cond==="random_features") addLbl("x ← 𝒩(0,1) : noise","#fb7185",1.05,0,1.05,z0-0.5);
+
+      const se=seedSE();
+      drawAuroc(api,gBars,gLabels,T,FULL_AUROC,A.auroc,se,A.delta,A.sig,names[ci],CY,AM,VI,RO);
+
+      // feature-attribution decomposition (note exercise 4):
+      //   structural = zero - 0.50 ; stats = shuffled - zero ; identity = full - shuffled
+      const structural=+(ABL.zero_features.auroc-0.50).toFixed(2);
+      const stats=+(ABL.shuffled_features.auroc-ABL.zero_features.auroc).toFixed(2);
+      const identity=+(FULL_AUROC-ABL.shuffled_features.auroc).toFixed(2);
+
+      sceneSnap={mode,ablation:ci,condition:cond,seeds,effort,depth:2,
+        aurocFull:+FULL_AUROC.toFixed(3),aurocAblated:+A.auroc.toFixed(3),
+        deltaAuroc:+A.delta.toFixed(3),stdErr:+se.toFixed(3),
+        attribStructural:structural,attribStats:stats,attribIdentity:identity,
+        significant:A.sig!=="ns"&&A.sig!=="ref"};
+
+      return {
+        badge:"Feature ablation · "+names[ci]+" · AUROC "+A.auroc.toFixed(2),
+        formula:"struct "+structural.toFixed(2)+" + stats "+stats.toFixed(2)+" + identity "+identity.toFixed(2)+" = "+(structural+stats+identity).toFixed(2)+" gain over chance",
+        insight:"Class-2 ablations attack the node features. <b>zero</b> leaves only structure (Δ"+ABL.zero_features.delta.toFixed(2)+" ⇒ expression critical, pattern 4). <b>random</b> destroys all signal (Δ"+ABL.random_features.delta.toFixed(2)+"). <b>shuffled</b> permutes rows: population stats survive but gene identity dies (Δ"+ABL.shuffled_features.delta.toFixed(2)+", pattern 5). Attribution: structural "+structural.toFixed(2)+", overall-stats "+stats.toFixed(2)+", gene-identity "+identity.toFixed(2)+".",
+        state:"Condition "+names[ci]+": AUROC "+A.auroc.toFixed(2)+" ± "+se.toFixed(2)+", Δ "+(A.delta>=0?"+":"")+A.delta.toFixed(2)+" "+A.sig+". shuffled ("+ABL.shuffled_features.auroc.toFixed(2)+") > zero ("+ABL.zero_features.auroc.toFixed(2)+") proves stats matter but identity matters more.",
+        metrics:{aurocAblated:A.auroc.toFixed(2),deltaAuroc:(A.delta>=0?"+":"")+A.delta.toFixed(2),stdErr:"±"+se.toFixed(2),verdict:sigVerdict(A)},
+        focus:{center:[0,0.6,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 · aggregation  — AGGREGATION & DEPTH ABLATIONS (note class 3, §6 patterns 6-7)
+    //   depth 1/2/3 · sum vs mean · GAT attention.  depth slider drives the scene.
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="aggregation"){
+      const conds=["depth_curve","sum_aggregation","attention_gat"];
+      const names=["depth 1·2·3 (over-smoothing)","sum aggregation","attention (GAT)"];
+      const ci=Math.min(conds.length-1,ablIdx);
+      const cond=conds[ci];
+
+      // depth curve: AUROC vs n_layers (1→0.72, 2→0.75, 3→0.73 : over-smoothing)
+      const depthAuroc=[ABL.depth_1.auroc,ABL.depth_2.auroc,ABL.depth_3.auroc];
+      const layers=[1,2,3];
+      const here=Math.max(1,Math.min(3,depth));
+      const A=(cond==="sum_aggregation")?ABL.sum_aggregation
+             :(cond==="attention_gat")?ABL.attention_gat
+             :{auroc:depthAuroc[here-1],delta:depthAuroc[here-1]-FULL_AUROC,sig:(here===2?"ref":(here===1?"ns":"ns"))};
+
+      // ── visualize message-passing reach: a center gene aggregates its
+      //    k-hop neighbourhood; depth = how many hops light up.
+      // pick a hub gene (highest in+out degree) as the receiver
+      let hub=0,best=-1; for(let i=0;i<N;i++){const d=inDeg[i]+outDeg[i];if(d>best){best=d;hub=i;}}
+      // BFS hop distance over UNDIRECTED adjacency
+      const adj=Array.from({length:N},()=>[]);
+      for(let e=0;e<NEDGE;e++){adj[SRC[e]].push(DST[e]);adj[DST[e]].push(SRC[e]);}
+      const hop=new Array(N).fill(99); hop[hub]=0;
+      let frontier=[hub];
+      for(let h=1;h<=3;h++){const nx=[];frontier.forEach(u=>adj[u].forEach(v=>{if(hop[v]>h){hop[v]=h;nx.push(v);}}));frontier=nx;}
+
+      for(let i=0;i<N;i++){
+        const p=nodePos(i);
+        const reached=hop[i]<=here;
+        const isHub=i===hub;
+        let col;
+        if(isHub) col=VI.clone();
+        else if(!reached) col=SL.clone();
+        else if(hop[i]<=1) col=CY.clone();
+        else if(hop[i]===2) col=GR.clone();
+        else col=AM.clone(); // 3-hop = over-smoothing tint
+        const r=isHub?0.42:(reached?0.30:0.22);
+        const sph=new T.Mesh(new T.SphereGeometry(r,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(reached?0.7:0.2),emissiveIntensity:reached?0.7:0.2,roughness:0.4}));
+        sph.position.set(p[0],0,p[2]);
+        gGraph.add(sph);
+        api.pick(sph,{hopNode:{id:i,hops:hop[i]===99?"∞":hop[i],reached,hub:isHub}});
+      }
+      // edges, dim unless both endpoints reached
+      for(let e=0;e<NEDGE;e++){
+        const pa=nodePos(SRC[e]),pb=nodePos(DST[e]);
+        const on=hop[SRC[e]]<=here&&hop[DST[e]]<=here;
+        gEdges.add(new T.Line(new T.BufferGeometry().setFromPoints(
+          [new T.Vector3(pa[0],0,pa[2]),new T.Vector3(pb[0],0,pb[2])]),
+          new T.LineBasicMaterial({color:on?0x4dd7ff:0x22303f,transparent:true,opacity:on?0.7:0.25})));
+      }
+      addLbl("hub g"+hub+" aggregates "+here+"-hop neighbourhood","#a78bfa",1.2,0,1.6,0);
+      if(cond==="attention_gat") addLbl("GAT weights top hub edges (Δ+0.05)","#34d399",1.1,0,1.1,0);
+      if(cond==="sum_aggregation") addLbl("sum vs mean (Δ+0.02, ns)","#fbbf24",1.1,0,1.1,0);
+      if(cond==="depth_curve"&&here===3) addLbl("depth 3 < depth 2 — over-smoothing","#fbbf24",1.1,0,1.1,0);
+
+      const se=seedSE();
+      drawAuroc(api,gBars,gLabels,T,FULL_AUROC,A.auroc,se,A.delta,A.sig,names[ci],CY,AM,VI,RO);
+
+      sceneSnap={mode,ablation:ci,condition:cond,seeds,effort,depth:here,
+        aurocFull:+FULL_AUROC.toFixed(3),aurocAblated:+A.auroc.toFixed(3),
+        deltaAuroc:+A.delta.toFixed(3),stdErr:+se.toFixed(3),hopsReached:here,hubGene:hub,
+        significant:A.sig!=="ns"&&A.sig!=="ref"};
+
+      return {
+        badge:"Aggregation · "+names[ci]+(cond==="depth_curve"?(" · depth "+here):"")+" · AUROC "+A.auroc.toFixed(2),
+        formula:cond==="depth_curve"?("AUROC(1)="+ABL.depth_1.auroc.toFixed(2)+" < AUROC(2)="+ABL.depth_2.auroc.toFixed(2)+" > AUROC(3)="+ABL.depth_3.auroc.toFixed(2)):("Δ vs mean-GCN = "+(A.delta>=0?"+":"")+A.delta.toFixed(2)),
+        insight:"Class-3 ablations probe the message-passing rule. <b>Depth</b> (drag slider): 1 hop under-reaches (Δ"+ABL.depth_1.delta.toFixed(2)+"), 2 hops is best, 3 hops over-smooths on this 10-gene GRN (Δ"+ABL.depth_3.delta.toFixed(2)+", pattern 6). <b>sum</b> aggregation is task-neutral here (Δ"+ABL.sum_aggregation.delta.toFixed(2)+", ns). <b>attention</b> (GAT) up-weights hub-TF edges (Δ"+ABL.attention_gat.delta.toFixed(2)+", pattern 7).",
+        state:"Condition "+names[ci]+(cond==="depth_curve"?(", depth "+here):"")+": AUROC "+A.auroc.toFixed(2)+" ± "+se.toFixed(2)+", Δ "+(A.delta>=0?"+":"")+A.delta.toFixed(2)+" "+A.sig+". Hub g"+hub+" reaches "+here+"-hop nodes.",
+        metrics:{aurocAblated:A.auroc.toFixed(2),deltaAuroc:(A.delta>=0?"+":"")+A.delta.toFixed(2),stdErr:"±"+se.toFixed(2),verdict:sigVerdict(A)},
+        focus:{center:[0,0.6,0],radius:12}
+      };
+    }
+
+    return {badge:"I06",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── shared AUROC bar-pair drawer: full (cyan) vs ablated (amber), Δ marker ─
+  function drawAuroc(api,gBars,gLabels,T,full,abl,se,delta,sig,name,CY,AM,VI,RO){
+    const x0=4.6, baseZ=-3.4, w=1.1, yS=6.0;
+    const draw=(x,val,col,lbl)=>{
+      const h=0.1+val*yS;
+      const bar=new T.Mesh(new T.BoxGeometry(w,h,1.0),
+        new T.MeshStandardMaterial({color:col.clone(),emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+      bar.position.set(x,h/2,baseZ);
+      gBars.add(bar);
+      api.pick(bar,{aurocBar:{which:lbl,value:val}});
+      const sp=api.bigLabel(val.toFixed(2),col.getStyle(),1.4); sp.position.set(x,h+0.5,baseZ); gBars.add(sp);
+      const sl=api.label(lbl,col.getStyle(),0.34); sl.position.set(x,0.05,baseZ+0.9); gBars.add(sl);
+    };
+    draw(x0,full,CY,"full");
+    const ablCol=(delta>0)?new T.Color("#34d399"):AM;
+    draw(x0+1.6,abl,ablCol,"ablated");
+    // 0.5 chance line
+    gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+      [new T.Vector3(x0-0.8,0.1+0.5*yS,baseZ),new T.Vector3(x0+2.4,0.1+0.5*yS,baseZ)]),
+      new T.LineBasicMaterial({color:0x3a4a5e,transparent:true,opacity:0.7})));
+    const chl=api.label("chance 0.50","#6b7a8d",0.30); chl.position.set(x0+2.9,0.1+0.5*yS,baseZ); gBars.add(chl);
+    // delta arrow between the two bar tops
+    const dCol=(delta>0)?"#34d399":(delta<-0.02?"#fb7185":"#a78bfa");
+    const dsp=api.bigLabel("Δ "+(delta>=0?"+":"")+delta.toFixed(2)+" "+sig,dCol,1.5);
+    dsp.position.set(x0+0.8,0.1+Math.max(full,abl)*yS+1.3,baseZ); gBars.add(dsp);
+  }
+
+  function sigVerdict(A){
+    if(A.sig==="ref") return "reference";
+    if(A.sig==="ns") return "not sig.";
+    if(A.delta>0) return "improves";
+    return "essential";
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i06",
+    kind:"ablation-study",
+    eyebrow:"Block I · Implementation",
+    title:"I06 · Ablations for biological graph models",
+    subtitle:"Remove one component at a time from the DREAM4 Ecoli1 GRN (10 genes · 14 directed edges · 100 expression features) and watch AUROC move. Three classes: graph structure, node features, aggregation.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, feature row, or AUROC bar.",
+    modes:[
+      {value:"graph",       label:"Graph-structure ablations (class 1)"},
+      {value:"features",    label:"Node-feature ablations (class 2)"},
+      {value:"aggregation", label:"Aggregation & depth ablations (class 3)"}
+    ],
+    params:[
+      {key:"ablation",label:"ablation condition",min:0,max:4,step:1,value:0,
+       fmt:v=>"#"+Math.round(v)},
+      {key:"seeds",   label:"# random seeds (error bar)",min:1,max:10,step:1,value:5,
+       fmt:v=>Math.round(v)+" seeds"},
+      {key:"depth",   label:"GNN depth (n_layers)",min:1,max:3,step:1,value:2,
+       fmt:v=>Math.round(v)+" layer"+(Math.round(v)>1?"s":""),modes:["aggregation"]},
+      {key:"effort",  label:"# conditions in suite",min:4,max:12,step:1,value:12,
+       fmt:v=>Math.round(v)+" runs"}
+    ],
+    metrics:[
+      {key:"aurocAblated",label:"AUROC (ablated)",accent:"cyan"},
+      {key:"deltaAuroc",  label:"Δ vs full model",accent:"violet"},
+      {key:"stdErr",      label:"std-err (seeds)",accent:"amber"},
+      {key:"verdict",     label:"verdict",accent:"green"}
+    ],
+    layers:[
+      {group:"graph", label:"Genes / matrix"},
+      {group:"edges", label:"Regulatory edges"},
+      {group:"bars",  label:"AUROC bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Full model",
+      on:api=>{api.setParam("ablation",0);}
+    },
+    secondary:{
+      label:"5 seeds",
+      on:api=>{api.setParam("seeds",5);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=full / kept · <span style="color:#34d399">green</span>=helps / TF-hub · <span style="color:#fbbf24">amber</span>=ablated · <span style="color:#fb7185">rose</span>=breaks identity / random · <span style="color:#a78bfa">violet</span>=Δ / hub. Numbers from note §6 contribution table (full AUROC 0.75).',
+    onMode(api){
+      const s=api.state;
+      // class 1 has 5 conditions, class 2 has 4, class 3 has 3 — retarget range.
+      const maxAbl=(s.mode==="graph")?4:(s.mode==="features")?3:2;
+      api.setParamRange("ablation",{min:0,max:maxAbl});
+      if(api.state.ablation>maxAbl) api.setParam("ablation",maxAbl);
+    },
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="features") api.frame([0,0.6,0],12);
+      else if(s.mode==="aggregation") api.frame([0,0.6,0],12);
+      else api.frame([0,0.6,1.5],12);
+    },
+    onSelect(api,d){
+      if(d.gene)    api.setSelected("Gene g"+d.gene.id+" · "+d.gene.role+" · in "+d.gene.inDeg+" / out "+d.gene.outDeg);
+      if(d.row)     api.setSelected("Feature row gene g"+d.row.gene+(d.row.broken?" ← carries g"+d.row.source+" (identity BROKEN)":" (own profile)"));
+      if(d.hopNode) api.setSelected("Gene g"+d.hopNode.id+" · "+(d.hopNode.hub?"HUB receiver":(d.hopNode.reached?d.hopNode.hops+"-hop (reached)":d.hopNode.hops+"-hop (unreached)")));
+      if(d.aurocBar)api.setSelected(d.aurocBar.which+" model · AUROC "+d.aurocBar.value.toFixed(2));
+    },
+    build,
+    snapshot(s){
+      // recompute a stable numeric snapshot independent of build() side-effects
+      const mode=s.mode;
+      const ablIdx=Math.round(s.ablation);
+      const seeds=Math.round(s.seeds);
+      const se=+(0.04/Math.sqrt(Math.max(1,seeds))).toFixed(3);
+      const lists={
+        graph:["full","no_graph_mlp","random_graph","undirected","no_edge_attr"],
+        features:["full","zero_features","random_features","shuffled_features"],
+        aggregation:["depth_curve","sum_aggregation","attention_gat"]
+      };
+      const arr=lists[mode]||lists.graph;
+      const ci=Math.min(arr.length-1,ablIdx);
+      const cond=arr[ci];
+      let auroc,delta,sig;
+      if(mode==="aggregation"&&cond==="depth_curve"){
+        const d=Math.max(1,Math.min(3,Math.round(s.depth)));
+        const da=[ABL.depth_1.auroc,ABL.depth_2.auroc,ABL.depth_3.auroc][d-1];
+        auroc=da; delta=+(da-FULL_AUROC).toFixed(3); sig=(d===2?"ref":"ns");
+      } else {
+        const A=ABL[cond]||ABL.full;
+        auroc=A.auroc; delta=A.delta; sig=A.sig;
+      }
+      return {
+        mode,
+        condition:cond,
+        ablation:ci,
+        seeds,
+        depth:Math.max(1,Math.min(3,Math.round(s.depth))),
+        effort:Math.round(s.effort),
+        aurocFull:+FULL_AUROC.toFixed(3),
+        aurocAblated:+auroc.toFixed(3),
+        deltaAuroc:+(+delta).toFixed(3),
+        stdErr:se,
+        significant:sig!=="ns"&&sig!=="ref"
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F10 · KEGNI and knowledge-graph-enhanced regulatory inference</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no nondeterministic calls) ─
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+  const sig=x=>1/(1+Math.exp(-x));
+
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // LESSON FACTS — Section 5 worked example: TP53 net in 150 sparse K562 cells.
+  // 4 genes: TP53 (TF), CDKN1A (dark target), MDM2 (bridge), HBB (distractor).
+  // ════════════════════════════════════════════════════════════════════════
+  // KG (TransE) distances from TP53, ||v1 - v_j||_kg  (note Step 1 / Step 6)
+  const KGDIST={TP53:0.0, CDKN1A:0.8, MDM2:0.9, HBB:5.2};
+  // expression detection / dropout in the 150-cell dataset (note Step 2)
+  const DROPOUT={TP53:0.20, CDKN1A:0.70, MDM2:0.35, HBB:0.92};
+  // KG entity degree (# of KG relations: pathway+GO+PPI+disease) — drives gate
+  const KGDEG ={TP53:5,  CDKN1A:4,  MDM2:3,  HBB:4};
+  const GENES=["TP53","CDKN1A","MDM2","HBB"];
+  const ROLE ={TP53:"tumor-suppressor TF",CDKN1A:"CDK inhibitor (p21)",MDM2:"E3 ligase / p53 feedback",HBB:"erythroid · hemoglobin"};
+  // KG smoothing path TP53–MDM2–CDKN1A (note Step 4) — HBB has no KG path to TP53
+  const KGPATH=[["TP53","MDM2"],["MDM2","CDKN1A"]];
+
+  // ── gated fusion: gate_i = sigmoid(W_gate·z_expr - W_kg·deg) (note §6) ────
+  // High detection ⇒ trust expression (gate→1); high dropout / high KG degree ⇒ KG (gate→0).
+  function gateOf(g,wExpr,wKg){
+    const detect=1-DROPOUT[g];                 // 0..1 expression detection rate
+    const z=wExpr*(detect-0.5)*6 - wKg*(KGDEG[g]/5)*2.4 + 0.4;
+    return Math.max(0.04,Math.min(0.97,sig(z)));
+  }
+
+  // ── unified embedding "closeness to TP53" after fusion + KG smoothing ─────
+  // expression stream alone is noise for dark genes; KG stream is reliable; the
+  // KG smoother (lambdaKg) pulls KG-linked genes toward TP53 along the path.
+  function unifiedCloseTP53(g,gate,lambdaKg,useKG){
+    if(g==="TP53") return 1.0;
+    // expression-only proximity ≈ noise for high-dropout genes
+    const exprProx=Math.max(0,(1-DROPOUT[g])*0.55 + (prand(g.length*9+3)-0.5)*0.25);
+    if(!useKG) return Math.max(0.02,exprProx);   // KEGNI-noKG baseline
+    // KG proximity from TransE distance (close ⇒ high)
+    const kgProx=Math.exp(-KGDIST[g]/1.6);
+    // smoothing strength along the KG path (TP53–MDM2–CDKN1A); HBB off-path
+    const onPath=(g==="MDM2"||g==="CDKN1A")?1:0;
+    const smooth=onPath*lambdaKg*0.9;
+    // gate blends: low gate ⇒ KG dominates the unified embedding
+    const blended=gate*exprProx + (1-gate)*kgProx + smooth*(kgProx-exprProx);
+    return Math.max(0.02,Math.min(1.0,blended));
+  }
+
+  // ── edge score TP53→g = sigmoid(MLP_edge([z_TP53 || z_g])) ───────────────
+  function edgeScore(g,closeness){
+    if(g==="TP53") return null;
+    return Math.max(0.02,Math.min(0.97, sig((closeness-0.42)*6.2)));
+  }
+
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const wExpr   = s.wExpr;        // 0..1 weight on expression stream
+    const lambdaKg= s.lambdaKg;     // 0..1 KG smoothness strength
+    const dropAmp = s.dropAmp;      // 0..1 how sparse the dataset is (scales dark genes)
+    const focusIdx= Math.round(s.focusGene); // 0..3 which gene to inspect
+
+    const gGraph =api.group("graph");
+    const gFusion=api.group("fusion");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addBig(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSm (txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // TP53 / expression-trusted
+    const GR=new T.Color("#34d399");   // KG-rescued correct
+    const AM=new T.Color("#fbbf24");    // dark / dropout
+    const VI=new T.Color("#a78bfa");    // KG embedding / smoothing
+    const RO=new T.Color("#fb7185");    // false / distractor
+    const SL=new T.Color("#54667c");
+
+    // per-gene effective dropout scaled by dataset sparsity
+    const effDrop={};GENES.forEach(g=>{effDrop[g]=Math.min(0.97,DROPOUT[g]*(0.55+0.9*dropAmp));});
+    function gateEff(g){
+      const detect=1-effDrop[g];
+      const z=wExpr*(detect-0.5)*6 - (1-wExpr)*(KGDEG[g]/5)*2.4 + 0.4;
+      return Math.max(0.04,Math.min(0.97,sig(z)));
+    }
+    const focusGene=GENES[focusIdx];
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: KG embedding geometry (TransE) — close vs far neighbourhoods
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="kg-embed"){
+      // place TP53 at origin; others on a ring whose radius = TransE distance
+      const pos={TP53:new T.Vector3(0,0,0)};
+      const ang={CDKN1A:0.6, MDM2:2.1, HBB:4.0};
+      GENES.forEach(g=>{ if(g==="TP53")return;
+        const r=0.9+KGDIST[g]*0.9;
+        pos[g]=new T.Vector3(Math.cos(ang[g])*r,0,Math.sin(ang[g])*r);
+      });
+      // pathway "shell" rings around TP53 (DNA-damage-response proximity)
+      [1.4,2.4].forEach((rr,k)=>{
+        const pts=[];for(let i=0;i<=48;i++){const a=i/48*Math.PI*2;pts.push(new T.Vector3(Math.cos(a)*rr,0,Math.sin(a)*rr));}
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:k===0?0x24507a:0x1d3550,transparent:true,opacity:0.5})));
+      });
+      // TP53 anchor
+      const enc=new T.Mesh(new T.SphereGeometry(0.42,24,18),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.65,roughness:0.3}));
+      gGraph.add(enc);api.pick(enc,{gene:"TP53",kgDist:0});
+      addBig("TP53","#4dd7ff",1.45,0,0.95,0);
+      // KG relation spokes + entity spheres
+      GENES.forEach(g=>{ if(g==="TP53")return;
+        const p=pos[g], close=KGDIST[g]<2.0;
+        const col=close?VI.clone():SL.clone();
+        const sph=new T.Mesh(new T.SphereGeometry(0.30,18,14),new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.55,roughness:0.4}));
+        sph.position.copy(p);gGraph.add(sph);api.pick(sph,{gene:g,kgDist:KGDIST[g]});
+        // spoke from TP53 to gene, coloured by proximity
+        const lc=close?0x6a5acd:0x2a3a4e;
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0,0,0),p]),new T.LineBasicMaterial({color:lc,transparent:true,opacity:close?0.85:0.4})));
+        addBig(g,close?"#a78bfa":"#7c8aa0",1.15,p.x,p.y+0.62,p.z);
+        addSm("‖v‖="+KGDIST[g].toFixed(1),close?"#c7b8ff":"#6b7a8d",0.34,p.x,p.y-0.04,p.z+0.5);
+      });
+      // KG smoothing path TP53–MDM2–CDKN1A
+      KGPATH.forEach(e=>{const a=pos[e[0]],b=pos[e[1]];
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([a,b]),new T.LineBasicMaterial({color:0x34d399,transparent:true,opacity:0.8})));
+      });
+      addBig("DNA-damage-response shell","#5a73a0",1.05,0,-0.2,3.4);
+      addBig("HBB: distant KG neighbourhood","#fb7185",1.0,pos.HBB.x,0.0,pos.HBB.z-0.9);
+
+      const dC=KGDIST.CDKN1A, dH=KGDIST.HBB;
+      sceneSnap={mode,kgDistCDKN1A:dC,kgDistHBB:dH,gateFocus:null,closeFocus:null,
+                 scoreCDKN1A:null,scoreHBB:null,fpRescued:null};
+      return{
+        badge:"KG embedding · TransE geometry · 4 entities",
+        formula:"f(h,r,t) = −‖e<sub>h</sub> + r − e<sub>t</sub>‖₂ &nbsp;⇒&nbsp; e<sub>TP53</sub> ≈ e<sub>CDKN1A</sub> (shared pathway)",
+        insight:"TransE places genes so true triples satisfy h+r≈t. TP53, CDKN1A and MDM2 share the DNA-damage-response pathway, so their entity vectors land close: ‖v<sub>TP53</sub>−v<sub>CDKN1A</sub>‖="+dC.toFixed(1)+". HBB lives in the erythroid neighbourhood, far away: ‖v<sub>TP53</sub>−v<sub>HBB</sub>‖="+dH.toFixed(1)+". The green path is the KG smoothing route TP53→MDM2→CDKN1A.",
+        state:"Inner shell = DNA-damage-response co-members (violet). HBB (rose) is "+ (dH/dC).toFixed(1) +"× farther in KG space than CDKN1A. This geometry is the prior KEGNI uses when expression fails.",
+        metrics:{kgDistCDKN1A:dC.toFixed(1),kgDistHBB:dH.toFixed(1),gateFocus:"—",edgeScore:"—"},
+        focus:{center:[0,0,1],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: Gated fusion — per-gene gate = trust(expression) vs trust(KG)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="gated-fusion"){
+      const xPos={TP53:-4.2,CDKN1A:-1.4,MDM2:1.4,HBB:4.2};
+      GENES.forEach(g=>{
+        const gate=gateEff(g);
+        const x=xPos[g], H=3.4;
+        // a vertical "gate bar": top fraction = expression (cyan), bottom = KG (violet)
+        const hExpr=Math.max(0.05,gate*H), hKg=Math.max(0.05,(1-gate)*H);
+        const isFocus=(g===focusGene);
+        const eMat=new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:isFocus?0.8:0.32,roughness:0.4,transparent:!isFocus,opacity:isFocus?1:0.6});
+        const kMat=new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:isFocus?0.8:0.32,roughness:0.4,transparent:!isFocus,opacity:isFocus?1:0.6});
+        const be=new T.Mesh(new T.BoxGeometry(1.5,hExpr,1.3),eMat);be.position.set(x,hKg+hExpr/2,0);gBars.add(be);
+        const bk=new T.Mesh(new T.BoxGeometry(1.5,hKg,1.3),kMat);bk.position.set(x,hKg/2,0);gBars.add(bk);
+        api.pick(be,{gene:g,gate:gate,stream:"expr"});api.pick(bk,{gene:g,gate:gate,stream:"kg"});
+        addBig(g,isFocus?"#ffffff":"#cfe0f0",1.25,x,H+0.95,0);
+        addBig("gate "+gate.toFixed(2),gate>0.5?"#4dd7ff":"#a78bfa",1.15,x,H+0.5,0);
+        addSm((effDrop[g]*100).toFixed(0)+"% zeros",effDrop[g]>0.6?"#fbbf24":"#7c8aa0",0.36,x,-0.55,0);
+        // focus arrow
+        if(isFocus){const c=new T.Mesh(new T.ConeGeometry(0.18,0.5,8),new T.MeshBasicMaterial({color:0xfde68a}));c.position.set(x,H+1.45,0);gBars.add(c);}
+      });
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5.6,0,0),new T.Vector3(5.6,0,0)]),new T.LineBasicMaterial({color:0x1e3046})));
+      addBig("expression stream (gate)","#4dd7ff",1.1,-3.3,4.6,0);
+      addBig("KG stream (1−gate)","#a78bfa",1.1,3.0,0.55,0);
+
+      const gF=gateEff(focusGene), gC=gateEff("CDKN1A"), gT=gateEff("TP53"), gH=gateEff("HBB");
+      sceneSnap={mode,gateFocus:+gF.toFixed(3),gateCDKN1A:+gC.toFixed(3),gateTP53:+gT.toFixed(3),gateHBB:+gH.toFixed(3),
+                 kgDistCDKN1A:KGDIST.CDKN1A,kgDistHBB:KGDIST.HBB,scoreCDKN1A:null,scoreHBB:null,fpRescued:null};
+      return{
+        badge:"Gated fusion · focus "+focusGene+" · gate "+gF.toFixed(2),
+        formula:"gate<sub>i</sub> = σ(W<sub>g</sub>z<sub>expr</sub> + W<sub>k</sub>e<sub>kg</sub>) &nbsp;·&nbsp; z<sub>i</sub> = gate·z<sub>expr</sub> + (1−gate)·MLP<sub>kg</sub>(e<sub>kg</sub>)",
+        insight:"The gate is a per-gene trust dial. CDKN1A has "+(effDrop.CDKN1A*100).toFixed(0)+"% dropout in this dataset, so its expression stream is noise and the gate collapses to "+gC.toFixed(2)+" — the unified embedding is ~"+((1-gC)*100).toFixed(0)+"% KG. TP53 is well-measured, gate "+gT.toFixed(2)+", mostly expression. This is the dark-gene rescue mechanism.",
+        state:"Cyan = expression share (gate), violet = KG share (1−gate). Dark genes (high % zeros) auto-fall back to the knowledge graph. Drag wExpr and dataset-sparsity to watch gates shift.",
+        metrics:{kgDistCDKN1A:KGDIST.CDKN1A.toFixed(1),kgDistHBB:KGDIST.HBB.toFixed(1),gateFocus:gF.toFixed(2),edgeScore:"—"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: Edge prediction — KEGNI (with KG) vs KEGNI-noKG baseline
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="edge-predict"){
+      const targets=["CDKN1A","MDM2","HBB"];
+      const xPos=[-3.4,0,3.4];
+      // TP53 source node at top
+      const src=new T.Vector3(0,3.6,0);
+      const sm=new T.Mesh(new T.SphereGeometry(0.4,24,18),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.7,roughness:0.3}));
+      sm.position.copy(src);gGraph.add(sm);api.pick(sm,{gene:"TP53"});
+      addBig("TP53 (TF)","#4dd7ff",1.4,0,4.5,0);
+
+      const scoresKG={}, scoresNo={};
+      targets.forEach((g,idx)=>{
+        const gate=gateEff(g);
+        const closeKG=unifiedCloseTP53(g,gate,lambdaKg,true);
+        const closeNo=unifiedCloseTP53(g,gate,lambdaKg,false);
+        const sKG=edgeScore(g,closeKG), sNo=edgeScore(g,closeNo);
+        scoresKG[g]=sKG;scoresNo[g]=sNo;
+        const x=xPos[idx];
+        const tgt=new T.Vector3(x,0,0);
+        const trueEdge=(g!=="HBB"); // TP53→CDKN1A, TP53→MDM2 are real; TP53→HBB is false
+        const col=trueEdge?GR.clone():RO.clone();
+        const node=new T.Mesh(new T.SphereGeometry(0.32,18,14),new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.55,roughness:0.4}));
+        node.position.copy(tgt);gGraph.add(node);api.pick(node,{gene:g,scoreKG:sKG,scoreNoKG:sNo,trueEdge});
+        addBig(g,trueEdge?"#34d399":"#fb7185",1.2,x,-0.7,0);
+        // KEGNI edge (thick = score), coloured green if correctly high on a true edge
+        const w=0.04+sKG*0.16;
+        const edgeC=trueEdge?GR:RO;
+        const mid=src.clone().lerp(tgt,0.5);
+        const dir=tgt.clone().sub(src);const len=dir.length();
+        const cyl=new T.Mesh(new T.CylinderGeometry(w,w,len,12),new T.MeshStandardMaterial({color:edgeC,emissive:edgeC,emissiveIntensity:0.5,roughness:0.5,transparent:true,opacity:0.92}));
+        cyl.position.copy(mid);
+        const up=new T.Vector3(0,1,0);cyl.quaternion.setFromUnitVectors(up,dir.clone().normalize());
+        gGraph.add(cyl);
+        addBig("KEGNI "+sKG.toFixed(2),trueEdge?"#34d399":"#fb7185",1.15,x-0.1,1.9,0.0);
+        // bars: KEGNI vs noKG side by side under each target
+        [["KG",sKG,GR],["noKG",sNo,AM]].forEach((b,bi)=>{
+          const bx=x-0.55+bi*1.1, h=0.1+b[1]*2.6;
+          const bc=b[2].clone();
+          const bar=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),new T.MeshStandardMaterial({color:bc,emissive:bc,emissiveIntensity:0.4,roughness:0.4}));
+          bar.position.set(bx,-1.4-h/2,0);gBars.add(bar);
+          addSm(b[0],bi===0?"#34d399":"#fbbf24",0.32,bx,-1.25,0);
+          addSm(b[1].toFixed(2),bi===0?"#9af0c8":"#fde68a",0.30,bx,-1.55-h,0);
+        });
+      });
+      // decision threshold line at 0.5
+      addBig("threshold 0.50","#7c8aa0",0.95,-3.4,1.0,0);
+
+      const fp=(scoresNo.CDKN1A<0.5?1:0); // KEGNI-noKG misses the dark target
+      const rescued=(scoresKG.CDKN1A>=0.5 && scoresNo.CDKN1A<0.5)?1:0;
+      sceneSnap={mode,scoreCDKN1A_KG:+scoresKG.CDKN1A.toFixed(3),scoreCDKN1A_noKG:+scoresNo.CDKN1A.toFixed(3),
+                 scoreHBB_KG:+scoresKG.HBB.toFixed(3),scoreMDM2_KG:+scoresKG.MDM2.toFixed(3),
+                 gateCDKN1A:+gateEff("CDKN1A").toFixed(3),kgDistCDKN1A:KGDIST.CDKN1A,kgDistHBB:KGDIST.HBB,
+                 fpRescued:rescued};
+      return{
+        badge:"Edge prediction · KEGNI vs no-KG · rescue="+(rescued?"yes":"no"),
+        formula:"score(TP53→g) = σ(MLP<sub>edge</sub>[ z<sub>TP53</sub> ∥ z<sub>g</sub> ])",
+        insight:"With KG, CDKN1A's embedding is anchored to the DNA-damage context, so TP53→CDKN1A scores "+scoresKG.CDKN1A.toFixed(2)+" — correctly positive. Strip the KG (amber bars) and CDKN1A is expression noise: the score collapses to "+scoresNo.CDKN1A.toFixed(2)+", a missed edge. HBB stays low ("+scoresKG.HBB.toFixed(2)+") because its KG neighbourhood is far. Green edges = true regulation, rose = the distractor.",
+        state:"KEGNI rescues the dark target: TP53→CDKN1A "+scoresNo.CDKN1A.toFixed(2)+" (no-KG) → "+scoresKG.CDKN1A.toFixed(2)+" (KEGNI). HBB correctly stays at "+scoresKG.HBB.toFixed(2)+". Raise λ_kg to strengthen the smoothing rescue.",
+        metrics:{kgDistCDKN1A:KGDIST.CDKN1A.toFixed(1),kgDistHBB:KGDIST.HBB.toFixed(1),gateFocus:gateEff("CDKN1A").toFixed(2),edgeScore:scoresKG.CDKN1A.toFixed(2)},
+        focus:{center:[0,1,0],radius:13}
+      };
+    }
+
+    return {badge:"F10",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f10",
+    kind:"kegni-knowledge-graph-grn",
+    eyebrow:"Block F · GRN Inference",
+    title:"F10 · KEGNI and knowledge-graph-enhanced regulatory inference",
+    subtitle:"A 4-gene TP53 network in 150 sparse K562 cells. Three views: the TransE knowledge-graph geometry, per-gene gated fusion (expression vs KG), and the edge-prediction rescue of the dark gene CDKN1A.",
+    selectedLabel:"Entity / edge",
+    selectedHint:"Click a gene, gate bar, or edge.",
+    modes:[
+      {value:"kg-embed",     label:"KG embedding (TransE geometry)"},
+      {value:"gated-fusion", label:"Gated fusion (expression vs KG)"},
+      {value:"edge-predict", label:"Edge prediction (KEGNI vs no-KG)"}
+    ],
+    params:[
+      {key:"wExpr",    label:"expression-stream weight W_g",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["gated-fusion","edge-predict"]},
+      {key:"lambdaKg", label:"KG smoothness λ_kg",min:0,max:1,step:0.05,value:0.7,
+       fmt:v=>v.toFixed(2),modes:["edge-predict"]},
+      {key:"dropAmp",  label:"dataset sparsity (dropout scale)",min:0,max:1,step:0.05,value:0.85,
+       fmt:v=>v.toFixed(2),modes:["gated-fusion","edge-predict"]},
+      {key:"focusGene",label:"focus gene (0=TP53 1=CDKN1A 2=MDM2 3=HBB)",min:0,max:3,step:1,value:1,
+       fmt:v=>["TP53","CDKN1A","MDM2","HBB"][Math.round(v)],modes:["gated-fusion"]}
+    ],
+    metrics:[
+      {key:"kgDistCDKN1A",label:"‖v_TP53−v_CDKN1A‖ (KG)",accent:"violet"},
+      {key:"kgDistHBB",   label:"‖v_TP53−v_HBB‖ (KG)",accent:"rose"},
+      {key:"gateFocus",   label:"gate (focus gene)",accent:"cyan"},
+      {key:"edgeScore",   label:"score TP53→CDKN1A",accent:"green"}
+    ],
+    layers:[
+      {group:"graph",  label:"KG graph / edges"},
+      {group:"fusion", label:"Fusion"},
+      {group:"bars",   label:"Gate / score bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Dark gene (CDKN1A)",
+      on:api=>{api.setParam("focusGene",1);}
+    },
+    secondary:{
+      label:"Distractor (HBB)",
+      on:api=>{api.setParam("focusGene",3);}
+    },
+    defaultCam:{theta:-0.5,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=expression-trusted · <span style="color:#a78bfa">violet</span>=KG embedding/smoothing · <span style="color:#34d399">green</span>=KG-rescued true edge · <span style="color:#fbbf24">amber</span>=no-KG baseline · <span style="color:#fb7185">rose</span>=HBB distractor.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="gated-fusion") api.frame([0,2,0],13);
+      else if(s.mode==="edge-predict") api.frame([0,1,0],13);
+      else api.frame([0,0,1],13);
+    },
+    onSelect(api,d){
+      if(d.gene && d.kgDist!=null) api.setSelected(d.gene+" · ‖v‖="+d.kgDist.toFixed(1)+" from TP53");
+      else if(d.gene && d.gate!=null) api.setSelected(d.gene+" · gate "+d.gate.toFixed(2)+" · stream:"+d.stream);
+      else if(d.gene && d.scoreKG!=null) api.setSelected(d.gene+" · KEGNI "+d.scoreKG.toFixed(2)+" vs no-KG "+d.scoreNoKG.toFixed(2)+(d.trueEdge?" · TRUE edge":" · false edge"));
+      else if(d.gene) api.setSelected(d.gene);
+    },
+    build,
+    snapshot(s){
+      const wExpr=s.wExpr, lambdaKg=s.lambdaKg, dropAmp=s.dropAmp;
+      const fIdx=Math.round(s.focusGene);
+      const eff={};GENES.forEach(g=>{eff[g]=Math.min(0.97,DROPOUT[g]*(0.55+0.9*dropAmp));});
+      function gE(g){const detect=1-eff[g];const z=wExpr*(detect-0.5)*6-(1-wExpr)*(KGDEG[g]/5)*2.4+0.4;return Math.max(0.04,Math.min(0.97,sig(z)));}
+      const gC=gE("CDKN1A");
+      const closeKG=unifiedCloseTP53("CDKN1A",gC,lambdaKg,true);
+      const closeNo=unifiedCloseTP53("CDKN1A",gC,lambdaKg,false);
+      const sKG=edgeScore("CDKN1A",closeKG), sNo=edgeScore("CDKN1A",closeNo);
+      const gHBB=gE("HBB");
+      const sHBB=edgeScore("HBB",unifiedCloseTP53("HBB",gHBB,lambdaKg,true));
+      return {
+        mode:s.mode,
+        wExpr:+wExpr.toFixed(3),
+        lambdaKg:+lambdaKg.toFixed(3),
+        dropAmp:+dropAmp.toFixed(3),
+        focusGene:["TP53","CDKN1A","MDM2","HBB"][fIdx],
+        kgDistCDKN1A:KGDIST.CDKN1A,
+        kgDistHBB:KGDIST.HBB,
+        gateCDKN1A:+gC.toFixed(3),
+        gateHBB:+gHBB.toFixed(3),
+        scoreCDKN1A_KG:+sKG.toFixed(3),
+        scoreCDKN1A_noKG:+sNo.toFixed(3),
+        scoreHBB_KG:+sHBB.toFixed(3),
+        darkGeneRescued:(sKG>=0.5 && sNo<0.5)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

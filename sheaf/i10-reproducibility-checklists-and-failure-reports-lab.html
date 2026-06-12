@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I10 · Reproducibility checklists and failure reports</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── lesson FACTS (note §5 DREAM4 Ecoli1 + §7 misconceptions) ─────────────
+  // 10-gene SOS GRN, 14 directed gold-standard edges, d_in=8.
+  const GENES=["lexA","recA","ssB","uvrA","uvrB","sulA","recN","dinI","dinD","umuC"];
+  const GIDX={lexA:0,recA:1,ssB:2,uvrA:3,uvrB:4,sulA:5,recN:6,dinI:7,dinD:8,umuC:9};
+  const EDGES=[
+    ["lexA","recA"],["lexA","ssB"],["lexA","uvrA"],["lexA","uvrB"],
+    ["lexA","sulA"],["lexA","recN"],["lexA","dinI"],["recA","umuC"],
+    ["recA","dinD"],["uvrA","uvrB"],["ssB","dinD"],["sulA","recN"],
+    ["dinI","dinD"],["umuC","dinD"]
+  ];
+  const NGENES=10, NEDGES=14, DIN=8;
+  // §7 misconception 4: 5 seeds, GCN ≈ 0.65 mean, std ≈ 0.04.
+  const SEEDS=[42,43,44,45,46];
+  const CLEAN_AUROC=0.65;      // honest test AUROC (no leakage)
+  const STD_BASE=0.040;        // across-seed std on this tiny 10-gene graph
+  const LEAK_MAX_JUMP=0.20;    // §7+§8.4: full leakage lifts 0.65 → 0.85
+  // five reproducibility layers (note §3)
+  const LAYERS=[
+    {name:"Seed",     tag:"set_all_seeds()",  risk:"PRNG drift"},
+    {name:"Env",      tag:"pip freeze",       risk:"silent default change"},
+    {name:"Data",     tag:"graph_hash",       risk:"different graph, silent"},
+    {name:"Model",    tag:"+ arch config",    risk:"cannot rebuild model"},
+    {name:"Eval",     tag:"fixed split",      risk:"leakage / optimistic"}
+  ];
+
+  // ── deterministic per-seed AUROC model ───────────────────────────────────
+  // base mean shifted by leakage; per-seed jitter scaled by (1+extraStd).
+  function seedAuroc(seedIdx,baseMean,stdScale){
+    const j=(prand(seedIdx*13+7)-0.5)*2;        // −1..1
+    const a=baseMean+j*STD_BASE*stdScale;
+    return Math.max(0.50,Math.min(0.98,a));
+  }
+  function aurocStats(baseMean,stdScale){
+    const vals=SEEDS.map((s,i)=>seedAuroc(i,baseMean,stdScale));
+    const m=vals.reduce((p,c)=>p+c,0)/vals.length;
+    const v=vals.reduce((p,c)=>p+(c-m)*(c-m),0)/vals.length;
+    const sd=Math.sqrt(v);
+    return {vals,mean:m,std:sd,lo:Math.min.apply(null,vals),hi:Math.max.apply(null,vals)};
+  }
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const sealed   =Math.round(s.sealed);     // # of layers controlled (0..5)
+    const leakPct  =Math.round(s.leakPct);    // % test edges leaked into MP graph
+    const nSeeds   =Math.round(s.nSeeds);     // seeds used in CI
+    const gapPP    =Math.round(s.gapPP);      // claimed improvement in AUROC points
+
+    const gLayers=api.group("layers");
+    const gGraph =api.group("graph");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // controlled / honest
+    const GR=new T.Color("#34d399");   // pass / kept
+    const AM=new T.Color("#fbbf24");   // warning / claim
+    const VI=new T.Color("#a78bfa");   // inflation / leakage
+    const RO=new T.Color("#fb7185");   // fail / unreliable
+    const SL=new T.Color("#54667c");   // uncontrolled
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: layers — the five-layer reproducibility stack
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="layers"){
+      const W=4.0, H=0.86, GAP=0.16;
+      const baseY=-(LAYERS.length*(H+GAP))/2;
+      LAYERS.forEach((L,i)=>{
+        const y=baseY+i*(H+GAP)+H/2;
+        const isSealed=(i<sealed);
+        const col=isSealed?CY.clone():SL.clone();
+        const slab=new T.Mesh(
+          new T.BoxGeometry(W,H,1.5),
+          new T.MeshStandardMaterial({
+            color:col,
+            emissive:isSealed?CY.clone().multiplyScalar(0.55):new T.Color("#101c2c"),
+            emissiveIntensity:isSealed?0.62:0.16,
+            roughness:0.42,
+            transparent:!isSealed, opacity:isSealed?1.0:0.5
+          })
+        );
+        slab.position.set(0,y,0);
+        gLayers.add(slab);
+        api.pick(slab,{layer:{idx:i,name:L.name,sealed:isSealed,risk:L.risk,tag:L.tag}});
+
+        addLbl("L"+(i+1)+" "+L.name, isSealed?"#4dd7ff":"#7d8ca0", 1.45, -W/2-0.35, y, 0.0);
+        addSlbl(isSealed?L.tag:("✗ "+L.risk), isSealed?"#34d399":"#fb7185", 0.40, W/2+0.4, y, 0.0);
+
+        // a "seal" check cap on controlled layers
+        if(isSealed){
+          const cap=new T.Mesh(new T.SphereGeometry(0.14,12,10),new T.MeshStandardMaterial({color:GR,emissive:GR,emissiveIntensity:0.8,roughness:0.3}));
+          cap.position.set(W/2+0.05,y,0.8);
+          gLayers.add(cap);
+        }
+      });
+
+      // reproducibility "ladder" — 1-AUROC-point target only met at sealed==5
+      const repro=sealed/LAYERS.length;            // 0..1
+      const within1pt=(sealed===LAYERS.length);
+      addLbl(sealed+" / 5 layers sealed", within1pt?"#34d399":"#fbbf24", 1.6, 0, baseY-0.7, 0);
+      addLbl(within1pt?"reproducible: ≤1 AUROC pt":"NOT reproducible", within1pt?"#34d399":"#fb7185", 1.25, 0, baseY-1.5, 0);
+
+      const driftPts=+(LEAK_MAX_JUMP*100*(1-repro)).toFixed(1);  // worst-case unexplained drift
+      sceneSnap={mode,sealed,leakPct:0,nSeeds,gapPP,reproFraction:+repro.toFixed(3),
+                 reproducible:within1pt,worstDriftPP:driftPts,meanAuroc:null,inflatedAuroc:null,
+                 stdAuroc:null,significant:null};
+
+      return {
+        badge:"Five layers · "+sealed+"/5 sealed",
+        formula:"reproducible ⇔ seed ∧ env ∧ data ∧ model ∧ eval all pinned",
+        insight:"Reproducibility on the DREAM4 Ecoli1 10-gene GRN needs all five control layers. A grey slab is an open hole: an unsealed layer lets results drift silently. Only when L1–L5 are all cyan can another lab land within 1 AUROC point. Drag <b>layers sealed</b> to seal them bottom-up.",
+        state:within1pt
+          ? "All 5 layers sealed → same code + same machine reproduces test AUROC to 4 decimals."
+          : (LAYERS.length-sealed)+" layer(s) open. Worst-case unexplained drift up to "+driftPts+" AUROC points.",
+        metrics:{
+          reproFraction:(repro*100).toFixed(0)+"%",
+          worstDrift:driftPts+"pp",
+          nSeeds:""+nSeeds,
+          verdict:within1pt?"REPRODUCIBLE":"AT RISK"
+        },
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: leakage — test-edge leakage inflates AUROC (note §7.3, §8.4)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="leakage"){
+      const R=3.5;
+      // place the 10 SOS genes on a ring
+      const pos=GENES.map((g,i)=>{
+        const ang=i/NGENES*Math.PI*2 - Math.PI/2;
+        return new T.Vector3(Math.cos(ang)*R,0,Math.sin(ang)*R);
+      });
+      // deterministically tag the held-out TEST set (3 of 14 ≈ 21%, ~test_ratio 0.15)
+      const isTest=EDGES.map((e,i)=>prand(i*9+5)>0.55);
+      const nTest=isTest.filter(Boolean).length;
+      const leakedCount=Math.round(nTest*leakPct/100);
+      let leakedSeen=0;
+
+      // gene nodes
+      GENES.forEach((g,i)=>{
+        const isHub=(g==="lexA");           // SOS master regulator (out-degree 7)
+        const col=isHub?AM.clone():CY.clone();
+        const sphere=new T.Mesh(
+          new T.SphereGeometry(isHub?0.40:0.26,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4})
+        );
+        sphere.position.copy(pos[i]);
+        gGraph.add(sphere);
+        api.pick(sphere,{gene:{id:i,name:g,hub:isHub}});
+        addSlbl(g, isHub?"#fbbf24":"#9fb4c9", 0.34, pos[i].x*1.18, 0.55, pos[i].z*1.18);
+      });
+
+      // edges: message-passing (train) edges solid; test edges dashed; leaked test edges glow violet
+      EDGES.forEach((e,i)=>{
+        const a=pos[GIDX[e[0]]], b=pos[GIDX[e[1]]];
+        const test=isTest[i];
+        let leaked=false;
+        if(test){ if(leakedSeen<leakedCount){leaked=true; leakedSeen++;} }
+        let col, op;
+        if(!test){ col=0x2a4860; op=0.55; }          // train MP edge
+        else if(leaked){ col=VI.getHex(); op=0.95; }  // leaked into MP graph (BAD)
+        else { col=RO.getHex(); op=0.5; }             // honest held-out test edge
+        const line=new T.Line(
+          new T.BufferGeometry().setFromPoints([a.clone(),b.clone()]),
+          new T.LineBasicMaterial({color:col,transparent:true,opacity:op})
+        );
+        gGraph.add(line);
+        // arrowhead toward target
+        const dir=b.clone().sub(a); const len=dir.length(); dir.normalize();
+        const head=new T.Mesh(new T.ConeGeometry(0.10,0.26,8),new T.MeshBasicMaterial({color:col}));
+        const hp=a.clone().add(dir.clone().multiplyScalar(len*0.62));
+        head.position.copy(hp);
+        head.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+        gGraph.add(head);
+        if(leaked){
+          const halo=new T.Mesh(new T.SphereGeometry(0.16,10,10),new T.MeshBasicMaterial({color:VI,transparent:true,opacity:0.5}));
+          halo.position.copy(hp); gGraph.add(halo);
+        }
+      });
+
+      // AUROC inflation read-out as twin bars (honest vs leaked)
+      const leakFrac=(nTest>0)?leakedCount/nTest:0;
+      const inflated=CLEAN_AUROC+LEAK_MAX_JUMP*leakFrac;
+      const honestY=0.15+CLEAN_AUROC*3.2, leakY=0.15+inflated*3.2;
+      const bx=R+2.4;
+      [["honest",CLEAN_AUROC,honestY,GR,bx-0.8],["reported",inflated,leakY,(leakFrac>0?VI:GR),bx+0.8]].forEach(b=>{
+        const bar=new T.Mesh(new T.BoxGeometry(1.1,b[2],1.1),new T.MeshStandardMaterial({color:b[3],emissive:b[3].clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+        bar.position.set(b[4],b[2]/2-1.5,0);
+        gBars.add(bar);
+        addLbl((b[1]*100).toFixed(0)+"%", b[3].getStyle(), 1.4, b[4], b[2]-1.5+0.5, 0);
+        addSlbl(b[0], b[3].getStyle(), 0.36, b[4], -1.7, 0);
+      });
+      addLbl("leakage = "+leakPct+"%", leakPct>0?"#a78bfa":"#34d399", 1.3, bx, -2.4, 0);
+
+      const inflatePP=+((inflated-CLEAN_AUROC)*100).toFixed(1);
+      sceneSnap={mode,sealed:5,leakPct,nSeeds,gapPP,nTestEdges:nTest,leakedEdges:leakedCount,
+                 meanAuroc:+CLEAN_AUROC.toFixed(3),inflatedAuroc:+inflated.toFixed(3),
+                 inflationPP:inflatePP,reproducible:leakPct===0,stdAuroc:null,significant:null};
+
+      return {
+        badge:"Leakage audit · "+leakedCount+"/"+nTest+" test edges leaked",
+        formula:"leak: test edge ∈ MP graph ⇒ AUROC ↑ "+inflatePP+" pp (artifact)",
+        insight:"Of "+NEDGES+" gold-standard SOS edges, "+nTest+" are held out as the test set (dashed rose). Pushing them into the message-passing graph lets the model 'see' answers at scoring time — those edges glow violet. The reported AUROC climbs from the honest "+(CLEAN_AUROC*100).toFixed(0)+"% with zero scientific gain. Drag <b>leakage %</b>.",
+        state:leakPct===0
+          ? "Leakage check PASS: 0 test edges in the message-passing graph. Reported "+(CLEAN_AUROC*100).toFixed(0)+"% is honest."
+          : leakedCount+" of "+nTest+" test edges leaked → AUROC inflated +"+inflatePP+"pp to "+(inflated*100).toFixed(0)+"% (optimistic, invalid).",
+        metrics:{
+          reproFraction:leakPct===0?"100%":"—",
+          worstDrift:"+"+inflatePP+"pp",
+          nSeeds:""+nSeeds,
+          verdict:leakPct===0?"NO LEAKAGE":"LEAKED"
+        },
+        focus:{center:[1.0,-0.5,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: multiseed — multi-seed CI & the > 2·std significance rule (§7.4)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="multiseed"){
+      const usedSeeds=SEEDS.slice(0,Math.max(2,nSeeds));
+      // Baseline (GCN) vs SheafGRN; claimed gap = gapPP points on the mean.
+      const baseMean=CLEAN_AUROC;
+      const sheafMean=CLEAN_AUROC+gapPP/100;
+      // fewer seeds → noisier estimate of the mean (std of the mean grows)
+      const stdScale=Math.sqrt(5/usedSeeds.length);
+      const A=aurocStats(baseMean, stdScale);                 // GCN baseline
+      const B=aurocStats(sheafMean, stdScale*0.9);            // SheafGRN
+      // significance: claim only if gap > 2·(pooled std)
+      const pooledStd=(A.std+B.std)/2;
+      const significant=(sheafMean-baseMean) > 2*pooledStd;
+
+      const yS=3.4, y0=-1.6;
+      const groups=[
+        {label:"GCN",   mean:A.mean, std:A.std, vals:A.vals, x:-2.4, col:CY},
+        {label:"Sheaf", mean:B.mean, std:B.std, vals:B.vals, x: 2.4, col:significant?GR:AM}
+      ];
+      groups.forEach(g=>{
+        const h=g.mean*yS;
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.4),new T.MeshStandardMaterial({color:g.col,emissive:g.col.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.42}));
+        bar.position.set(g.x,y0+h/2,-0.4);
+        gBars.add(bar);
+        api.pick(bar,{model:{name:g.label,mean:g.mean,std:g.std}});
+        addLbl((g.mean*100).toFixed(1)+"%", g.col.getStyle(), 1.45, g.x, y0+h+0.95, -0.4);
+        addSlbl(g.label, g.col.getStyle(), 0.40, g.x, y0-0.45, -0.4);
+
+        // ±std error whisker
+        const top=y0+ (g.mean+g.std)*yS, bot=y0+(g.mean-g.std)*yS;
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(g.x,bot,-0.4),new T.Vector3(g.x,top,-0.4)]),new T.LineBasicMaterial({color:0xf8fafc})));
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(g.x-0.3,top,-0.4),new T.Vector3(g.x+0.3,top,-0.4)]),new T.LineBasicMaterial({color:0xf8fafc})));
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(g.x-0.3,bot,-0.4),new T.Vector3(g.x+0.3,bot,-0.4)]),new T.LineBasicMaterial({color:0xf8fafc})));
+        addSlbl("±"+(g.std*100).toFixed(1), "#cdd9e6", 0.30, g.x+0.95, y0+g.mean*yS, -0.4);
+
+        // per-seed dots in front
+        g.vals.forEach((v,k)=>{
+          const dot=new T.Mesh(new T.SphereGeometry(0.10,8,8),new T.MeshStandardMaterial({color:g.col,emissive:g.col,emissiveIntensity:0.85,roughness:0.3}));
+          dot.position.set(g.x-0.5+ (k/(g.vals.length-1||1))*1.0, y0+v*yS, 1.0);
+          gBars.add(dot);
+        });
+      });
+
+      // 2·std threshold band around baseline mean
+      const thrTop=y0+(baseMean+2*pooledStd)*yS;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-4.2,thrTop,-0.4),new T.Vector3(4.2,thrTop,-0.4)]),new T.LineBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.85})));
+      addLbl("baseline + 2·std", "#fb7185", 1.05, 0, thrTop+0.5, -0.4);
+
+      const claimPP=+(gapPP).toFixed(1);
+      const needPP=+((2*pooledStd)*100).toFixed(1);
+      sceneSnap={mode,sealed:5,leakPct:0,nSeeds:usedSeeds.length,gapPP,
+                 meanAuroc:+A.mean.toFixed(3),sheafMean:+B.mean.toFixed(3),stdAuroc:+pooledStd.toFixed(3),
+                 claimPP,thresholdPP:needPP,significant,reproducible:true,inflatedAuroc:null};
+
+      return {
+        badge:"Multi-seed CI · "+usedSeeds.length+" seeds · "+(significant?"significant":"within noise"),
+        formula:"claim gain ⇔ Δμ > 2·σ   (Δμ="+claimPP+"pp, 2σ="+needPP+"pp)",
+        insight:"Each model is run over "+usedSeeds.length+" seeds ("+usedSeeds.join(", ")+"). Dots are per-seed test AUROC; whiskers are ±1 std. On this 10-gene graph std≈"+(STD_BASE*100).toFixed(0)+"pp, so a claimed "+claimPP+"pp gain is real only if it clears the rose 2·std line. Fewer seeds widen the whiskers. Drag <b>claimed gap</b> and <b>seeds</b>.",
+        state:significant
+          ? "Δμ "+claimPP+"pp > 2·std "+needPP+"pp → SheafGRN gain is statistically meaningful."
+          : "Δμ "+claimPP+"pp ≤ 2·std "+needPP+"pp → within seed noise; do NOT claim an improvement.",
+        metrics:{
+          reproFraction:"100%",
+          worstDrift:"±"+(pooledStd*100).toFixed(1)+"pp",
+          nSeeds:""+usedSeeds.length,
+          verdict:significant?"SIGNIFICANT":"NOISE"
+        },
+        focus:{center:[0,0.6,0],radius:12}
+      };
+    }
+
+    return {badge:"I10",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i10",
+    kind:"reproducibility-checklists",
+    eyebrow:"Block I · Implementation",
+    title:"I10 · Reproducibility checklists and failure reports",
+    subtitle:"On the DREAM4 Ecoli1 10-gene SOS network: seal the five control layers, audit test-edge leakage, and require Δμ > 2·std before claiming a gain.",
+    selectedLabel:"Element",
+    selectedHint:"Click a layer slab, a gene, or a bar.",
+    modes:[
+      {value:"layers",    label:"Five layers (the control stack)"},
+      {value:"leakage",   label:"Leakage audit (AUROC inflation)"},
+      {value:"multiseed", label:"Multi-seed CI (> 2·std rule)"}
+    ],
+    params:[
+      {key:"sealed",  label:"layers sealed (0–5)",min:0,max:5,step:1,value:3,
+       fmt:v=>Math.round(v)+"/5",modes:["layers"]},
+      {key:"leakPct", label:"test-edge leakage (%)",min:0,max:100,step:5,value:0,
+       fmt:v=>Math.round(v)+"%",modes:["leakage"]},
+      {key:"nSeeds",  label:"# seeds in CI",min:2,max:5,step:1,value:5,
+       fmt:v=>Math.round(v).toString(),modes:["multiseed"]},
+      {key:"gapPP",   label:"claimed gap (AUROC pts)",min:0,max:12,step:1,value:2,
+       fmt:v=>Math.round(v)+"pp",modes:["multiseed"]}
+    ],
+    metrics:[
+      {key:"reproFraction",label:"Reproducibility",accent:"cyan"},
+      {key:"worstDrift",   label:"Drift / spread",  accent:"violet"},
+      {key:"nSeeds",       label:"# seeds",         accent:"amber"},
+      {key:"verdict",      label:"Verdict",         accent:"green"}
+    ],
+    layers:[
+      {group:"layers", label:"Layer stack"},
+      {group:"graph",  label:"GRN / leakage"},
+      {group:"bars",   label:"AUROC bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Seal all 5",
+      on:api=>{api.setMode("layers");api.setParam("sealed",5);}
+    },
+    secondary:{
+      label:"Full leak (100%)",
+      on:api=>{api.setMode("leakage");api.setParam("leakPct",100);}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=sealed/honest · <span style="color:#34d399">green</span>=pass · <span style="color:#fbbf24">amber</span>=hub / claim · <span style="color:#a78bfa">violet</span>=leakage / inflation · <span style="color:#fb7185">rose</span>=test edge / fail · grey=uncontrolled layer.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="leakage") api.frame([1.0,-0.5,0],13);
+      else if(s.mode==="multiseed") api.frame([0,0.6,0],12);
+      else api.frame([0,0,0],12);
+    },
+    onSelect(api,d){
+      if(d.layer) api.setSelected("L"+(d.layer.idx+1)+" "+d.layer.name+" · "+(d.layer.sealed?("sealed ("+d.layer.tag+")"):("OPEN — "+d.layer.risk)));
+      if(d.gene)  api.setSelected("Gene "+d.gene.name+(d.gene.hub?" · SOS master regulator (out-deg 7)":""));
+      if(d.model) api.setSelected(d.model.name+" · "+(d.model.mean*100).toFixed(1)+"% ± "+(d.model.std*100).toFixed(1)+"pp");
+    },
+    build,
+    snapshot(s){
+      const sealed=Math.round(s.sealed);
+      const leakPct=Math.round(s.leakPct);
+      const nSeeds=Math.max(2,Math.round(s.nSeeds));
+      const gapPP=Math.round(s.gapPP);
+      const repro=sealed/5;
+      // recompute the same significance quantities the build() uses
+      const stdScale=Math.sqrt(5/nSeeds);
+      const A=aurocStats(CLEAN_AUROC,stdScale);
+      const B=aurocStats(CLEAN_AUROC+gapPP/100,stdScale*0.9);
+      const pooledStd=(A.std+B.std)/2;
+      const significant=(gapPP/100) > 2*pooledStd;
+      const inflated=CLEAN_AUROC+LEAK_MAX_JUMP*(leakPct/100);
+      return {
+        mode:s.mode,
+        sealed:sealed,
+        leakPct:leakPct,
+        nSeeds:nSeeds,
+        gapPP:gapPP,
+        reproFraction:+repro.toFixed(3),
+        reproducible:(s.mode==="leakage")?(leakPct===0):(s.mode==="multiseed")?true:(sealed===5),
+        meanAuroc:+CLEAN_AUROC.toFixed(3),
+        inflatedAuroc:+inflated.toFixed(3),
+        inflationPP:+((inflated-CLEAN_AUROC)*100).toFixed(1),
+        stdAuroc:+pooledStd.toFixed(3),
+        thresholdPP:+((2*pooledStd)*100).toFixed(1),
+        significant:significant,
+        nGenes:NGENES,
+        nEdges:NEDGES
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E04 · Multiome integration as heterogeneous graph learning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no Math.random / Date) ───────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // WORKED EXAMPLE — Section 5: ALB/VIM/FOXA2 liver differentiation scenario
+  // 3 cells, 3 genes, 3 peaks. All numbers verbatim from the note.
+  // ═══════════════════════════════════════════════════════════════════════
+  const CELLS=[
+    {id:"C1",name:"Hepatocyte",         short:"Hep"},
+    {id:"C2",name:"Progenitor",         short:"Prog"},
+    {id:"C3",name:"Fibroblast",         short:"Fib"}
+  ];
+  const GENES=["ALB","VIM","FOXA2"];               // ALB liver, VIM fibroblast, FOXA2 liver TF
+  const PEAKS=["pk1","pk2","pk3"];                 // pk1 ALB prom, pk2 ALB enh (FOXA2 motif), pk3 VIM prom
+  // RNA expression (log-normalized)  rows=cell, cols=ALB,VIM,FOXA2
+  const RNA=[[8.5,0.0,7.2],[5.1,1.2,4.8],[0.0,8.1,0.5]];
+  // ATAC accessibility (binary)      cols=pk1,pk2,pk3
+  const ATAC=[[1,1,0],[1,0,0],[0,0,1]];
+  // SCGLUE guidance-graph edges (gene -- peak, within 150 kb of TSS)
+  const GUIDE=[
+    {g:0,p:0,dist:0,  lbl:"ALB·pk1 0kb"},   // ALB promoter itself
+    {g:0,p:1,dist:12, lbl:"ALB·pk2 12kb"},  // ALB enhancer
+    {g:2,p:1,dist:50, lbl:"FOXA2·pk2 50kb"},// FOXA2 co-localized, motif in pk2
+    {g:1,p:2,dist:0,  lbl:"VIM·pk3 0kb"}    // VIM promoter itself
+  ];
+  // Cicero co-accessibility (peak -> gene)
+  const COACCESS=[{p:0,g:0,v:0.92},{p:1,g:0,v:0.78},{p:2,g:1,v:0.94}];
+  // WNN per-cell modality weights (Section 5)  [w_RNA, w_ATAC]
+  const WNN=[[0.45,0.55],[0.65,0.35],[0.50,0.50]];
+
+  // ── derived latent embeddings (deterministic, lesson-faithful) ────────────
+  // Plain kNN integration: just averages the two raw modal kNN positions.
+  // SCGLUE: guidance graph propagates regulatory context, so C1 & C2 (both
+  //   hepatocytic, sharing the FOXA2-ALB axis) collapse together; C3 stays apart.
+  // MOFA+: global loadings capture shared variance but ignore the scaffold,
+  //   leaving C2 ambiguous (sits between hepatic and fibroblast cloud).
+  // 2D latent coords scaled by guidanceStrength as configured.
+  function latentSCGLUE(gStr){
+    // gStr in 0..1 : 0 = behaves like plain kNN, 1 = full guidance coherence
+    const C1=[ -2.4, 1.7];
+    // C2 starts hepatic-ish but pulled toward C1 as guidance grows
+    const C2=[ -2.4 + (1.0-gStr)*1.9, 1.7 - (1.0-gStr)*1.2 ];
+    const C3=[  2.7,-1.6];
+    return [C1,C2,C3];
+  }
+  function latentMOFA(){
+    // no scaffold: C2 floats between the two clouds, never resolved
+    return [[-2.2,1.5],[0.15,0.35],[2.6,-1.5]];
+  }
+  function pairDist(a,b){const dx=a[0]-b[0],dy=a[1]-b[1];return Math.sqrt(dx*dx+dy*dy);}
+
+  // ── one SCGLUE message-passing step (gene -> peak -> cell), Section 5 ──────
+  // FOXA2 gene node carries [mean=4.2, var=9.6]; pk2 aggregates from {ALB,FOXA2};
+  // C1 ATAC encoder reads {pk1,pk2}. We expose the resulting "regulatory context
+  // received" scalar per cell so a metric/scene can react to guidanceStrength.
+  const FOXA2_MEAN=4.2, FOXA2_VAR=9.6;
+  function regContext(cellIdx,gStr){
+    // sum guidance evidence reaching this cell's accessible peaks, weighted by gStr
+    let acc=0;
+    for(let p=0;p<3;p++){
+      if(ATAC[cellIdx][p]===1){
+        GUIDE.forEach(e=>{ if(e.p===p){ acc += (1/(1+e.dist/50)); } });
+      }
+    }
+    return acc*gStr;
+  }
+
+  // ── build ──────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const gStr=s.guidance/100;        // 0..1 guidance-graph strength (SCGLUE)
+    const distKb=s.distWindow;        // gene-peak co-localization window (kb)
+    const wnnCell=Math.round(s.wnnCell); // 0..2 which cell to inspect (WNN)
+    const nFactors=Math.round(s.factors); // MOFA+ # latent factors
+
+    const gScaffold=api.group("scaffold");
+    const gCells   =api.group("cells");
+    const gLatent  =api.group("latent");
+    const gLabels  =api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");  // RNA / gene
+    const GR=new T.Color("#34d399");  // ATAC / peak
+    const AM=new T.Color("#fbbf24");  // TF / FOXA2 / guidance
+    const VI=new T.Color("#a78bfa");  // latent / embedding
+    const RO=new T.Color("#fb7185");  // fibroblast / mismatch
+    const SL=new T.Color("#54667c");
+
+    const cellCols=[CY,AM,RO]; // C1 hep(cyan-ish), C2 prog(amber), C3 fib(rose)
+
+    function sphere(r,c,emi,seg){return new T.Mesh(new T.SphereGeometry(r,seg||16,12),
+      new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(emi==null?0.55:emi),emissiveIntensity:0.6,roughness:0.4}));}
+    function line(p,q,hex,op){return new T.Line(new T.BufferGeometry().setFromPoints([p,q]),
+      new T.LineBasicMaterial({color:hex,transparent:true,opacity:op==null?0.6:op}));}
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: SCGLUE — gene-peak guidance graph disciplines modal encoders
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="scglue"){
+      // Layout: gene row (left), peak row (mid), cell column (right) → latent (far right)
+      const genePos=[[-4.4,2.6,0],[-4.4,0.0,0],[-4.4,-2.6,0]]; // ALB,VIM,FOXA2
+      const peakPos=[[-1.4,2.6,0],[-1.4,0.0,0],[-1.4,-2.6,0]]; // pk1,pk2,pk3
+
+      // gene nodes (cyan) ; FOXA2 = TF, amber
+      GENES.forEach((g,i)=>{
+        const isTF=(g==="FOXA2");
+        const sp=sphere(0.32,isTF?AM:CY,0.6);
+        sp.position.set(...genePos[i]); gScaffold.add(sp);
+        api.pick(sp,{gene:{name:g,tf:isTF,rna:[RNA[0][i],RNA[1][i],RNA[2][i]]}});
+        addSlbl(g+(isTF?" (TF)":""),(isTF?AM:CY).getStyle(),0.40,genePos[i][0]-1.05,genePos[i][1],0);
+      });
+      // peak nodes (green)
+      PEAKS.forEach((p,i)=>{
+        const sp=sphere(0.30,GR,0.55);
+        sp.position.set(...peakPos[i]); gScaffold.add(sp);
+        api.pick(sp,{peak:{name:p,atac:[ATAC[0][i],ATAC[1][i],ATAC[2][i]]}});
+        addSlbl(p,GR.getStyle(),0.36,peakPos[i][0],peakPos[i][1]-0.6,0);
+      });
+
+      // guidance edges (amber, brightness ∝ guidance strength). Edge appears
+      // only if its genomic distance ≤ distWindow slider → param prunes graph.
+      let activeEdges=0;
+      GUIDE.forEach(e=>{
+        const within=e.dist<=distKb;
+        const a=new T.Vector3(...genePos[e.g]);
+        const b=new T.Vector3(...peakPos[e.p]);
+        if(within){
+          activeEdges++;
+          gScaffold.add(line(a,b,AM.getHex(),0.35+0.6*gStr));
+          // FOXA2->pk2 highlighted as THE regulatory axis
+          if(e.g===2&&e.p===1){
+            const mid=a.clone().add(b).multiplyScalar(0.5);
+            addSlbl("FOXA2 motif",AM.getStyle(),0.32,mid.x,mid.y+0.45,0);
+          }
+        } else {
+          // pruned — faint ghost
+          gScaffold.add(line(a,b,0x33414f,0.12));
+        }
+      });
+
+      // co-accessibility ghost (peak->gene, faint green) shows Cicero evidence
+      COACCESS.forEach(c=>{
+        const a=new T.Vector3(...peakPos[c.p]);
+        const b=new T.Vector3(...genePos[c.g]);
+        gScaffold.add(line(a,b,GR.clone().multiplyScalar(0.5).getHex(),0.10+0.10*c.v));
+      });
+
+      // cells (right column), encoder reads accessible peaks → cell
+      const cellPos=[[1.9,2.0,0],[1.9,-0.2,0],[1.9,-2.4,0]];
+      const reg=[regContext(0,gStr),regContext(1,gStr),regContext(2,gStr)];
+      CELLS.forEach((c,i)=>{
+        const sp=sphere(0.40,cellCols[i],0.6,20);
+        sp.position.set(...cellPos[i]); gCells.add(sp);
+        api.pick(sp,{cell:{id:c.id,name:c.name,reg:+reg[i].toFixed(2),wnn:WNN[i]}});
+        addSlbl(c.id+" "+c.short,cellCols[i].getStyle(),0.36,cellPos[i][0]+0.6,cellPos[i][1]+0.35,0);
+        // encoder wires: accessible peak → cell, weight by guidance
+        for(let p=0;p<3;p++){
+          if(ATAC[i][p]===1){
+            const a=new T.Vector3(...peakPos[p]);
+            const b=new T.Vector3(...cellPos[i]);
+            gCells.add(line(a,b,GR.getHex(),0.2+0.5*gStr));
+          }
+        }
+      });
+
+      // latent space (far right) — C1,C2 converge as guidance grows; C3 apart
+      const lat=latentSCGLUE(gStr);
+      const latOrigin=[5.3,0,0];
+      const latCols=[CY,AM,RO];
+      lat.forEach((p,i)=>{
+        const sp=sphere(0.34,VI.clone().lerp(latCols[i],0.55),0.7,16);
+        sp.position.set(latOrigin[0]+p[0]*0.55,p[1]*0.7,0); gLatent.add(sp);
+        addSlbl(CELLS[i].id,latCols[i].getStyle(),0.32,latOrigin[0]+p[0]*0.55+0.4,p[1]*0.7+0.3,0);
+      });
+      // C1-C2 link in latent (thicker = closer = more coherent)
+      const dC1C2=pairDist(lat[0],lat[1]);
+      const coh=Math.max(0,1-dC1C2/3.5); // 0..1 coherence
+      const lp0=new T.Vector3(latOrigin[0]+lat[0][0]*0.55,lat[0][1]*0.7,0);
+      const lp1=new T.Vector3(latOrigin[0]+lat[1][0]*0.55,lat[1][1]*0.7,0);
+      gLatent.add(line(lp0,lp1,VI.getHex(),0.25+0.6*coh));
+      addLbl("latent z",VI.getStyle(),1.2,latOrigin[0]+0.4,2.7,0);
+
+      addLbl("gene","#4dd7ff",1.1,-4.4,3.4,0);
+      addLbl("peak","#34d399",1.1,-1.4,3.4,0);
+      addLbl("cell encoder","#cfe0f0",1.1,1.9,3.4,0);
+
+      sceneSnap={mode,guidanceStrength:+gStr.toFixed(2),distWindow:distKb,activeGuidanceEdges:activeEdges,
+        c1c2LatentDist:+dC1C2.toFixed(3),coherence:+coh.toFixed(3),regContextC1:+reg[0].toFixed(2),wnnInspectCell:wnnCell,nFactors};
+
+      return {
+        badge:"SCGLUE · guidance graph · "+activeEdges+"/"+GUIDE.length+" edges · coh "+(coh*100).toFixed(0)+"%",
+        formula:"h_pk2 = MLP([h_pk2 ; h_ALB ; h_FOXA2]) ;  z_C = f(accessible peaks)",
+        insight:"The gene–peak guidance graph (amber) is a genomic prior: edges exist if a peak lies within "+distKb+" kb of a gene TSS — independent of the experiment. One message-passing step writes FOXA2's regulatory context into pk2, then into C1's ATAC encoder. As guidance strengthens, C1 (Hepatocyte) and C2 (Progenitor) collapse together in latent space because they share the FOXA2→ALB axis, even though C2 has pk2 closed. C3 (Fibroblast) stays distinct.",
+        state:"Guidance "+(gStr*100).toFixed(0)+"% · window "+distKb+"kb keeps "+activeEdges+" edges · C1–C2 latent dist "+dC1C2.toFixed(2)+" (coherence "+(coh*100).toFixed(0)+"%). FOXA2–pk2 edge carries the regulatory axis.",
+        metrics:{
+          activeMethod:"SCGLUE",
+          c1c2Distance:dC1C2.toFixed(2),
+          coherence:(coh*100).toFixed(0)+"%",
+          regPrior:"yes"
+        },
+        focus:{center:[0.5,0,0],radius:15}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: WNN — per-cell modality weights over two kNN graphs
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="wnn"){
+      // two kNN clouds (RNA-space cyan, ATAC-space green) over the SAME 3 cells.
+      // Per cell, fused position = w_RNA*rnaPos + w_ATAC*atacPos. Bars show weights.
+      const xPos=[-3.4,0,3.4];
+      // anchor RNA/ATAC reference positions per cell (deterministic spread)
+      const rnaAnchor=[[-3.4,0,-1.6],[0,0,-1.6],[3.4,0,-1.6]];
+      const atacAnchor=[[-3.4,0,1.6],[0,0,1.6],[3.4,0,1.6]];
+
+      CELLS.forEach((c,i)=>{
+        const wR=WNN[i][0], wA=WNN[i][1];
+        const x=xPos[i];
+        const isSel=(i===wnnCell);
+
+        // RNA kNN node (cyan) and ATAC kNN node (green)
+        const rn=sphere(0.26,CY,0.5); rn.position.set(...rnaAnchor[i]); gCells.add(rn);
+        const an=sphere(0.26,GR,0.5); an.position.set(...atacAnchor[i]); gCells.add(an);
+        gCells.add(line(new T.Vector3(...rnaAnchor[i]),new T.Vector3(...atacAnchor[i]),0x2a3d52,0.4));
+
+        // fused cell position along the RNA<->ATAC axis by weight
+        const fz=rnaAnchor[i][2]*wR + atacAnchor[i][2]*wA;
+        const fused=sphere(isSel?0.46:0.36,cellCols[i],isSel?0.85:0.5,20);
+        fused.position.set(x,0,fz); gCells.add(fused);
+        api.pick(fused,{cell:{id:c.id,name:c.name,wRNA:wR,wATAC:wA}});
+        addSlbl(c.id+" "+c.short,cellCols[i].getStyle(),isSel?0.42:0.36,x,0.55,fz);
+
+        // weight bars: RNA (cyan) and ATAC (green) — per cell
+        const hR=0.1+wR*3.2, hA=0.1+wA*3.2;
+        const barR=new T.Mesh(new T.BoxGeometry(0.7,hR,0.5),
+          new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(isSel?0.8:0.25),emissiveIntensity:isSel?0.7:0.2,roughness:0.4,transparent:!isSel,opacity:isSel?1:0.5}));
+        barR.position.set(x-0.45,hR/2+0.2,3.4); gCells.add(barR);
+        const barA=new T.Mesh(new T.BoxGeometry(0.7,hA,0.5),
+          new T.MeshStandardMaterial({color:GR,emissive:GR.clone().multiplyScalar(isSel?0.8:0.25),emissiveIntensity:isSel?0.7:0.2,roughness:0.4,transparent:!isSel,opacity:isSel?1:0.5}));
+        barA.position.set(x+0.45,hA/2+0.2,3.4); gCells.add(barA);
+        api.pick(barR,{weight:{cell:c.id,modality:"RNA",w:wR}});
+        api.pick(barA,{weight:{cell:c.id,modality:"ATAC",w:wA}});
+
+        addLbl((wR*100).toFixed(0),"#4dd7ff",1.0,x-0.45,hR+0.55,3.4);
+        addLbl((wA*100).toFixed(0),"#34d399",1.0,x+0.45,hA+0.55,3.4);
+      });
+
+      // baseline
+      gCells.add(line(new T.Vector3(-4.6,0.2,3.4),new T.Vector3(4.6,0.2,3.4),0x1e3046,0.7));
+      addLbl("RNA","#4dd7ff",1.1,-4.4,0,-1.6);
+      addLbl("ATAC","#34d399",1.1,-4.4,0,1.6);
+      addLbl("per-cell weights  w_RNA | w_ATAC","#8a99ad",1.05,0,-0.8,3.4);
+
+      const sel=WNN[wnnCell];
+      sceneSnap={mode,guidanceStrength:+gStr.toFixed(2),distWindow:distKb,wnnInspectCell:wnnCell,
+        wRNAsel:sel[0],wATACsel:sel[1],dominantModality:(sel[0]>=sel[1]?"RNA":"ATAC"),nFactors,activeGuidanceEdges:0,c1c2LatentDist:0,coherence:0,regContextC1:0};
+
+      const names=["Hepatocyte","Progenitor","Fibroblast"];
+      const notes=["ATAC slightly more informative: stable chromatin","RNA more informative: capturing transition","both modalities equally informative"];
+      return {
+        badge:"WNN · "+CELLS[wnnCell].id+" "+names[wnnCell]+" · w_RNA "+(sel[0]*100).toFixed(0)+"% / w_ATAC "+(sel[1]*100).toFixed(0)+"%",
+        formula:"nn_weighted = w_RNA · nn_RNA  ⊕  w_ATAC · nn_ATAC ,   w_RNA + w_ATAC = 1",
+        insight:"WNN learns a per-cell modality weight over two separate kNN graphs (RNA-space cyan, ATAC-space green) — no regulatory prior. The fused cell slides along the RNA↔ATAC axis by its weight. Weights vary by cell type: the Hepatocyte (C1) leans ATAC (stable chromatin), the Progenitor (C2) leans RNA (transcriptional reprogramming in progress), the Fibroblast (C3) is balanced. A single global weight would lose this adaptive information.",
+        state:CELLS[wnnCell].id+" ("+names[wnnCell]+"): w_RNA="+sel[0].toFixed(2)+", w_ATAC="+sel[1].toFixed(2)+" — "+notes[wnnCell]+".",
+        metrics:{
+          activeMethod:"WNN",
+          c1c2Distance:"n/a",
+          coherence:"n/a",
+          regPrior:"no"
+        },
+        focus:{center:[0,1,0.9],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: MOFA+ — matrix factorization baseline, no graph scaffold
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="mofa"){
+      // factors as latent axes; cells projected via global loadings W^(m).
+      // No scaffold → C2 (progenitor) floats between hepatic & fibroblast clouds.
+      const lat=latentMOFA();
+      const latCols=[CY,AM,RO];
+      const latOrigin=[1.6,0,0];
+
+      // draw nFactors latent axes radiating from origin (loading directions)
+      for(let k=0;k<nFactors;k++){
+        const ang=(k/Math.max(1,nFactors))*Math.PI*2;
+        const ex=latOrigin[0]+Math.cos(ang)*3.4;
+        const ey=Math.sin(ang)*2.4;
+        gScaffold.add(line(new T.Vector3(latOrigin[0],0,0),new T.Vector3(ex,ey,0),0x2a3d52,0.5));
+        addSlbl("F"+(k+1),"#8a99ad",0.32,ex,ey,0);
+      }
+
+      // RNA loading column (cyan) and ATAC loading column (green) — global,
+      // one W per modality (NOT per cell), the key MOFA+ limitation.
+      const wRNApos=[-4.6,2.2,0], wATACpos=[-4.6,-2.2,0];
+      const wr=sphere(0.42,CY,0.6); wr.position.set(...wRNApos); gScaffold.add(wr);
+      const wa=sphere(0.42,GR,0.6); wa.position.set(...wATACpos); gScaffold.add(wa);
+      addSlbl("W_RNA (global)","#4dd7ff",0.38,wRNApos[0]+0.6,wRNApos[1],0);
+      addSlbl("W_ATAC (global)","#34d399",0.38,wATACpos[0]+0.6,wATACpos[1],0);
+      // both loadings feed every factor axis origin
+      gScaffold.add(line(new T.Vector3(...wRNApos),new T.Vector3(latOrigin[0],0,0),CY.getHex(),0.3));
+      gScaffold.add(line(new T.Vector3(...wATACpos),new T.Vector3(latOrigin[0],0,0),GR.getHex(),0.3));
+
+      lat.forEach((p,i)=>{
+        const sp=sphere(0.36,VI.clone().lerp(latCols[i],0.55),0.7,16);
+        sp.position.set(latOrigin[0]+p[0]*0.7,p[1]*0.85,0); gLatent.add(sp);
+        api.pick(sp,{cell:{id:CELLS[i].id,name:CELLS[i].name}});
+        addSlbl(CELLS[i].id+" "+CELLS[i].short,latCols[i].getStyle(),0.34,latOrigin[0]+p[0]*0.7+0.45,p[1]*0.85+0.35,0);
+      });
+
+      // ambiguity ring around C2 — MOFA+ cannot resolve it (no scaffold)
+      const c2=new T.Vector3(latOrigin[0]+lat[1][0]*0.7,lat[1][1]*0.85,0);
+      const ring=new T.Mesh(new T.RingGeometry(0.55,0.66,32),
+        new T.MeshBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.5,side:T.DoubleSide}));
+      ring.position.copy(c2); gLatent.add(ring);
+      addSlbl("ambiguous: no TF path","#fb7185",0.34,c2.x,c2.y-0.7,0);
+
+      const dC1C2=pairDist(lat[0],lat[1]);
+      addLbl("MOFA+ factors  (no scaffold)","#cfe0f0",1.15,latOrigin[0],3.3,0);
+
+      sceneSnap={mode,guidanceStrength:+gStr.toFixed(2),distWindow:distKb,nFactors,
+        c1c2LatentDist:+dC1C2.toFixed(3),coherence:0,activeGuidanceEdges:0,regContextC1:0,wnnInspectCell:wnnCell};
+
+      return {
+        badge:"MOFA+ · "+nFactors+" factors · no graph · C2 ambiguous",
+        formula:"min Σ_m,i ‖ X^(m)_i − W^(m) z_i ‖²  +  KL(q(z_i)‖p(z_i))",
+        insight:"MOFA+ factorizes both modalities with global loadings W^(m) (one per modality, NOT per cell) into shared latent factors. It captures variance co-shared by RNA and ATAC, but has no regulatory scaffold: a factor loading on a peak does not tell you which TF connects it to a gene. Without the FOXA2→ALB path, the Progenitor C2 floats between the hepatic and fibroblast clouds (rose ring) and cannot be resolved. Increase factors to add capacity — it still never recovers the regulatory path.",
+        state:"MOFA+ with "+nFactors+" factors: C1–C2 latent dist "+dC1C2.toFixed(2)+". No TF-peak-gene path → C2 ambiguous. Captures shared variance, misses the scaffold.",
+        metrics:{
+          activeMethod:"MOFA+",
+          c1c2Distance:dC1C2.toFixed(2),
+          coherence:"0%",
+          regPrior:"no"
+        },
+        focus:{center:[1,0.3,0],radius:15}
+      };
+    }
+
+    return {badge:"E04",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:14}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e04",
+    kind:"multiome-integration",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E04 · Multiome integration as heterogeneous graph learning",
+    subtitle:"Paired RNA+ATAC from one cell, three ways to fuse them. Worked example: 3 liver cells (Hepatocyte, Progenitor, Fibroblast), genes ALB/VIM/FOXA2, peaks pk1/pk2/pk3. Contrast SCGLUE, WNN, and MOFA+.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, peak, cell, weight bar, or latent point.",
+    modes:[
+      {value:"scglue", label:"SCGLUE (gene–peak guidance graph)"},
+      {value:"wnn",    label:"WNN (per-cell modality weights)"},
+      {value:"mofa",   label:"MOFA+ (matrix factorization, no graph)"}
+    ],
+    params:[
+      {key:"guidance", label:"guidance-graph strength (SCGLUE)",min:0,max:100,step:1,value:80,
+       fmt:v=>Math.round(v)+"%",modes:["scglue"]},
+      {key:"distWindow", label:"gene–peak window (kb, SCGLUE)",min:0,max:160,step:10,value:150,
+       fmt:v=>Math.round(v)+" kb",modes:["scglue"]},
+      {key:"wnnCell", label:"inspect cell (WNN)  0=C1 1=C2 2=C3",min:0,max:2,step:1,value:0,
+       fmt:v=>["C1 Hep","C2 Prog","C3 Fib"][Math.round(v)],modes:["wnn"]},
+      {key:"factors", label:"MOFA+ latent factors",min:2,max:8,step:1,value:4,
+       fmt:v=>Math.round(v).toString(),modes:["mofa"]}
+    ],
+    metrics:[
+      {key:"activeMethod", label:"Method",         accent:"cyan"},
+      {key:"c1c2Distance", label:"C1–C2 latent dist",accent:"violet"},
+      {key:"coherence",    label:"Regulatory coherence",accent:"green"},
+      {key:"regPrior",     label:"Regulatory prior",accent:"amber"}
+    ],
+    layers:[
+      {group:"scaffold", label:"Scaffold / loadings"},
+      {group:"cells",    label:"Cells / encoders"},
+      {group:"latent",   label:"Latent embeddings"},
+      {group:"labels",   label:"Labels"}
+    ],
+    primary:{
+      label:"Full guidance (SCGLUE)",
+      on:api=>{api.setParam("guidance",100);}
+    },
+    secondary:{
+      label:"No guidance (≈ plain kNN)",
+      on:api=>{api.setParam("guidance",0);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:15},
+    hint:'<span style="color:#4dd7ff">cyan</span>=RNA / gene · <span style="color:#34d399">green</span>=ATAC / peak · <span style="color:#fbbf24">amber</span>=TF (FOXA2) / guidance · <span style="color:#a78bfa">violet</span>=latent z · <span style="color:#fb7185">rose</span>=fibroblast / unresolved.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="scglue") api.frame([0.5,0,0],15);
+      else if(s.mode==="wnn") api.frame([0,1,0.9],14);
+      else api.frame([1,0.3,0],15);
+    },
+    onSelect(api,d){
+      if(d.gene)   api.setSelected("Gene "+d.gene.name+(d.gene.tf?" · TF":"")+" · RNA[C1,C2,C3]="+d.gene.rna.join(", "));
+      if(d.peak)   api.setSelected("Peak "+d.peak.name+" · ATAC[C1,C2,C3]="+d.peak.atac.join(", "));
+      if(d.cell)   api.setSelected("Cell "+d.cell.id+" · "+d.cell.name+(d.cell.wRNA!=null?(" · w_RNA="+d.cell.wRNA+" w_ATAC="+d.cell.wATAC):"")+(d.cell.reg!=null?(" · regCtx="+d.cell.reg):""));
+      if(d.weight) api.setSelected(d.weight.cell+" · "+d.weight.modality+" weight = "+(d.weight.w*100).toFixed(0)+"%");
+    },
+    build,
+    snapshot(s){
+      const gStr=s.guidance/100;
+      const distKb=s.distWindow;
+      const wnnCell=Math.round(s.wnnCell);
+      const nFactors=Math.round(s.factors);
+      let activeEdges=0;
+      GUIDE.forEach(e=>{ if(e.dist<=distKb) activeEdges++; });
+      const latS=latentSCGLUE(gStr);
+      const latM=latentMOFA();
+      const dS=pairDist(latS[0],latS[1]);
+      const dM=pairDist(latM[0],latM[1]);
+      const cohS=Math.max(0,1-dS/3.5);
+      const sel=WNN[wnnCell];
+      return {
+        mode:s.mode,
+        guidanceStrength:+gStr.toFixed(3),
+        distWindow:distKb,
+        activeGuidanceEdges:activeEdges,
+        wnnInspectCell:wnnCell,
+        wRNAsel:sel[0],
+        wATACsel:sel[1],
+        nFactors:nFactors,
+        scglue_c1c2Dist:+dS.toFixed(3),
+        mofa_c1c2Dist:+dM.toFixed(3),
+        scglueCoherence:+cohS.toFixed(3),
+        scglueResolvesProgenitor:dS<1.4,
+        regContextC1:+regContext(0,gStr).toFixed(3)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

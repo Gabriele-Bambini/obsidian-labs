@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F02 — One cascade, three verdicts on the same spurious edge</title>
+<desc id="d">Four-panel captioned figure: One cascade, three verdicts on the same spurious edge</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F02 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">One cascade, three verdicts on the same spurious edge</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The cascade matrix</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">genes</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TFs</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">2</text>
+<text x="56" y="207" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#34d399"/>
+<circle cx="510" cy="108" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="510" y="113" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Pearson |r| (no pruning)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">edge if |r(g_i,g_j)| ≥ τ</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">τ = 0.95</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">TF1–A</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.999</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="64" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="64" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">ARACNE: MI + DPI</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">prune (i,k) if MI(i,k) &lt;</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">min(MI(i,j),MI(j,k))·(1−ε)</text>
+<text x="56" y="349.5" fill="#fbbf24" font-size="11.5" font-weight="700">MI(TF1,B)</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">0.994</text>
+<text x="56" y="369.5" fill="#4dd7ff" font-size="11.5" font-weight="700">min detour</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.998</text>
+<text x="56" y="389.5" fill="#34d399" font-size="11.5" font-weight="700">pruned</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">2</text>
+<text x="56" y="417" fill="#8a99ad" font-size="11">TF1–Gene_B chord removed as indirect via Gene_A.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="510" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="510" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">GENIE3 (directed trees)</text>
+<text x="502" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">imp(TF→g) ≥ λ, directed</text>
+<text x="502" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">λ = 0.30</text>
+<text x="502" y="349.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TF1→B</text>
+<text x="642" y="349.5" fill="#9fb4cc" font-size="11.5">0.75</text>
+<text x="502" y="369.5" fill="#a78bfa" font-size="11.5" font-weight="700">TF2→B</text>
+<text x="642" y="369.5" fill="#9fb4cc" font-size="11.5">0.25</text>
+<text x="502" y="389.5" fill="#fb7185" font-size="11.5" font-weight="700">false +</text>
+<text x="642" y="389.5" fill="#9fb4cc" font-size="11.5">+1</text>
+<text x="502" y="417" fill="#8a99ad" font-size="11">Directional, but Gene_A absent from TF set → keeps</text>
+<text x="502" y="437" fill="#8a99ad" font-size="11">spurious.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F02. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">One </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">4×5 </text>
+<text x="215.24" y="538" fill="#c7d2dd" font-size="13">matrix; </text>
+<text x="279.72" y="538" fill="#c7d2dd" font-size="13">true </text>
+<text x="320.02" y="538" fill="#c7d2dd" font-size="13">network </text>
+<text x="384.5" y="538" fill="#c7d2dd" font-size="13">TF1→Gene_A→Gene_B </text>
+<text x="549.73" y="538" fill="#c7d2dd" font-size="13">(TF2⊣TF1). </text>
+<text x="643.23" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="676.76" y="538" fill="#c7d2dd" font-size="13">All </text>
+<text x="710.21" y="538" fill="#c7d2dd" font-size="13">genes </text>
+<text x="758.57" y="538" fill="#c7d2dd" font-size="13">co-vary </text>
+<text x="823.05" y="538" fill="#c7d2dd" font-size="13">through</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="72.24" y="559" fill="#c7d2dd" font-size="13">single </text>
+<text x="128.66" y="559" fill="#c7d2dd" font-size="13">cascade. </text>
+<text x="201.2" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="234.73" y="559" fill="#c7d2dd" font-size="13">Pearson </text>
+<text x="300.42" y="559" fill="#c7d2dd" font-size="13">keeps </text>
+<text x="348.78" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="381.02" y="559" fill="#c7d2dd" font-size="13">spurious </text>
+<text x="453.56" y="559" fill="#c7d2dd" font-size="13">chord </text>
+<text x="501.92" y="559" fill="#c7d2dd" font-size="13">TF1–B </text>
+<text x="560.35" y="559" fill="#c7d2dd" font-size="13">(|r|=0.997): </text>
+<text x="665.13" y="559" fill="#c7d2dd" font-size="13">1 </text>
+<text x="681.25" y="559" fill="#c7d2dd" font-size="13">false </text>
+<text x="729.61" y="559" fill="#c7d2dd" font-size="13">positive. </text>
+<text x="810.21" y="559" fill="#fde68a" font-size="13" font-weight="700">(c)</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">ARACNE </text>
+<text x="103.67" y="580" fill="#c7d2dd" font-size="13">DPI </text>
+<text x="139.54" y="580" fill="#c7d2dd" font-size="13">prunes </text>
+<text x="195.96" y="580" fill="#c7d2dd" font-size="13">it </text>
+<text x="220.14" y="580" fill="#c7d2dd" font-size="13">— </text>
+<text x="242.71" y="580" fill="#c7d2dd" font-size="13">MI=0.994 </text>
+<text x="317.67" y="580" fill="#c7d2dd" font-size="13">&lt; </text>
+<text x="333.79" y="580" fill="#c7d2dd" font-size="13">detour </text>
+<text x="390.21" y="580" fill="#c7d2dd" font-size="13">0.998 </text>
+<text x="438.57" y="580" fill="#c7d2dd" font-size="13">— </text>
+<text x="461.14" y="580" fill="#c7d2dd" font-size="13">2 </text>
+<text x="477.26" y="580" fill="#c7d2dd" font-size="13">removed. </text>
+<text x="549.8" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="583.32" y="580" fill="#c7d2dd" font-size="13">GENIE3 </text>
+<text x="645.79" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="669.97" y="580" fill="#c7d2dd" font-size="13">directed </text>
+<text x="742.51" y="580" fill="#c7d2dd" font-size="13">(imp </text>
+<text x="782.81" y="580" fill="#c7d2dd" font-size="13">TF1→B=0.75 </text>
+<text x="881.54" y="580" fill="#c7d2dd" font-size="13">≫</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">TF2→B=0.25) </text>
+<text x="146.8" y="601" fill="#c7d2dd" font-size="13">but </text>
+<text x="179.04" y="601" fill="#c7d2dd" font-size="13">retains </text>
+<text x="243.52" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="275.76" y="601" fill="#c7d2dd" font-size="13">indirect </text>
+<text x="348.3" y="601" fill="#c7d2dd" font-size="13">edge.</text>
+</svg>

@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure C08 — One operator L_F = δᵀδ scores every edge's regulatory consistency</title>
+<desc id="d">Four-panel captioned figure: One operator L_F = δᵀδ scores every edge's regulatory consistency</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE C08 · BLOCK C · GEOMETRIC AND TOPOLOGICAL DL</text>
+<text x="40" y="62" fill="#e8eef6" font-size="20" font-weight="700">One operator L_F = δᵀδ scores every edge's regulatory consistency</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The GRN &amp; restriction maps</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">TF1 GeneA GeneB</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">e1, e2</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">stalks</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">R²</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">L_F dim</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">6×6</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Per-edge energy ‖δx_e‖²</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">(δx)_e = R_v x_v − R_u x_u</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">E_F = Σ_e ‖δx_e‖²</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">e1 energy</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.0049</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">e2 energy</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">0.1354</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Block Laplacian L_F = δᵀδ</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">L_F[v,v]=Σ_e R^T R</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">L_F[u,v]=−R_u^T R_v</text>
+<rect x="56" y="342" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="86" y="363" fill="#e8eef6" font-size="12" text-anchor="middle">1.14</text>
+<rect x="120" y="342" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="150" y="363" fill="#e8eef6" font-size="12" text-anchor="middle">0.30</text>
+<rect x="56" y="380" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="86" y="401" fill="#e8eef6" font-size="12" text-anchor="middle">0.30</text>
+<rect x="120" y="380" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="150" y="401" fill="#e8eef6" font-size="12" text-anchor="middle">1.50</text>
+<text x="56" y="437" fill="#8a99ad" font-size="11">PSD by construction. trace L_F = 6.64; null space dim = 2</text>
+<text x="56" y="457" fill="#8a99ad" font-size="11">(TF1 is a free regulatory source).</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Why sheaf energy is the right loss</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">identity R</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">co-expression</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">learned R</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">regulation</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">high E_F(e)</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">flag edge</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">min E_F</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">denoise state</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure C08. </text>
+<text x="140.59" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="172.83" y="538" fill="#c7d2dd" font-size="13">Section-5 </text>
+<text x="253.43" y="538" fill="#c7d2dd" font-size="13">star </text>
+<text x="293.73" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="325.97" y="538" fill="#c7d2dd" font-size="13">{TF1, </text>
+<text x="374.33" y="538" fill="#c7d2dd" font-size="13">GeneA, </text>
+<text x="430.75" y="538" fill="#c7d2dd" font-size="13">GeneB} </text>
+<text x="487.17" y="538" fill="#c7d2dd" font-size="13">with </text>
+<text x="527.47" y="538" fill="#c7d2dd" font-size="13">R² </text>
+<text x="549.23" y="538" fill="#c7d2dd" font-size="13">stalks </text>
+<text x="605.65" y="538" fill="#c7d2dd" font-size="13">and </text>
+<text x="637.89" y="538" fill="#c7d2dd" font-size="13">a </text>
+<text x="654.01" y="538" fill="#c7d2dd" font-size="13">6×6 </text>
+<text x="692.7" y="538" fill="#c7d2dd" font-size="13">sheaf </text>
+<text x="741.06" y="538" fill="#c7d2dd" font-size="13">Laplacian </text>
+<text x="821.66" y="538" fill="#c7d2dd" font-size="13">L_F </text>
+<text x="853.9" y="538" fill="#c7d2dd" font-size="13">=</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">δᵀδ. </text>
+<text x="77.88" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="111.41" y="559" fill="#c7d2dd" font-size="13">TF1 </text>
+<text x="143.65" y="559" fill="#c7d2dd" font-size="13">projects </text>
+<text x="216.19" y="559" fill="#c7d2dd" font-size="13">to </text>
+<text x="240.37" y="559" fill="#c7d2dd" font-size="13">each </text>
+<text x="280.67" y="559" fill="#c7d2dd" font-size="13">edge </text>
+<text x="320.97" y="559" fill="#c7d2dd" font-size="13">through </text>
+<text x="385.45" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="401.57" y="559" fill="#c7d2dd" font-size="13">restriction </text>
+<text x="498.29" y="559" fill="#c7d2dd" font-size="13">map; </text>
+<text x="538.59" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="570.83" y="559" fill="#c7d2dd" font-size="13">heads </text>
+<text x="619.19" y="559" fill="#c7d2dd" font-size="13">are </text>
+<text x="651.43" y="559" fill="#c7d2dd" font-size="13">identity. </text>
+<text x="732.03" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="765.56" y="559" fill="#c7d2dd" font-size="13">Per-edge </text>
+<text x="838.1" y="559" fill="#c7d2dd" font-size="13">energy</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">‖δx_e‖² </text>
+<text x="102.06" y="580" fill="#c7d2dd" font-size="13">gives </text>
+<text x="150.42" y="580" fill="#c7d2dd" font-size="13">e1=0.0049 </text>
+<text x="231.02" y="580" fill="#c7d2dd" font-size="13">and </text>
+<text x="263.26" y="580" fill="#c7d2dd" font-size="13">e2=0.1354 </text>
+<text x="343.86" y="580" fill="#c7d2dd" font-size="13">— </text>
+<text x="366.43" y="580" fill="#c7d2dd" font-size="13">e2 </text>
+<text x="390.61" y="580" fill="#c7d2dd" font-size="13">carries </text>
+<text x="455.09" y="580" fill="#c7d2dd" font-size="13">~97% </text>
+<text x="501.84" y="580" fill="#c7d2dd" font-size="13">of </text>
+<text x="526.02" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="558.26" y="580" fill="#c7d2dd" font-size="13">total </text>
+<text x="606.62" y="580" fill="#c7d2dd" font-size="13">E_F=0.1403. </text>
+<text x="703.34" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="736.87" y="580" fill="#c7d2dd" font-size="13">The </text>
+<text x="769.11" y="580" fill="#c7d2dd" font-size="13">diagonal </text>
+<text x="841.65" y="580" fill="#c7d2dd" font-size="13">block</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">L_F[TF1,TF1]=[[1.14,0.30],[0.30,1.50]]; </text>
+<text x="362.4" y="601" fill="#c7d2dd" font-size="13">trace=6.64, </text>
+<text x="459.12" y="601" fill="#c7d2dd" font-size="13">null </text>
+<text x="499.42" y="601" fill="#c7d2dd" font-size="13">dim=2. </text>
+<text x="555.84" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="589.37" y="601" fill="#c7d2dd" font-size="13">Identity </text>
+<text x="661.91" y="601" fill="#c7d2dd" font-size="13">maps </text>
+<text x="702.21" y="601" fill="#c7d2dd" font-size="13">reduce </text>
+<text x="758.63" y="601" fill="#c7d2dd" font-size="13">L_F </text>
+<text x="790.87" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="815.05" y="601" fill="#c7d2dd" font-size="13">ordinary</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">co-expression; </text>
+<text x="160.9" y="622" fill="#c7d2dd" font-size="13">learned </text>
+<text x="225.38" y="622" fill="#c7d2dd" font-size="13">maps </text>
+<text x="265.68" y="622" fill="#c7d2dd" font-size="13">encode </text>
+<text x="322.1" y="622" fill="#c7d2dd" font-size="13">regulation, </text>
+<text x="418.82" y="622" fill="#c7d2dd" font-size="13">and </text>
+<text x="451.06" y="622" fill="#c7d2dd" font-size="13">high </text>
+<text x="491.36" y="622" fill="#c7d2dd" font-size="13">edge </text>
+<text x="531.66" y="622" fill="#c7d2dd" font-size="13">energy </text>
+<text x="588.08" y="622" fill="#c7d2dd" font-size="13">flags </text>
+<text x="636.44" y="622" fill="#c7d2dd" font-size="13">inconsistent </text>
+<text x="741.22" y="622" fill="#c7d2dd" font-size="13">regulatory </text>
+<text x="829.88" y="622" fill="#c7d2dd" font-size="13">pairs.</text>
+</svg>

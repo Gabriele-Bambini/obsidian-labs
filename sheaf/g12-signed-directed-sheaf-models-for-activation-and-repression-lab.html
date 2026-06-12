@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G12 · Signed directed sheaf models for activation and repression</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no Math.random / Date) ───────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS: the note's Section-5 worked example (the tiny signed GRN) ───────
+  // Circuit: TF1 (repressor), TF2 (activator), GeneA (target of both),
+  // GeneB (target of TF2 only). Edges:
+  //   e1=(TF1→GeneA, repression −), e2=(TF2→GeneA, activation +),
+  //   e3=(TF2→GeneB, activation +).
+  const F={
+    xTF1:0.8, xTF2:0.3, xGA:0.1, xGB:0.3,   // node features (d=1 scalar stalks)
+    // restriction maps
+    rTF1_e1:-0.9, rGA_e1:1.0,                // repression edge e1 (TF side negative)
+    rTF2_e2:0.7,  rGA_e2:1.0,                // activation edge e2
+    rTF2_e3:0.6,  rGB_e3:1.0                 // activation edge e3
+  };
+
+  // signed-edge energy: activation = ||Ru xu − Rv xv||², repression = ||Ru xu + Rv xv||²
+  function edgeEnergy(ru,xu,rv,xv,sign){    // sign:+1 activation, −1 repression
+    const proj=ru*xu, projGene=rv*xv;
+    return (sign>0)?(proj-projGene)*(proj-projGene):(proj+projGene)*(proj+projGene);
+  }
+  // unsigned energy always subtracts (the naive sheaf, sign-blind)
+  function edgeEnergyUnsigned(ru,xu,rv,xv){
+    const d=ru*xu-rv*xv; return d*d;
+  }
+
+  let sceneSnap={};
+
+  // 3Blue1Brown-style palette: three blues + one brown.
+  const C_TF =new THREE.Color("#3b82f6");   // primary blue   — TF / source
+  const C_GENE=new THREE.Color("#60a5fa");  // light blue      — gene / target (activation)
+  const C_REP =new THREE.Color("#c8742a");  // brown           — repression / orientation reversal
+  const C_AXIS=new THREE.Color("#1d4ed8");  // deep blue       — frames / scaffolding
+  const C_DIM =new THREE.Color("#3a4a63");
+
+  function addLbl(api,g,txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);g.add(sp);}
+  function addSlbl(api,g,txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);g.add(sp);}
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    // params
+    const xTF1=s.xTF1;            // repressor activity (drives e1)
+    const xGA =s.xGA;             // GeneA expression (the repressed target)
+    const detSign=Math.round(s.detSign); // 0 = enforce det<0 (signed), 1 = leak det>0 (unsigned-like)
+    const stalkD =Math.round(s.stalkD);  // 1 = scalar, 2 = matrix-exp (Σ_flip·exp A)
+
+    const gNodes=api.group("nodes");
+    const gMaps =api.group("maps");
+    const gBars =api.group("bars");
+    const gLabels=api.group("labels");
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: circuit — the 3-gene signed regulatory wiring + per-edge energy
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="circuit"){
+      // node positions
+      const P={
+        TF1:new T.Vector3(-3.4, 1.8, 0),
+        TF2:new T.Vector3( 3.4, 1.8, 0),
+        GA :new T.Vector3( 0.0,-1.6, 0),
+        GB :new T.Vector3( 3.4,-1.6, 0)
+      };
+      const feat={TF1:xTF1, TF2:F.xTF2, GA:xGA, GB:F.xGB};
+      const nodeCol={TF1:C_TF, TF2:C_TF, GA:C_GENE, GB:C_GENE};
+
+      Object.keys(P).forEach(k=>{
+        const r=0.30+0.55*feat[k];                 // radius ∝ expression/activity
+        const isRepressor=(k==="TF1");
+        const base=isRepressor?C_REP:nodeCol[k];
+        const m=new T.Mesh(new T.SphereGeometry(r,24,18),
+          new T.MeshStandardMaterial({color:base,emissive:base.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.copy(P[k]); gNodes.add(m);
+        api.pick(m,{node:{id:k,x:+feat[k].toFixed(2),kind:isRepressor?"repressor":(k[0]==="T"?"activator":"gene")}});
+        addLbl(api,gLabels,k,base.getStyle(),1.45,P[k].x,P[k].y+r+0.55,P[k].z);
+        addSlbl(api,gLabels,"x="+feat[k].toFixed(2),"#9fb4cc",0.42,P[k].x,P[k].y-r-0.30,P[k].z);
+      });
+
+      // edges with signed energy bars rising at the midpoint
+      const E=[
+        {a:"TF1",b:"GA",sign:-1,ru:F.rTF1_e1,rv:F.rGA_e1,nm:"e1 TF1⊣GeneA (−)"},
+        {a:"TF2",b:"GA",sign:+1,ru:F.rTF2_e2,rv:F.rGA_e2,nm:"e2 TF2→GeneA (+)"},
+        {a:"TF2",b:"GB",sign:+1,ru:F.rTF2_e3,rv:F.rGB_e3,nm:"e3 TF2→GeneB (+)"}
+      ];
+      let totSigned=0, totUnsigned=0, eSignedE1=0, eUnsignedE1=0;
+      E.forEach((e,i)=>{
+        const xu=feat[e.a], xv=feat[e.b];
+        const eS=edgeEnergy(e.ru,xu,e.rv,xv,e.sign);
+        const eU=edgeEnergyUnsigned(e.ru,xu,e.rv,xv);
+        totSigned+=eS; totUnsigned+=eU;
+        if(e.sign<0){eSignedE1=eS; eUnsignedE1=eU;}
+        const col=(e.sign<0)?C_REP:C_GENE;
+        // arrow source→target (repression dashed)
+        const pa=P[e.a].clone(), pb=P[e.b].clone();
+        const dir=pb.clone().sub(pa).normalize();
+        const a0=pa.clone().add(dir.clone().multiplyScalar(0.55+0.55*feat[e.a]));
+        const b0=pb.clone().sub(dir.clone().multiplyScalar(0.55+0.55*feat[e.b]));
+        api.arrow(a0,b0,{color:"#"+col.getHexString(),width:e.sign<0?0.05:0.045,head:0.28,group:"maps"});
+
+        // signed-energy bar above the edge midpoint (brown for the repressor)
+        const mid=pa.clone().add(pb).multiplyScalar(0.5).add(new T.Vector3(0,0,0.9));
+        const h=0.12+eS*2.6;
+        const barCol=(e.sign<0)?C_REP:C_GENE;
+        const bar=new T.Mesh(new T.BoxGeometry(0.5,h,0.5),
+          new T.MeshStandardMaterial({color:barCol,emissive:barCol.clone().multiplyScalar(0.7),emissiveIntensity:0.6,roughness:0.4}));
+        bar.position.set(mid.x,mid.y+h/2-0.2,mid.z); gBars.add(bar);
+        api.pick(bar,{edge:{name:e.nm,eSigned:+eS.toFixed(3),eUnsigned:+eU.toFixed(3),sign:e.sign}});
+        addSlbl(api,gLabels,"E="+eS.toFixed(3),barCol.getStyle(),0.40,mid.x,mid.y+h+0.05,mid.z);
+      });
+
+      addLbl(api,gLabels,"signed sheaf energy per edge","#9fb4cc",1.05,0,3.5,0);
+
+      sceneSnap={mode,xTF1:+xTF1.toFixed(2),xGA:+xGA.toFixed(2),detSign,stalkD,
+        eSignedE1:+eSignedE1.toFixed(3),eUnsignedE1:+eUnsignedE1.toFixed(3),
+        totalSigned:+totSigned.toFixed(3),totalUnsigned:+totUnsigned.toFixed(3),
+        energyDrop:+((totUnsigned-totSigned)/totUnsigned).toFixed(3)};
+
+      api.setMetric("eSignedE1",eSignedE1.toFixed(3));
+      api.setMetric("eUnsignedE1",eUnsignedE1.toFixed(3));
+      api.setMetric("totalSigned",totSigned.toFixed(3));
+      api.setMetric("energyDrop",(100*(totUnsigned-totSigned)/totUnsigned).toFixed(0)+"%");
+
+      return {
+        badge:"Circuit · 3 genes · e1 repression, e2/e3 activation",
+        formula:"E<sub>signed</sub> = Σ<sub>+</sub>‖R<sub>u</sub>x<sub>u</sub>−R<sub>v</sub>x<sub>v</sub>‖² + Σ<sub>−</sub>‖R<sub>u</sub>x<sub>u</sub>+R<sub>v</sub>x<sub>v</sub>‖²",
+        insight:"The repression edge e1 (brown) flips its energy term to a SUM, so an active repressor (high x_TF1) beside a low target (low x_GeneA) is rewarded, not penalised. Total signed energy "+totSigned.toFixed(3)+" vs unsigned "+totUnsigned.toFixed(3)+" — "+(100*(totUnsigned-totSigned)/totUnsigned).toFixed(0)+"% lower for this biologically correct state.",
+        state:"e1 signed E="+eSignedE1.toFixed(3)+" (unsigned would read "+eUnsignedE1.toFixed(3)+"). Drag x_TF1 / x_GeneA to move the repressor state; the brown bar tracks signed energy.",
+        metrics:{eSignedE1:eSignedE1.toFixed(3),eUnsignedE1:eUnsignedE1.toFixed(3),totalSigned:totSigned.toFixed(3),energyDrop:(100*(totUnsigned-totSigned)/totUnsigned).toFixed(0)+"%"},
+        focus:{center:[0,0.6,0.4],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: antiparallel — the repression edge as orientation reversal in
+    //          the edge stalk. Signed energy = ‖R_TF x_TF + R_Gene x_Gene‖².
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="antiparallel"){
+      // edge-stalk plane (deep blue scaffold)
+      api.plane([0,0,0],{w:9,h:6,color:"#"+C_AXIS.getHexString(),opacity:0.10,flat:false,group:"maps"});
+      // axes
+      gMaps.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-4.2,0,0),new T.Vector3(4.2,0,0)]),new T.LineBasicMaterial({color:C_AXIS.getHex(),transparent:true,opacity:0.55})));
+      gMaps.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0,-2.6,0),new T.Vector3(0,2.6,0)]),new T.LineBasicMaterial({color:C_AXIS.getHex(),transparent:true,opacity:0.35})));
+
+      // det sign: signed model uses R_TF<0 (or Σ_flip for d=2). leak makes it >0.
+      const repSign=(detSign===0)?-1:+1;
+      // gene-side projected vector (always positive coordinate, points +x)
+      const gVec=F.rGA_e1*xGA;                 // = 1.0 * xGA
+      // TF-side projected vector under the (signed or leaked) restriction map
+      const rTF=Math.abs(F.rTF1_e1)*repSign;   // −0.9 signed, +0.9 leaked
+      const tfVec=rTF*xTF1;
+
+      const sc=4.0;
+      // gene projected arrow (light blue) along +x
+      api.arrow([0,0,0],[gVec*sc,0,0],{color:"#"+C_GENE.getHexString(),width:0.055,head:0.32,group:"maps",label:"R·x_gene"});
+      // TF projected arrow (brown when reversed, blue when leaked) — lifted in y so visible
+      const tfCol=(repSign<0)?C_REP:C_TF;
+      api.arrow([0,0.0,0.0],[tfVec*sc,0.0,0.0],{color:"#"+tfCol.getHexString(),width:0.06,head:0.34,group:"maps"});
+      addLbl(api,gLabels,"R_TF·x_TF",tfCol.getStyle(),1.15,tfVec*sc-(repSign<0?1.1:0),0.55,0);
+
+      // for d=2 (matrix exp), show the Σ_flip reflection plane (a vertical mirror)
+      if(stalkD===2){
+        api.plane([0,0,0],{w:0.06,h:5.0,color:"#"+C_REP.getHexString(),opacity:0.4,flat:false,group:"maps"});
+        addLbl(api,gLabels,"Σ_flip mirror (det=−1)",C_REP.getStyle(),0.95,0,2.3,0);
+      }
+
+      // resultant: signed energy is ‖tfVec + gVec‖ (sum), unsigned is ‖tfVec − gVec‖
+      const resSigned=Math.abs(tfVec+gVec);
+      const eSigned=(tfVec+gVec)*(tfVec+gVec);
+      const eUnsigned=(rTF*xTF1 - gVec)*(rTF*xTF1 - gVec);
+      // draw the resultant of the signed sum as a small marker on x
+      const mk=new T.Mesh(new T.SphereGeometry(0.16,16,12),new T.MeshStandardMaterial({color:C_REP,emissive:C_REP,emissiveIntensity:0.9,roughness:0.3}));
+      mk.position.set((tfVec+gVec)*sc,-0.9,0); gMaps.add(mk);
+      api.pick(mk,{resultant:{eSigned:+eSigned.toFixed(3),sum:+(tfVec+gVec).toFixed(3)}});
+      addSlbl(api,gLabels,"R_TF·x_TF + R_g·x_g = "+(tfVec+gVec).toFixed(2),"#c8742a",0.42,(tfVec+gVec)*sc,-1.35,0);
+
+      addLbl(api,gLabels,(repSign<0?"orientation-REVERSING (det<0)":"orientation-preserving (det>0) — sign leaked"),(repSign<0?C_REP.getStyle():C_TF.getStyle()),1.05,0,2.9,0);
+
+      sceneSnap={mode,xTF1:+xTF1.toFixed(2),xGA:+xGA.toFixed(2),detSign,stalkD,
+        detRTF:+rTF.toFixed(2),tfProj:+tfVec.toFixed(3),geneProj:+gVec.toFixed(3),
+        eSignedE1:+eSigned.toFixed(3),eUnsignedE1:+eUnsigned.toFixed(3),antiparallel:tfVec*gVec<0};
+
+      api.setMetric("eSignedE1",eSigned.toFixed(3));
+      api.setMetric("eUnsignedE1",eUnsigned.toFixed(3));
+      api.setMetric("totalSigned",rTF.toFixed(2));
+      api.setMetric("energyDrop",(tfVec*gVec<0?"antiparallel":"parallel"));
+
+      return {
+        badge:"Antiparallel · "+(repSign<0?"det(R_TF)<0":"det(R_TF)>0 leaked")+" · d="+stalkD,
+        formula:"E<sub>−</sub> = ‖R<sub>TF</sub>x<sub>TF</sub> + R<sub>g</sub>x<sub>g</sub>‖²  →  min when R<sub>TF</sub>x<sub>TF</sub> = −R<sub>g</sub>x<sub>g</sub>",
+        insight:"For repression the TF-side map is orientation-reversing (brown arrow points the OTHER way). The signed energy adds the two projected vectors, so it is minimised when they are antiparallel — exactly 'active TF, suppressed gene'. Leak the determinant to det>0 and the brown arrow flips blue: the model can no longer tell repression from activation.",
+        state:"R_TF·x_TF = "+tfVec.toFixed(3)+", R_g·x_g = "+gVec.toFixed(3)+". Signed sum = "+(tfVec+gVec).toFixed(3)+" → E_signed="+eSigned.toFixed(3)+". "+(tfVec*gVec<0?"Vectors antiparallel ✓":"Vectors parallel — sign lost ✗")+".",
+        metrics:{eSignedE1:eSigned.toFixed(3),eUnsignedE1:eUnsigned.toFixed(3),totalSigned:rTF.toFixed(2),energyDrop:(tfVec*gVec<0?"anti":"par")},
+        focus:{center:[0,0.2,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: state-grid — the §6 diagnostic table: signed vs unsigned energy
+    //          across 5 (repressor/activator × target) state classes.
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="state-grid"){
+      // five canonical state classes from the note §6 (repressor edge e1, R_TF=−0.9)
+      // each: [label, xTF, xGene, edgeSign]
+      const rows=[
+        {lbl:"act active, target high", xT:0.8, xG:0.8, sign:+1, ru:F.rTF2_e2, rv:F.rGA_e2},
+        {lbl:"act active, target low",  xT:0.8, xG:0.1, sign:+1, ru:F.rTF2_e2, rv:F.rGA_e2},
+        {lbl:"REPRESSOR active, target LOW",  xT:0.8, xG:0.1, sign:-1, ru:F.rTF1_e1, rv:F.rGA_e1},
+        {lbl:"REPRESSOR active, target HIGH", xT:0.8, xG:0.9, sign:-1, ru:F.rTF1_e1, rv:F.rGA_e1},
+        {lbl:"repressor inactive, target high",xT:0.1, xG:0.8, sign:-1, ru:F.rTF1_e1, rv:F.rGA_e1}
+      ];
+      const x0=-4.4, dz=1.35, barW=0.7, hScale=2.4;
+      let disagree=0, keyRowSignedE=0, keyRowUnsignedE=0;
+      rows.forEach((r,i)=>{
+        const z=-(i*dz)+ (rows.length-1)*dz/2;
+        const eS=edgeEnergy(r.ru,r.xT,r.rv,r.xG,r.sign);
+        const eU=edgeEnergyUnsigned(r.ru,r.xT,r.rv,r.xG);
+        const isRepRow=(r.sign<0);
+        const big=Math.abs(eS-eU)>0.25;
+        if(big) disagree++;
+        if(i===2){keyRowSignedE=eS; keyRowUnsignedE=eU;}  // the KEY difference row
+
+        // signed-energy bar (blue/brown) on the left
+        const hS=0.06+eS*hScale;
+        const colS=isRepRow?C_REP:C_GENE;
+        const bS=new T.Mesh(new T.BoxGeometry(barW,hS,barW),
+          new T.MeshStandardMaterial({color:colS,emissive:colS.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        bS.position.set(x0,hS/2,z); gBars.add(bS);
+        api.pick(bS,{cell:{label:r.lbl,energy:+eS.toFixed(3),kind:"signed"}});
+
+        // unsigned-energy bar (deep blue, dim) just behind/right
+        const hU=0.06+eU*hScale;
+        const bU=new T.Mesh(new T.BoxGeometry(barW,hU,barW),
+          new T.MeshStandardMaterial({color:C_AXIS,emissive:C_AXIS.clone().multiplyScalar(0.4),emissiveIntensity:0.3,roughness:0.5,transparent:true,opacity:0.65}));
+        bU.position.set(x0+1.0,hU/2,z); gBars.add(bU);
+        api.pick(bU,{cell:{label:r.lbl,energy:+eU.toFixed(3),kind:"unsigned"}});
+
+        // highlight the two KEY-DIFFERENCE rows (the repression states)
+        const rowCol=(i===2||i===3)?C_REP.getStyle():"#9fb4cc";
+        addSlbl(api,gLabels,r.lbl,rowCol,0.40,x0+2.0,0.18,z);
+        addSlbl(api,gLabels,"S "+eS.toFixed(2)+"  U "+eU.toFixed(2),(big?C_REP.getStyle():"#7c8ca0"),0.36,x0+2.0,-0.18,z);
+      });
+
+      addLbl(api,gLabels,"signed","#60a5fa",1.0,x0,hScale*0.7+0.6,(rows.length-1)*dz/2+0.9);
+      addLbl(api,gLabels,"unsigned","#1d4ed8",1.0,x0+1.0,hScale*0.4+0.6,(rows.length-1)*dz/2+0.9);
+
+      sceneSnap={mode,xTF1:+xTF1.toFixed(2),xGA:+xGA.toFixed(2),detSign,stalkD,
+        disagreeRows:disagree,keySignedE:+keyRowSignedE.toFixed(3),keyUnsignedE:+keyRowUnsignedE.toFixed(3),
+        keyEnergyGap:+(keyRowUnsignedE-keyRowSignedE).toFixed(3)};
+
+      api.setMetric("eSignedE1",keyRowSignedE.toFixed(3));
+      api.setMetric("eUnsignedE1",keyRowUnsignedE.toFixed(3));
+      api.setMetric("totalSigned",""+disagree);
+      api.setMetric("energyDrop",(keyRowUnsignedE-keyRowSignedE).toFixed(3));
+
+      return {
+        badge:"State grid · 5 classes · "+disagree+" rows disagree",
+        formula:"sign &amp; unsigned AGREE on activation rows, DISAGREE on repression rows",
+        insight:"The signed and unsigned sheaves assign identical energy to every activation state, but split on repression. For 'repressor active, target low' the signed sheaf gives low energy ("+keyRowSignedE.toFixed(3)+") while the unsigned wrongly reads high ("+keyRowUnsignedE.toFixed(3)+") — the gap of "+(keyRowUnsignedE-keyRowSignedE).toFixed(3)+" is the whole point of the signed model.",
+        state:"Key row (repressor active, target low): signed "+keyRowSignedE.toFixed(3)+" vs unsigned "+keyRowUnsignedE.toFixed(3)+". Brown bars = repression rows; deep-blue = the sign-blind reading.",
+        metrics:{eSignedE1:keyRowSignedE.toFixed(3),eUnsignedE1:keyRowUnsignedE.toFixed(3),totalSigned:""+disagree,energyDrop:(keyRowUnsignedE-keyRowSignedE).toFixed(3)},
+        focus:{center:[-3.4,0.6,0],radius:12}
+      };
+    }
+
+    return {badge:"G12",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g12",
+    kind:"signed-directed-sheaf",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G12 · Signed directed sheaf models for activation and repression",
+    subtitle:"A 3-gene circuit (TF1 represses GeneA; TF2 activates GeneA, GeneB). Repression flips the energy term to a SUM so an active repressor beside a suppressed target is rewarded, not penalised.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge bar, or grid cell.",
+    modes:[
+      {value:"circuit",      label:"Circuit (signed energy per edge)"},
+      {value:"antiparallel", label:"Antiparallel (orientation reversal at e1)"},
+      {value:"state-grid",   label:"State grid (signed vs unsigned diagnostic)"}
+    ],
+    params:[
+      {key:"xTF1",   label:"x_TF1 (repressor activity)",min:0,max:1,step:0.05,value:0.8,
+       fmt:v=>v.toFixed(2)},
+      {key:"xGA",    label:"x_GeneA (target expression)",min:0,max:1,step:0.05,value:0.1,
+       fmt:v=>v.toFixed(2)},
+      {key:"detSign",label:"det(R_TF): 0=signed(<0) 1=leaked(>0)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"det<0":"det>0",modes:["antiparallel"]},
+      {key:"stalkD", label:"stalk dim d (1=scalar 2=Σ_flip·exp A)",min:1,max:2,step:1,value:1,
+       fmt:v=>"d="+Math.round(v),modes:["antiparallel"]}
+    ],
+    metrics:[
+      {key:"eSignedE1",  label:"E_signed (repression e1)",accent:"cyan"},
+      {key:"eUnsignedE1",label:"E_unsigned (e1)",accent:"amber"},
+      {key:"totalSigned",label:"total signed E / count",accent:"violet"},
+      {key:"energyDrop", label:"signed energy drop",accent:"green"}
+    ],
+    layers:[
+      {group:"nodes", label:"Genes / TFs"},
+      {group:"maps",  label:"Restriction maps"},
+      {group:"bars",  label:"Energy bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Correct state (TF1=0.8, GeneA=0.1)",
+      on:api=>{api.setParam("xTF1",0.8);api.setParam("xGA",0.1);}
+    },
+    secondary:{
+      label:"Wrong state (TF1=0.8, GeneA=0.9)",
+      on:api=>{api.setParam("xTF1",0.8);api.setParam("xGA",0.9);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:12},
+    hint:'<span style="color:#3b82f6">blue</span>=TF/activation · <span style="color:#60a5fa">light blue</span>=gene/signed · <span style="color:#c8742a">brown</span>=repression / orientation-reversal · <span style="color:#1d4ed8">deep blue</span>=unsigned / scaffold.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="circuit") api.frame([0,0.6,0.4],12);
+      else if(s.mode==="antiparallel") api.frame([0,0.2,0],11);
+      else api.frame([-3.4,0.6,0],12);
+    },
+    onSelect(api,d){
+      if(d.node)      api.setSelected(d.node.id+" · "+d.node.kind+" · x="+d.node.x);
+      if(d.edge)      api.setSelected(d.edge.name+" · E_signed="+d.edge.eSigned+" · E_unsigned="+d.edge.eUnsigned);
+      if(d.resultant) api.setSelected("signed sum = "+d.resultant.sum+" → E_signed="+d.resultant.eSigned);
+      if(d.cell)      api.setSelected(d.cell.label+" · "+d.cell.kind+" E="+d.cell.energy);
+    },
+    build,
+    snapshot(s){
+      const xTF1=s.xTF1, xGA=s.xGA;
+      const detSign=Math.round(s.detSign), stalkD=Math.round(s.stalkD);
+      // recompute the always-available e1 numbers (the lesson's core contrast)
+      const eS=edgeEnergy(F.rTF1_e1,xTF1,F.rGA_e1,xGA,-1);
+      const eU=edgeEnergyUnsigned(F.rTF1_e1,xTF1,F.rGA_e1,xGA);
+      const e2=edgeEnergy(F.rTF2_e2,F.xTF2,F.rGA_e2,xGA,+1);
+      const e3=edgeEnergy(F.rTF2_e3,F.xTF2,F.rGB_e3,F.xGB,+1);
+      const totS=eS+e2+e3;
+      const e2u=edgeEnergyUnsigned(F.rTF2_e2,F.xTF2,F.rGA_e2,xGA);
+      const totU=eU+e2u+e3;
+      return {
+        mode:s.mode,
+        xTF1:+xTF1.toFixed(2),
+        xGA:+xGA.toFixed(2),
+        detSign,
+        stalkD,
+        eSignedE1:+eS.toFixed(3),
+        eUnsignedE1:+eU.toFixed(3),
+        totalSigned:+totS.toFixed(3),
+        totalUnsigned:+totU.toFixed(3),
+        signedLowerThanUnsigned:eS<eU,
+        energyDropFrac:+((totU-totS)/totU).toFixed(3)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

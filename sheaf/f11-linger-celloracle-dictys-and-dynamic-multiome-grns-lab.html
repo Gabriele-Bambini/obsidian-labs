@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F11 · LINGER, CellOracle, Dictys — dynamic multiome GRNs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random hash (seed -> [0,1)); fully reproducible ──
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+  // ── FACTS: the note's Section-5 GATA1/PU.1 worked example ─────────────────
+  // 5000 cells: 1000 HSC, 800 CMP, 1200 erythroblast, 1200 monocyte, 800 other.
+  const F={
+    nHSC:1000, nCMP:800, nEry:1200, nMono:1200, nOther:800, nTotal:5000,
+    // CellOracle GATA1-target counts gated by ATAC accessibility
+    ery_gata1_targets:120, hsc_gata1_targets:30,
+    // LINGER population prior W_global and CMP fine-tune
+    glob_GATA1_HBB:0.45, glob_PU1_LYZ:0.52,
+    ery_GATA1_HBB:0.72,  mono_PU1_LYZ:0.81,
+    cmp_GATA1_HBB:0.33,  cmp_PU1_LYZ:0.38,
+    cmp_GATA1_PU1:-0.18, cmp_PU1_GATA1:-0.14,
+    lambda0:10, // lambda(N_c)=lambda0/(1+N_c/100); CMP N=800 -> 1.11
+    // Dictys continuous W(z(t))[GATA1,HBB] anchors along pseudotime
+    dictys:[ {t:0.0, gata1hbb:0.02, pu1gata1:-0.02},
+             {t:0.4, gata1hbb:0.41, pu1gata1:-0.10},
+             {t:0.6, gata1hbb:0.62, pu1gata1:-0.22},
+             {t:1.0, gata1hbb:0.72, pu1gata1:-0.31} ],
+    // CellOracle PU.1-KO in CMP: delta_GATA1 = -W[PU1,GATA1]*x_PU1 = -(-0.14)*1.2
+    pu1_obs:1.2,
+    rPert:0.55 // Pearson(pred,obs) low end of validated range
+  };
+
+  let sceneSnap={};
+
+  // ── LINGER closed form: shrinkage toward global prior (Section 5/S2) ───────
+  //   W_c = W_global + (1/(1+lambda))*(W_cellType - W_global)  (data pull ~1/(1+λ))
+  function lingerWeight(global, dataPull, lambda){
+    return global + (1/(1+lambda))*(dataPull-global);
+  }
+  function lingerLambda(Nc, lambda0){ return lambda0/(1+Nc/100); }
+
+  // ── Dictys: piecewise-linear interpolation of the anchors over t ──────────
+  function dictysCurve(t,key){
+    const A=F.dictys;
+    t=clamp(t,0,1);
+    for(let i=0;i<A.length-1;i++){
+      if(t<=A[i+1].t){
+        const f=(t-A[i].t)/(A[i+1].t-A[i].t);
+        return A[i][key]+f*(A[i+1][key]-A[i][key]);
+      }
+    }
+    return A[A.length-1][key];
+  }
+
+  // ── build ──────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const lambda=s.lambda;           // LINGER shrinkage (modes:[linger])
+    const t=s.pseudotime;            // Dictys pseudotime (modes:[dictys])
+    const ko=Math.round(s.pu1ko);    // CellOracle PU.1 KO toggle (modes:[celloracle])
+    const atac=s.atac;               // ATAC accessibility threshold (modes:[celloracle])
+
+    const gNet  =api.group("net");
+    const gBars =api.group("bars");
+    const gFlux =api.group("flux");
+    const gLbl  =api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // erythroid / GATA1 axis
+    const GR=new T.Color("#34d399");   // population prior / consistent
+    const AM=new T.Color("#fbbf24");   // myeloid / PU.1 axis
+    const VI=new T.Color("#a78bfa");   // continuous / latent
+    const SL=new T.Color("#54667c");   // closed chromatin / inactive
+
+    function bL(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLbl.add(sp);return sp;}
+    function sL(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLbl.add(sp);return sp;}
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: celloracle — discrete cell types, ATAC-gated ridge GRNs
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="celloracle"){
+      // three cluster columns: HSC, Erythroblast, Monocyte
+      const cols=[
+        {x:-4.4, name:"HSC",         n:F.nHSC,  c:GR,
+         edges:[["GATA2","HLF",0.45],["GATA2","GATA1",0.38],["PU.1","LYZ",0.12]] },
+        {x: 0.0, name:"Erythroblast",n:F.nEry,  c:CY,
+         edges:[["GATA1","HBB",0.72],["GATA1","ALAS2",0.65],["KLF1","HBB",0.58],["GATA1","PU.1",-0.31]] },
+        {x: 4.4, name:"Monocyte",    n:F.nMono, c:AM,
+         edges:[["PU.1","LYZ",0.81],["PU.1","GATA1",-0.28]] }
+      ];
+
+      // ATAC gate: an edge survives only if its accessibility >= threshold.
+      // accessibility is deterministic per (cluster,TF); GATA1→HBB closed in HSC.
+      function acc(clName,tf){
+        if(tf==="GATA1") return clName==="Erythroblast"?0.93:(clName==="HSC"?0.12:0.20);
+        if(tf==="KLF1")  return clName==="Erythroblast"?0.88:0.15;
+        if(tf==="PU.1")  return clName==="Monocyte"?0.91:(clName==="HSC"?0.30:0.22);
+        if(tf==="GATA2") return clName==="HSC"?0.84:0.25;
+        return 0.5;
+      }
+
+      let totEdges=0, gata1Kept=0;
+      cols.forEach(cl=>{
+        const cx=cl.x;
+        bL(cl.name,"#"+cl.c.getHexString(),1.35,cx,3.0,0);
+        sL(cl.n+" cells","#8a99ad",0.42,cx,2.55,0);
+
+        const srcSet=[], tgtSet=[];
+        cl.edges.forEach(e=>{ if(srcSet.indexOf(e[0])<0)srcSet.push(e[0]); if(tgtSet.indexOf(e[1])<0)tgtSet.push(e[1]); });
+        const srcPos={}, tgtPos={};
+        srcSet.forEach((nm,i)=>{ const px=cx+(i-(srcSet.length-1)/2)*1.05; srcPos[nm]=new T.Vector3(px,1.55,0); });
+        tgtSet.forEach((nm,i)=>{ const px=cx+(i-(tgtSet.length-1)/2)*0.95; tgtPos[nm]=new T.Vector3(px,-0.85,0); });
+
+        cl.edges.forEach(e=>{
+          const tf=e[0],gn=e[1],w=e[2];
+          const a=acc(cl.name,tf);
+          const open=a>=atac;
+          totEdges += open?1:0;
+          if(tf==="GATA1" && gn==="HBB" && open) gata1Kept++;
+          const repress=w<0;
+          const eCol = !open ? "#2a3340" : (repress?"#fb7185":"#"+cl.c.getHexString());
+          const op   = open?0.95:0.16;
+          api.arrow(srcPos[tf],tgtPos[gn],{color:eCol,width:open?0.05:0.03,opacity:op,head:0.20,group:"net"});
+          const mid=srcPos[tf].clone().add(tgtPos[gn]).multiplyScalar(0.5);
+          if(open) bL((w>0?"+":"")+w.toFixed(2),repress?"#fb7185":"#cfe0f0",0.62,mid.x+0.18,mid.y+0.18,0.1);
+        });
+
+        srcSet.forEach(nm=>{ const p=srcPos[nm];
+          const isG1=nm==="GATA1", isPU=nm==="PU.1";
+          const nc=isG1?CY:(isPU?AM:cl.c);
+          api.node(p,{r:0.30,color:"#"+nc.getHexString(),label:nm,labelColor:"#e8eef6",group:"net",
+                     pick:{tf:nm,cluster:cl.name}});
+        });
+        tgtSet.forEach(nm=>{ const p=tgtPos[nm];
+          api.node(p,{r:0.24,color:"#7e8ea0",label:nm,labelColor:"#cfe0f0",group:"net",
+                     pick:{gene:nm,cluster:cl.name}});
+        });
+
+        // ATAC peak strip under the cluster (open vs closed)
+        for(let k=0;k<5;k++){
+          const a=clamp(0.15+prand(k*5+cl.x*3),0,1);
+          const open=a>=atac;
+          const pk=new T.Mesh(new T.BoxGeometry(0.5,0.16,0.16),
+            new T.MeshStandardMaterial({color:open?cl.c.clone():SL.clone(),emissive:open?cl.c.clone().multiplyScalar(0.5):SL.clone().multiplyScalar(0.2),emissiveIntensity:open?0.6:0.15,roughness:0.5,transparent:!open,opacity:open?1:0.4}));
+          pk.position.set(cx+(k-2)*0.55,-2.35,0);
+          gNet.add(pk);
+        }
+        sL("ATAC peaks","#6b7a8d",0.4,cx,-2.75,0);
+      });
+
+      // PU.1-KO perturbation overlay (CMP→erythroid bias): show delta_GATA1
+      const dG1 = ko? (-(F.cmp_PU1_GATA1)*F.pu1_obs) : 0;  // -(-0.14)*1.2 = +0.168
+      if(ko){
+        api.arrow([1.6,3.6,0],[-0.6,3.6,0],{color:"#a78bfa",width:0.06,head:0.26,group:"flux"});
+        bL("PU.1 KO → erythroid bias  ΔGATA1=+"+dG1.toFixed(2),"#a78bfa",0.95,0.5,4.05,0);
+      }
+
+      api.setMetric("nClusters","3");
+      api.setMetric("edgesKept",""+totEdges);
+      api.setMetric("gata1Hbb", gata1Kept>0?"open":"—");
+      api.setMetric("deltaG1", ko?("+"+dG1.toFixed(2)):"0.00");
+
+      sceneSnap={ mode, atac:+atac.toFixed(2), pu1ko:ko,
+        edgesKept:totEdges, gata1HbbHSC:(acc("HSC","GATA1")>=atac)?1:0,
+        gata1HbbEry:(acc("Erythroblast","GATA1")>=atac)?1:0,
+        deltaGATA1:+dG1.toFixed(3), lambda:0, pseudotime:0 };
+
+      return {
+        badge:"CellOracle · 3 cell-type GRNs · ATAC≥"+atac.toFixed(2)+(ko?" · PU.1 KO":""),
+        formula:"E_c = { (TF,gene) : motif in ATAC peak accessible in type c } &nbsp; W_c = (XᵀX+αI)⁻¹Xᵀy",
+        insight:"CellOracle fits a ridge GRN per discrete cluster, but only edges whose TF motif lies in an ATAC-accessible peak survive. GATA1→HBB is open in erythroblasts (ATAC 0.93) yet closed in HSCs (0.12), so the same edge appears in one cluster and vanishes in another. Raise the ATAC threshold to prune more edges; toggle PU.1-KO to run in-silico perturbation (ΔGATA1 = −W[PU.1,GATA1]·x = +0.17, biasing CMP toward erythroid fate).",
+        state:"Edges surviving ATAC gate: "+totEdges+". Erythroblast E_c keeps ~"+F.ery_gata1_targets+" GATA1 targets vs ~"+F.hsc_gata1_targets+" in HSC. W_ery[GATA1,HBB]=+0.72, W_mono[PU.1,LYZ]=+0.81; repressors (rose) carry W<0.",
+        metrics:{nClusters:"3",edgesKept:""+totEdges,gata1Hbb:gata1Kept>0?"open":"—",deltaG1:ko?("+"+dG1.toFixed(2)):"0.00"},
+        focus:{center:[0,0.3,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: linger — population prior + Bayesian shrinkage for rare CMP
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="linger"){
+      const lam=lambda;
+      const wG1 = lingerWeight(F.glob_GATA1_HBB, F.ery_GATA1_HBB, lam);
+      const wPU = lingerWeight(F.glob_PU1_LYZ,   F.mono_PU1_LYZ,   lam);
+      const lamRec = lingerLambda(F.nCMP, F.lambda0);
+
+      function track(yBase,label,gVal,cVal,curVal,colA){
+        const x0=-4.6, x1=4.6, vmin=0.0, vmax=0.85;
+        const map=v=>x0+(v-vmin)/(vmax-vmin)*(x1-x0);
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,yBase,0),new T.Vector3(x1,yBase,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+        bL(label,"#cfe0f0",0.95,x0-0.2,yBase+0.55,0);
+        const mg=new T.Mesh(new T.SphereGeometry(0.20,16,12),api.mat("#34d399",{emissive:0.6}));
+        mg.position.set(map(gVal),yBase,0); gBars.add(mg);
+        api.pick(mg,{marker:"W_global",edge:label,val:gVal});
+        bL("global "+gVal.toFixed(2),"#34d399",0.6,map(gVal)-0.2,yBase-0.55,0);
+        const mc=new T.Mesh(new T.SphereGeometry(0.20,16,12),api.mat("#"+colA.getHexString(),{emissive:0.6}));
+        mc.position.set(map(cVal),yBase,0); gBars.add(mc);
+        api.pick(mc,{marker:"W_cellType",edge:label,val:cVal});
+        bL("cell-type "+cVal.toFixed(2),"#"+colA.getHexString(),0.6,map(cVal)-0.2,yBase+0.95,0);
+        const mf=new T.Mesh(new T.SphereGeometry(0.27,20,14),api.mat("#a78bfa",{emissive:0.85}));
+        mf.position.set(map(curVal),yBase,0.12); gBars.add(mf);
+        api.pick(mf,{marker:"W_CMP",edge:label,val:curVal});
+        bL("W_CMP "+curVal.toFixed(2),"#a78bfa",0.85,map(curVal)-0.2,yBase+0.28,0.2);
+        api.edge([map(gVal),yBase,0.05],[map(curVal),yBase,0.05],{color:"#a78bfa",width:0.05,opacity:0.8,group:"bars"});
+      }
+
+      track( 1.7,"GATA1 → HBB", F.glob_GATA1_HBB, F.ery_GATA1_HBB, wG1, CY);
+      track(-1.3,"PU.1 → LYZ",  F.glob_PU1_LYZ,   F.mono_PU1_LYZ,   wPU, AM);
+
+      const regime = lam>5?"prior dominates":(lam<0.3?"data dominates":"balanced");
+      bL("λ = "+lam.toFixed(2)+"  ("+regime+")","#fbbf24",1.05,0,3.3,0);
+      bL("recommended λ(N=800) = λ₀/(1+N/100) = "+lamRec.toFixed(2),"#8a99ad",0.7,0,-3.1,0);
+
+      api.setMetric("nClusters","λ="+lam.toFixed(2));
+      api.setMetric("edgesKept","HBB "+wG1.toFixed(2)+" · LYZ "+wPU.toFixed(2));
+      api.setMetric("gata1Hbb",wG1.toFixed(2));
+      api.setMetric("deltaG1",regime);
+
+      sceneSnap={ mode, lambda:+lam.toFixed(3),
+        w_GATA1_HBB:+wG1.toFixed(3), w_PU1_LYZ:+wPU.toFixed(3),
+        lambdaRecommended:+lamRec.toFixed(3),
+        priorDominates: lam>5, atac:0, pu1ko:0, pseudotime:0 };
+
+      return {
+        badge:"LINGER · CMP (rare, "+F.nCMP+" cells) · λ="+lam.toFixed(2)+" · "+regime,
+        formula:"min<sub>W_c</sub>  ‖X_c − X_c<sup>TF</sup>W_cᵀ‖²<sub>F</sub> + λ·‖W_c − W_global‖²<sub>F</sub>",
+        insight:"LINGER pre-trains a population prior W_global on all 5000 cells, then fine-tunes the rare CMP cluster by shrinking its weights toward that prior. λ is the dial: λ→∞ pins W_CMP to W_global (green); λ→0 lets the 800-cell data pull it to the erythroblast/monocyte value (axis colour). The violet marker is the fine-tuned W_CMP — a local correction of the prior, not a copy of it. The adaptive rule sets λ(N_c)=λ₀/(1+N_c/100) ≈ "+lamRec.toFixed(2)+" here.",
+        state:"W_CMP[GATA1,HBB]="+wG1.toFixed(2)+" (between global 0.45 and erythroblast 0.72); W_CMP[PU.1,LYZ]="+wPU.toFixed(2)+" (between 0.52 and 0.81). λ="+lam.toFixed(2)+": "+regime+".",
+        metrics:{nClusters:"λ="+lam.toFixed(2),edgesKept:"HBB "+wG1.toFixed(2)+" · LYZ "+wPU.toFixed(2),gata1Hbb:wG1.toFixed(2),deltaG1:regime},
+        focus:{center:[0,0.2,0],radius:12.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: dictys — continuous W(z(t)) along the erythroid trajectory
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="dictys"){
+      const x0=-4.6, x1=4.6, yB=-1.4, yS=4.0;
+      const mapX=tt=>x0+clamp(tt,0,1)*(x1-x0);
+      const mapY=v=>yB+v*yS;
+
+      gFlux.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,yB,0),new T.Vector3(x1,yB,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gFlux.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,yB,0),new T.Vector3(x0,yB+yS,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      sL("pseudotime t","#8a99ad",0.42,0,yB-0.5,0);
+      bL("HSC","#34d399",0.8,x0,yB-0.55,0);
+      bL("erythroblast","#4dd7ff",0.8,x1-0.4,yB-0.55,0);
+      bL("W(z)","#8a99ad",0.85,x0-0.7,yB+yS*0.55,0);
+
+      const N=40;
+      const ptsG1=[], ptsPU=[];
+      for(let k=0;k<=N;k++){
+        const tt=k/N;
+        ptsG1.push(new T.Vector3(mapX(tt),mapY(dictysCurve(tt,"gata1hbb")),0));
+        ptsPU.push(new T.Vector3(mapX(tt),mapY(-dictysCurve(tt,"pu1gata1")*0.9),0));
+      }
+      gFlux.add(new T.Line(new T.BufferGeometry().setFromPoints(ptsG1),new T.LineBasicMaterial({color:CY.getHex()})));
+      gFlux.add(new T.Line(new T.BufferGeometry().setFromPoints(ptsPU),new T.LineBasicMaterial({color:AM.getHex()})));
+
+      F.dictys.forEach(a=>{
+        const d=new T.Mesh(new T.SphereGeometry(0.13,12,10),api.mat("#4dd7ff",{emissive:0.7}));
+        d.position.set(mapX(a.t),mapY(a.gata1hbb),0.06); gFlux.add(d);
+      });
+
+      const g1=dictysCurve(t,"gata1hbb");
+      const pu=dictysCurve(t,"pu1gata1");
+      const mx=mapX(t);
+      gFlux.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(mx,yB,0.05),new T.Vector3(mx,yB+yS,0.05)]),new T.LineBasicMaterial({color:0x3a4a60,transparent:true,opacity:0.6})));
+      const mk=new T.Mesh(new T.SphereGeometry(0.24,20,14),api.mat("#a78bfa",{emissive:0.9}));
+      mk.position.set(mx,mapY(g1),0.14); gFlux.add(mk);
+      api.pick(mk,{marker:"W(z(t))",t:+t.toFixed(2),gata1hbb:+g1.toFixed(3)});
+
+      const gp=new T.Vector3(mx-0.9,yB+yS+0.9,0), hp=new T.Vector3(mx+0.9,yB+yS+0.9,0);
+      api.node(gp,{r:0.26,color:"#4dd7ff",label:"GATA1",group:"net"});
+      api.node(hp,{r:0.22,color:"#7e8ea0",label:"HBB",group:"net"});
+      api.arrow(gp,hp,{color:"#4dd7ff",width:0.03+0.06*g1,head:0.18+0.08*g1,opacity:0.95,group:"net"});
+      bL("W(z(t))[GATA1,HBB]="+g1.toFixed(2),"#4dd7ff",0.8,mx,yB+yS+1.55,0);
+
+      bL("GATA1→HBB (activation, rises)","#4dd7ff",0.7,x1-2.0,mapY(g1)+0.5,0);
+      bL("PU.1⊣GATA1 (repression, deepens)","#fbbf24",0.7,x1-2.0,mapY(-pu*0.9)-0.5,0);
+
+      const stage = t<0.3?"HSC":(t<0.55?"CMP":(t<0.8?"committing":"erythroblast"));
+      api.setMetric("nClusters",stage);
+      api.setMetric("edgesKept","HBB "+g1.toFixed(2));
+      api.setMetric("gata1Hbb",g1.toFixed(2));
+      api.setMetric("deltaG1",pu.toFixed(2));
+
+      sceneSnap={ mode, pseudotime:+t.toFixed(3),
+        w_GATA1_HBB:+g1.toFixed(3), w_PU1_GATA1:+pu.toFixed(3),
+        continuous:true, atac:0, pu1ko:0, lambda:0 };
+
+      return {
+        badge:"Dictys · continuous W(z(t)) · t="+t.toFixed(2)+" · "+stage,
+        formula:"z ~ q(z | x_rna, x_atac) &nbsp;&nbsp; W(z) = MLP_grn(z) &nbsp;&nbsp; x_g = Σ_t W(z)[t,g]·x_t",
+        insight:"Dictys replaces discrete clusters with a continuous latent cell state z. A VAE encodes each cell's RNA+ATAC into z, and the GRN is a smooth function W(z)=MLP(z). As z moves along the differentiation trajectory, W(z)[GATA1,HBB] rises from ~0 at the HSC end to +0.72 at the erythroblast end (cyan), while PU.1's repression of GATA1 deepens (amber). The note's anchors at t=0,0.4,0.6,1.0 are the dots; drag t to read the GRN at any transitional state a cluster method would average away.",
+        state:"At t="+t.toFixed(2)+": W(z)[GATA1,HBB]=+"+g1.toFixed(2)+", W(z)[PU.1,GATA1]="+pu.toFixed(2)+". Smoothly interpolated between HSC and erythroblast anchors.",
+        metrics:{nClusters:stage,edgesKept:"HBB "+g1.toFixed(2),gata1Hbb:g1.toFixed(2),deltaG1:pu.toFixed(2)},
+        focus:{center:[0,1.0,0],radius:13}
+      };
+    }
+
+    return {badge:"F11",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f11",
+    kind:"dynamic-multiome-grn",
+    eyebrow:"Block F · GRN Inference",
+    title:"F11 · LINGER, CellOracle, Dictys — dynamic multiome GRNs",
+    subtitle:"One GATA1/PU.1 fate-decision dataset, three ways to make the GRN depend on cell state: ATAC-gated cluster ridge (CellOracle), population-prior shrinkage (LINGER), continuous latent trajectory (Dictys).",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge, or marker.",
+    modes:[
+      {value:"celloracle", label:"CellOracle (ATAC-gated cluster GRNs)"},
+      {value:"linger",     label:"LINGER (population prior + shrinkage)"},
+      {value:"dictys",     label:"Dictys (continuous W(z(t)) trajectory)"}
+    ],
+    params:[
+      {key:"atac", label:"ATAC accessibility threshold", min:0.10,max:0.90,step:0.01,value:0.30,
+       fmt:v=>v.toFixed(2), modes:["celloracle"]},
+      {key:"pu1ko", label:"in-silico PU.1 knockout (0/1)", min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"off":"KO", modes:["celloracle"]},
+      {key:"lambda", label:"LINGER shrinkage λ", min:0,max:10,step:0.1,value:1.11,
+       fmt:v=>v.toFixed(2), modes:["linger"]},
+      {key:"pseudotime", label:"Dictys pseudotime t", min:0,max:1,step:0.01,value:0.40,
+       fmt:v=>v.toFixed(2), modes:["dictys"]}
+    ],
+    metrics:[
+      {key:"nClusters", label:"clusters / λ / stage", accent:"cyan"},
+      {key:"edgesKept", label:"edges · weights", accent:"green"},
+      {key:"gata1Hbb",  label:"GATA1→HBB",         accent:"violet"},
+      {key:"deltaG1",   label:"ΔGATA1 / regime",   accent:"amber"}
+    ],
+    layers:[
+      {group:"net",   label:"GRN nodes / edges"},
+      {group:"bars",  label:"Shrinkage tracks"},
+      {group:"flux",  label:"Trajectory curves"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Erythroid / data end",
+      on:api=>{ if(api.state.mode==="dictys")api.setParam("pseudotime",1.0);
+                else if(api.state.mode==="linger")api.setParam("lambda",0.0);
+                else api.setParam("atac",0.10); }
+    },
+    secondary:{
+      label:"HSC / prior end",
+      on:api=>{ if(api.state.mode==="dictys")api.setParam("pseudotime",0.0);
+                else if(api.state.mode==="linger")api.setParam("lambda",10.0);
+                else api.setParam("atac",0.90); }
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=erythroid/GATA1 · <span style="color:#fbbf24">amber</span>=myeloid/PU.1 · <span style="color:#34d399">green</span>=population prior · <span style="color:#a78bfa">violet</span>=fine-tuned/continuous · <span style="color:#fb7185">rose</span>=repression (W&lt;0) · grey=closed chromatin / target gene.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="dictys") api.frame([0,1.0,0],13);
+      else if(s.mode==="linger") api.frame([0,0.2,0],12.5);
+      else api.frame([0,0.3,0],13);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="dictys") api.frame([0,1.0,0],13);
+      else if(s.mode==="linger") api.frame([0,0.2,0],12.5);
+      else api.frame([0,0.3,0],13);
+    },
+    onSelect(api,d){
+      if(d.tf)     api.setSelected("TF "+d.tf+" · cluster "+d.cluster);
+      if(d.gene)   api.setSelected("gene "+d.gene+" · cluster "+d.cluster);
+      if(d.marker) api.setSelected(d.marker+(d.edge?(" · "+d.edge):"")+(d.val!=null?(" = "+(+d.val).toFixed(2)):"")+(d.t!=null?(" @ t="+d.t):""));
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const out={ mode };
+      if(mode==="celloracle"){
+        out.atac=+(+s.atac).toFixed(2);
+        out.pu1ko=Math.round(s.pu1ko);
+        const dG1 = out.pu1ko ? (-(F.cmp_PU1_GATA1)*F.pu1_obs) : 0;
+        out.deltaGATA1=+dG1.toFixed(3);
+        out.gata1HbbEry = (0.93>=out.atac)?1:0;
+        out.gata1HbbHSC = (0.12>=out.atac)?1:0;
+      } else if(mode==="linger"){
+        const lam=+s.lambda;
+        out.lambda=+lam.toFixed(3);
+        out.w_GATA1_HBB=+lingerWeight(F.glob_GATA1_HBB,F.ery_GATA1_HBB,lam).toFixed(3);
+        out.w_PU1_LYZ  =+lingerWeight(F.glob_PU1_LYZ,F.mono_PU1_LYZ,lam).toFixed(3);
+        out.priorDominates = lam>5;
+      } else if(mode==="dictys"){
+        const t=+s.pseudotime;
+        out.pseudotime=+t.toFixed(3);
+        out.w_GATA1_HBB=+dictysCurve(t,"gata1hbb").toFixed(3);
+        out.w_PU1_GATA1=+dictysCurve(t,"pu1gata1").toFixed(3);
+        out.continuous=true;
+      }
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

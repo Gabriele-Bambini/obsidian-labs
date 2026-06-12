@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E09 · Graph neural networks for cell type annotation</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no nondeterministic calls) ──
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the note's Section-5 worked example (4-cell kNN graph)
+  // Genes (log-normalized): CD3E, CD14, FCGR3A, SELL
+  // cell_A T-cell (labeled), cell_B unknown, cell_C macrophage (labeled), cell_D unknown
+  // ════════════════════════════════════════════════════════════════════════
+  const GENES=["CD3E","CD14","FCGR3A","SELL"];
+  const H0={
+    A:[5.2,0.1,0.3,3.1],   // T-cell, labeled
+    B:[4.8,0.2,0.4,2.9],   // unknown (truly T-cell)
+    C:[0.2,5.8,4.1,0.1],   // macrophage, labeled
+    D:[0.3,5.5,3.9,0.2]    // unknown (truly macrophage)
+  };
+  const LBL={A:"T-cell",B:"?",C:"macrophage",D:"?"};   // displayed labels
+  const TRUTH={A:"T",B:"T",C:"M",D:"M"};               // ground-truth type
+  const LABELED={A:true,B:false,C:true,D:false};
+  // kNN edges (k=2, symmetric) with PCA distances from the note
+  const EDGES=[
+    {u:"A",v:"B",d:0.5,cross:false},  // same-type T
+    {u:"A",v:"C",d:4.2,cross:true},   // CROSS-type T-macrophage (contamination edge)
+    {u:"B",v:"D",d:4.0,cross:true},   // cross-type (homophily-breaking long edge)
+    {u:"C",v:"D",d:0.4,cross:false}   // same-type macrophage
+  ];
+  // self-loop GCN neighborhoods (A_hat = 1/3 over A+I with deg 3)
+  const NBR={A:["A","B","C"],B:["A","B","D"],C:["A","C","D"],D:["B","C","D"]};
+  // 3D layout: T-cell cluster on the left (-x), macrophage cluster on the right (+x)
+  const POS={
+    A:[-3.0, 1.1, 0.0],
+    B:[-3.4,-1.2, 0.6],
+    C:[ 3.0, 1.1, 0.0],
+    D:[ 3.4,-1.2,-0.6]
+  };
+  const ORDER=["A","B","C","D"];
+
+  // ── linear algebra over the 4-gene vectors ───────────────────────────────
+  const vadd=(a,b)=>a.map((x,i)=>x+b[i]);
+  const vscale=(a,s)=>a.map(x=>x*s);
+  const vsub=(a,b)=>a.map((x,i)=>x-b[i]);
+  const vnorm=a=>Math.sqrt(a.reduce((s,x)=>s+x*x,0));
+
+  // one GCN layer (no W, symmetric-normalized mean over self-loop neighborhood)
+  function gcnLayer(H){
+    const out={};
+    for(const n of ORDER){
+      let acc=[0,0,0,0];
+      for(const m of NBR[n]) acc=vadd(acc,H[m]);
+      out[n]=vscale(acc,1/3);
+    }
+    return out;
+  }
+  // K stacked GCN layers (cache)
+  function runGCN(K){
+    let H={A:H0.A.slice(),B:H0.B.slice(),C:H0.C.slice(),D:H0.D.slice()};
+    for(let k=0;k<K;k++) H=gcnLayer(H);
+    return H;
+  }
+
+  // T-cell vs macrophage score: CD3E+SELL (T markers) − CD14+FCGR3A (M markers)
+  const tScore=h=>(h[0]+h[3])-(h[1]+h[2]);
+  const predType=h=>tScore(h)>0?"T":"M";
+  const predLabel=h=>tScore(h)>0?"T-cell":"macrophage";
+
+  // homophily = fraction of edges connecting same-type cells
+  function homophily(){
+    let same=0;
+    for(const e of EDGES) if(TRUTH[e.u]===TRUTH[e.v]) same++;
+    return same/EDGES.length;
+  }
+  // oversmoothing index: mean pairwise embedding distance / its value at K=0
+  function smoothSpread(H){
+    let s=0,c=0;
+    for(let i=0;i<ORDER.length;i++)for(let j=i+1;j<ORDER.length;j++){
+      s+=vnorm(vsub(H[ORDER[i]],H[ORDER[j]])); c++;
+    }
+    return s/c;
+  }
+  const SPREAD0=smoothSpread(H0);
+
+  // majority-vote baseline: each unlabeled cell takes the most common LABELED neighbor type
+  function majorityVote(){
+    const pred={};
+    for(const n of ORDER){
+      if(LABELED[n]){pred[n]=TRUTH[n];continue;}
+      let t=0,m=0;
+      for(const e of EDGES){
+        let o=null; if(e.u===n)o=e.v; else if(e.v===n)o=e.u;
+        if(o&&LABELED[o]){ if(TRUTH[o]==="T")t++; else m++; }
+      }
+      pred[n]=t>=m?"T":"M"; // tie -> T (deterministic)
+    }
+    return pred;
+  }
+
+  // ── colors (3Blue1Brown: 3 blues + 1 brown) ──────────────────────────────
+  let sceneSnap={};
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const K=Math.max(1,Math.min(6,Math.round(s.layers)));
+    const crossW=Math.max(0,Math.min(1,s.crossWeight));      // attention down-weight on cross edges
+    const conf=Math.max(0,Math.min(1,s.labelConf));          // labeled-cell confidence
+    const showMethod=Math.round(Math.max(0,Math.min(2,s.method))); // 0 marker 1 reference 2 GNN
+
+    const gGraph =api.group("graph");
+    const gMsg   =api.group("messages");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addBig(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSm(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const TBLUE=new T.Color("#4dd7ff");   // T-cell (bright blue)
+    const MBROWN=new T.Color("#c08457");  // macrophage (brown)
+    const MIDB=new T.Color("#3a7bd5");    // mid blue (message / propagation)
+    const DEEPB=new T.Color("#7fb3ff");   // light blue accent
+    const ROSE=new T.Color("#f87a8f");    // contamination / cross-type
+    const SLATE=new T.Color("#54667c");
+    const typeCol=t=>t==="T"?TBLUE:MBROWN;
+
+    const homo=homophily();
+    const HK=runGCN(K);
+    const H1=runGCN(1);
+    const mv=majorityVote();
+
+    // helper: draw a cell node
+    function cellNode(n,extraScale){
+      const p=POS[n];
+      const labeled=LABELED[n];
+      const tc=typeCol(TRUTH[n]);
+      const r=(labeled?0.40:0.30)*(extraScale||1);
+      const col=labeled?tc.clone():tc.clone().lerp(SLATE,0.45);
+      const emi=labeled?tc.clone().multiplyScalar(0.6):tc.clone().multiplyScalar(0.25);
+      const sph=new T.Mesh(new T.SphereGeometry(r,20,16),
+        new T.MeshStandardMaterial({color:col,emissive:emi,emissiveIntensity:labeled?0.7:0.32,roughness:0.4}));
+      sph.position.set(p[0],p[1],p[2]);
+      gGraph.add(sph);
+      api.pick(sph,{cell:{id:n,labeled,truth:TRUTH[n],h0:H0[n],hk:HK[n],pred:predLabel(HK[n])}});
+      // labeled cells get a halo ring
+      if(labeled){
+        const ring=new T.Mesh(new T.TorusGeometry(r+0.12,0.035,8,28),
+          new T.MeshBasicMaterial({color:tc.getHex(),transparent:true,opacity:0.55}));
+        ring.position.set(p[0],p[1],p[2]); ring.rotation.x=Math.PI/2;
+        gGraph.add(ring);
+      }
+      return sph;
+    }
+    function drawEdges(){
+      for(const e of EDGES){
+        const a=POS[e.u],b=POS[e.v];
+        const col=e.cross?ROSE.getHex():0x274055;
+        const op=e.cross?0.7:0.5;
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints(
+          [new T.Vector3(a[0],a[1],a[2]),new T.Vector3(b[0],b[1],b[2])]),
+          new T.LineBasicMaterial({color:col,transparent:true,opacity:op})));
+      }
+    }
+    function cellTag(n){
+      const p=POS[n];
+      addSm(n+(LABELED[n]?" · "+LBL[n]:" · ?"),
+        LABELED[n]?typeCol(TRUTH[n]).getStyle():"#9fb0c4",0.40,p[0],p[1]+0.62,p[2]);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: homophily — the 4-cell kNN graph, labeled vs unlabeled
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="homophily"){
+      drawEdges();
+      for(const n of ORDER){cellNode(n,1);cellTag(n);}
+      // cluster plates
+      const plT=api.plane?null:null;
+      addBig("T-cell cluster","#4dd7ff",1.25,-3.2,2.4,0);
+      addBig("macrophage cluster","#c08457",1.25,3.2,2.4,0);
+      addSm("same-type edge","#5e7790",0.38,0,-2.5,1.6);
+      addSm("cross-type edge (contamination)","#f87a8f",0.38,0,-2.9,1.6);
+
+      const sameE=EDGES.filter(e=>!e.cross).length;
+      const crossE=EDGES.filter(e=>e.cross).length;
+      sceneSnap={mode,homophily:+homo.toFixed(3),sameEdges:sameE,crossEdges:crossE,
+                 labeledFrac:0.5,oversmoothing:0,predB:predType(H1.B),predD:predType(H1.D),layers:K};
+
+      return {
+        badge:"kNN graph · homophily "+(homo*100).toFixed(0)+"% · 2 labeled / 4 cells",
+        formula:"homophily = |{(u,v)∈E : y(u)=y(v)}| / |E|  =  "+sameE+"/"+EDGES.length+" = "+homo.toFixed(2),
+        insight:"Two labeled anchors (haloed: A=T-cell, C=macrophage) and two unknowns (grey: B, D). In a single-cell kNN graph cell type is a smooth signal — adjacent cells usually share type, so label evidence can flow along edges. The two rose edges (A–C, B–D) are cross-type and will leak the wrong evidence.",
+        state:"Same-type edges: "+sameE+" · cross-type edges: "+crossE+" · homophily "+(homo*100).toFixed(0)+"%. Empirically >85% of single-cell kNN edges are same-type; this toy graph is "+(homo*100).toFixed(0)+"%.",
+        metrics:{homophily:(homo*100).toFixed(0)+"%",labeledCells:"2 / 4",predUnlabeled:"—",oversmoothing:"0%"},
+        focus:{center:[0,0.2,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: propagate — one GCN layer, evidence flows to B and D
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="propagate"){
+      drawEdges();
+      for(const n of ORDER){cellNode(n,1);cellTag(n);}
+
+      // animate message arrows from labeled neighbors into the unknowns
+      function msgArrow(from,to,col){
+        const a=POS[from],b=POS[to];
+        const dir=new T.Vector3(b[0]-a[0],b[1]-a[1],b[2]-a[2]);
+        const len=dir.length(); dir.normalize();
+        const start=new T.Vector3(a[0],a[1],a[2]).add(dir.clone().multiplyScalar(0.45));
+        const stop =new T.Vector3(b[0],b[1],b[2]).add(dir.clone().multiplyScalar(-0.5));
+        gMsg.add(new T.Line(new T.BufferGeometry().setFromPoints([start,stop]),
+          new T.LineBasicMaterial({color:col,transparent:true,opacity:0.9})));
+        const cone=new T.Mesh(new T.ConeGeometry(0.12,0.34,10),new T.MeshBasicMaterial({color:col}));
+        cone.position.copy(stop);
+        cone.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+        gMsg.add(cone);
+      }
+      // A (T-cell, conf) -> B  ; C (macrophage) -> D ; cross edges weakened by crossW
+      msgArrow("A","B",TBLUE.getHex());
+      msgArrow("C","D",MBROWN.getHex());
+      msgArrow("A","C",ROSE.clone().lerp(SLATE,1-crossW).getHex()); // cross contamination, dimmed by crossW
+      msgArrow("B","D",ROSE.clone().lerp(SLATE,1-crossW).getHex());
+
+      // predicted-type chips above B and D using one GCN layer
+      function predChip(n){
+        const h=H1[n], p=POS[n];
+        const pt=predType(h);
+        addBig((pt==="T"?"→ T-cell":"→ macrophage"),(pt==="T"?"#4dd7ff":"#c08457"),1.25,p[0],p[2]>0?p[1]-0.95:p[1]-0.95,p[2]);
+      }
+      predChip("B"); predChip("D");
+
+      // show contamination on A: elevated CD14 after layer 1
+      const aCD14=H1.A[1];
+      addSm("A picks up CD14="+aCD14.toFixed(2)+" (cross-leak)","#f87a8f",0.40,POS.A[0],POS.A[1]+1.25,POS.A[2]);
+
+      const predBok=predType(H1.B)===TRUTH.B;
+      const predDok=predType(H1.D)===TRUTH.D;
+      const tsB=tScore(H1.B), tsD=tScore(H1.D);
+      sceneSnap={mode,layers:1,homophily:+homo.toFixed(3),predB:predType(H1.B),predD:predType(H1.D),
+                 tScoreB:+tsB.toFixed(3),tScoreD:+tsD.toFixed(3),contamCD14:+aCD14.toFixed(3),
+                 crossWeight:+crossW.toFixed(2),correctUnlabeled:(predBok?1:0)+(predDok?1:0),oversmoothing:0};
+
+      return {
+        badge:"1 GCN layer · h⁽¹⁾(v)=⅓·Σ h(u) · B→"+predLabel(H1.B)+" D→"+predLabel(H1.D),
+        formula:"h⁽¹⁾(B)=⅓(h_A+h_B+h_D)=[3.43, 1.93, 1.53, 2.07]  ⇒ high CD3E ⇒ T-cell",
+        insight:"One symmetric-normalized GCN layer averages each cell with its self-loop neighborhood. B sits next to the T-cell anchor A, so its post-layer vector keeps high CD3E ⇒ predicted T-cell. D sits next to macrophage anchor C ⇒ predicted macrophage. The cross edge A–C leaks a little CD14 into A (rose) — small after one layer, the suppression grows as the cross-edge attention weight drops.",
+        state:"B t-score "+tsB.toFixed(2)+" ⇒ "+predLabel(H1.B)+(predBok?" ✓":" ✗")+" · D t-score "+tsD.toFixed(2)+" ⇒ "+predLabel(H1.D)+(predDok?" ✓":" ✗")+". A contamination CD14="+aCD14.toFixed(2)+".",
+        metrics:{homophily:(homo*100).toFixed(0)+"%",labeledCells:"2 / 4",predUnlabeled:predType(H1.B)+" , "+predType(H1.D),oversmoothing:"0%"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: depth — oversmoothing vs majority-vote baseline & methods
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="depth"){
+      // bar chart: per-cell |t-score| at K layers (collapses toward 0 = oversmoothing)
+      const xPos={A:-4.2,B:-2.5,C:1.0,D:2.7};
+      for(const n of ORDER){
+        const ts=tScore(HK[n]);
+        const h=0.12+Math.min(4.2,Math.abs(ts)*0.55);
+        const tc=typeCol(predType(HK[n]));
+        const bar=new T.Mesh(new T.BoxGeometry(1.1,h,1.1),
+          new T.MeshStandardMaterial({color:tc.clone(),emissive:tc.clone().multiplyScalar(0.5),
+            emissiveIntensity:0.5,roughness:0.4}));
+        bar.position.set(xPos[n],h/2,0);
+        gBars.add(bar);
+        api.pick(bar,{cell:{id:n,labeled:LABELED[n],truth:TRUTH[n],hk:HK[n],pred:predLabel(HK[n]),tscore:ts}});
+        addBig(n,tc.getStyle(),1.2,xPos[n],h+0.5,0);
+        addSm("|t|="+Math.abs(ts).toFixed(2),"#9fb0c4",0.36,xPos[n],-0.55,0);
+      }
+      // baseline separator
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-5.5,0,0),new T.Vector3(4.2,0,0)]),new T.LineBasicMaterial({color:0x274055})));
+
+      const spread=smoothSpread(HK);
+      const oversm=1-spread/SPREAD0; // 0 at K=1ish, ->1 as embeddings collapse
+
+      // method comparison cards (marker / reference / GNN)
+      const methodNames=["marker (scType)","reference (scANVI)","GNN (GRAPE/GCN)"];
+      const methodCol=[SLATE,MIDB,TBLUE];
+      const methodDir=["no","no","yes (msg pass)"];
+      const mn=showMethod;
+      addBig(methodNames[mn],methodCol[mn].getStyle(),1.3,-1.0,4.4,0);
+      addSm("directional: "+methodDir[mn]+" · uses graph: "+(mn===2?"yes":"no"),"#8a99ad",0.40,-1.0,3.9,0);
+
+      // majority-vote baseline readout for B,D
+      addSm("majority-vote: B→"+(mv.B==="T"?"T-cell":"macrophage")+"  D→"+(mv.D==="T"?"T-cell":"macrophage"),
+        "#7fb3ff",0.40,-1.0,-1.3,0);
+      addBig("oversmoothing "+(oversm*100).toFixed(0)+"%","#f87a8f",1.25,-1.0,-1.9,0);
+
+      const allOk=(predType(HK.B)===TRUTH.B&&predType(HK.D)===TRUTH.D)?2:
+                  ((predType(HK.B)===TRUTH.B||predType(HK.D)===TRUTH.D)?1:0);
+      sceneSnap={mode,layers:K,method:mn,homophily:+homo.toFixed(3),
+                 oversmoothing:+oversm.toFixed(3),spread:+spread.toFixed(3),
+                 predB:predType(HK.B),predD:predType(HK.D),correctUnlabeled:allOk,
+                 mvB:mv.B,mvD:mv.D,usesGraph:mn===2?1:0};
+
+      return {
+        badge:"Depth K="+K+" · "+methodNames[mn]+" · oversmoothing "+(oversm*100).toFixed(0)+"%",
+        formula:"spread(K) = mean‖h(i)−h(j)‖ → 0 as K↑   (2 layers optimal; >3 oversmooths)",
+        insight:"Bars are per-cell |t-score| (T-vs-macrophage separation) after K GCN layers. At K=2 the toy graph stays well-separated. Push K higher and every cell's receptive field grows to span both clusters — the bars shrink toward zero (oversmoothing) and B/D become unclassifiable. A GNN must beat the majority-vote baseline shown below, or it is just a complicated kNN classifier.",
+        state:"K="+K+" layers · spread "+spread.toFixed(2)+" (was "+SPREAD0.toFixed(2)+") · oversmoothing "+(oversm*100).toFixed(0)+"%. Predicted B→"+predLabel(HK.B)+" D→"+predLabel(HK.D)+". Majority vote: B→"+(mv.B==="T"?"T":"M")+" D→"+(mv.D==="T"?"T":"M")+".",
+        metrics:{homophily:(homo*100).toFixed(0)+"%",labeledCells:"2 / 4",predUnlabeled:predType(HK.B)+" , "+predType(HK.D),oversmoothing:(oversm*100).toFixed(0)+"%"},
+        focus:{center:[-0.6,1.4,0],radius:13}
+      };
+    }
+
+    return {badge:"E09",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e09",
+    kind:"cell-type-annotation",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E09 · Graph neural networks for cell type annotation",
+    subtitle:"Annotation as semi-supervised node classification on a kNN cell graph. Four cells, two labeled anchors: watch label evidence propagate, then oversmooth.",
+    selectedLabel:"Cell / bar",
+    selectedHint:"Click a cell node or a bar.",
+    modes:[
+      {value:"homophily", label:"Homophily graph (kNN, 2 labeled)"},
+      {value:"propagate", label:"Message passing (1 GCN layer → B,D)"},
+      {value:"depth",     label:"Depth & oversmoothing (vs baseline)"}
+    ],
+    params:[
+      {key:"layers",     label:"GCN layers K",min:1,max:6,step:1,value:2,
+       fmt:v=>Math.round(v).toString(),modes:["depth"]},
+      {key:"crossWeight",label:"cross-edge attention (1=keep 0=GAT-suppress)",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["propagate"]},
+      {key:"labelConf",  label:"labeled-anchor confidence",min:0.2,max:1,step:0.05,value:0.85,
+       fmt:v=>v.toFixed(2),modes:["homophily","propagate"]},
+      {key:"method",     label:"method (0 marker · 1 reference · 2 GNN)",min:0,max:2,step:1,value:2,
+       fmt:v=>["marker","reference","GNN"][Math.round(v)],modes:["depth"]}
+    ],
+    metrics:[
+      {key:"homophily",     label:"Graph homophily",accent:"cyan"},
+      {key:"labeledCells",  label:"Labeled anchors",accent:"violet"},
+      {key:"predUnlabeled", label:"Predict B , D",accent:"green"},
+      {key:"oversmoothing", label:"Oversmoothing",accent:"rose"}
+    ],
+    layers:[
+      {group:"graph",    label:"Cells / edges"},
+      {group:"messages", label:"Message arrows"},
+      {group:"bars",     label:"Separation bars"},
+      {group:"labels",   label:"Labels"}
+    ],
+    primary:{
+      label:"2 layers (optimal)",
+      on:api=>{api.setParam("layers",2);}
+    },
+    secondary:{
+      label:"6 layers (oversmooth)",
+      on:api=>{api.setParam("layers",6);}
+    },
+    defaultCam:{theta:-0.5,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">blue</span>=T-cell · <span style="color:#c08457">brown</span>=macrophage · <span style="color:#f87a8f">rose</span>=cross-type / contamination · grey=unlabeled. Haloed nodes are labeled anchors (A, C).',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="depth") api.frame([-0.6,1.4,0],13);
+      else api.frame([0,0,0],12);
+    },
+    onSelect(api,d){
+      if(d.cell){
+        const c=d.cell;
+        const tline=c.tscore!==undefined?(" · t-score "+c.tscore.toFixed(2)):"";
+        api.setSelected("Cell "+c.id+" · "+(c.labeled?("anchor "+c.truth):"unlabeled")+" → "+c.pred+tline);
+      }
+    },
+    build,
+    snapshot(s){
+      const K=Math.max(1,Math.min(6,Math.round(s.layers)));
+      const HK=runGCN(K), H1=runGCN(1);
+      const mode=s.mode;
+      const homo=homophily();
+      const spread=smoothSpread(HK);
+      const oversm=1-spread/SPREAD0;
+      const mv=majorityVote();
+      const predB=(mode==="propagate")?predType(H1.B):predType(HK.B);
+      const predD=(mode==="propagate")?predType(H1.D):predType(HK.D);
+      return {
+        mode:s.mode,
+        layers:K,
+        method:Math.round(Math.max(0,Math.min(2,s.method))),
+        crossWeight:+(Math.max(0,Math.min(1,s.crossWeight))).toFixed(2),
+        homophily:+homo.toFixed(3),
+        oversmoothing:+oversm.toFixed(3),
+        spread:+spread.toFixed(3),
+        predB,
+        predD,
+        bCorrect:predB===TRUTH.B,
+        dCorrect:predD===TRUTH.D,
+        mvB:mv.B,
+        mvD:mv.D,
+        contamCD14:+H1.A[1].toFixed(3)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

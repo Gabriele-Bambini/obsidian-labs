@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D13 · Gene set, ontology, and pathway graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  FACTS — the note's Section-5 worked example (BRCA1-mutant MCF-7 vs WT)
+  //  BRCA1-mutant breast cancer · GO DAG enrichment of the DSB-repair subtree.
+  // ════════════════════════════════════════════════════════════════════════
+  const F={
+    nDEG:347,           // differentially expressed genes (FDR<0.05, |log2FC|>1)
+    nRanked:15823,      // genes in the ranked list L
+    beta:0.30,          // GO DAG propagation weight (note uses 0.3)
+    NES:2.14,           // normalized ES for GO:0000724
+    FDRq:0.002          // q-value for GO:0000724
+  };
+
+  // The enriched DSB-repair subtree under the BP root. Each term carries the
+  // note's numbers: ES_raw (own gene-set GSEA), ORA hypergeometric p-value,
+  // DEGs annotated, background gene-set size, parent index, and depth row.
+  //  id 0 = BP root.  rows go general(top) → specific(bottom).
+  const TERMS=[
+    {id:0, label:"biological process",     go:"0008150", es:0.05, p:0.40,   deg:347, bg:20000, parent:-1, row:0, leaf:false},
+    {id:1, label:"response to DNA damage",  go:"0006974", es:0.21, p:1.2e-4, deg:31,  bg:1100,  parent:0,  row:1, leaf:false},
+    {id:2, label:"DNA repair",              go:"0006281", es:0.41, p:8.3e-6, deg:28,  bg:712,   parent:1,  row:2, leaf:false},
+    {id:3, label:"DNA damage checkpoint",   go:"0042769", es:0.44, p:3.0e-4, deg:14,  bg:410,   parent:1,  row:2, leaf:true },
+    {id:4, label:"DSB repair via HR",       go:"0000724", es:0.61, p:2.1e-7, deg:6,   bg:34,    parent:2,  row:3, leaf:true },
+    {id:5, label:"DSB repair via NHEJ",     go:"0045002", es:0.38, p:9.0e-4, deg:5,   bg:58,    parent:2,  row:3, leaf:true },
+    {id:6, label:"nucleotide-excision rep", go:"0006289", es:0.22, p:0.18,   deg:4,   bg:240,   parent:2,  row:3, leaf:true }
+  ];
+  // a deliberately NON-enriched sibling at row 1 to show ORA specificity
+  const DISTRACTOR={id:7, label:"cell cycle", go:"0007049", es:0.06, p:0.23, deg:12, bg:1280, parent:0, row:1, leaf:true};
+
+  // children index (DAG edges child→parent)
+  function childrenOf(id){const out=[];TERMS.forEach(t=>{if(t.parent===id)out.push(t.id);});return out;}
+  function termById(id){return TERMS.find(t=>t.id===id);}
+
+  // ── GSEA running-sum (Section 3/5) over a ranked list with k hits at top ──
+  // Returns the running-sum trace and the enrichment score ES = max|RS|.
+  // We synthesise hit positions deterministically from the term's ES_raw:
+  // higher ES ⇒ hits more concentrated at the top of the list.
+  function gseaTrace(es, k, steps){
+    const trace=[]; let rs=0, peak=0;
+    const up=Math.sqrt((steps-k)/Math.max(1,k));
+    const dn=Math.sqrt(k/Math.max(1,steps-k));
+    // concentration: es near 1 ⇒ all hits in the first few buckets
+    const conc=0.12+0.80*es;            // fraction of list span the hits occupy
+    let hitsLeft=k;
+    for(let i=0;i<steps;i++){
+      const frac=i/(steps-1);
+      // probability this bucket is a hit, front-loaded by conc
+      let isHit=false;
+      if(hitsLeft>0 && frac<=conc){
+        const dens=k/Math.max(1,Math.round(conc*steps));
+        if(prand(i*13+Math.round(es*100))<dens){isHit=true;hitsLeft--;}
+      }
+      rs+= isHit? up : -dn;
+      if(Math.abs(rs)>Math.abs(peak)) peak=rs;
+      trace.push(rs);
+    }
+    return {trace, es:Math.abs(peak)};
+  }
+
+  // ── ORA: hypergeometric −log10 p, mapped to a [0,1] enrichment bar ───────
+  function oraScore(p){ return Math.min(1, Math.max(0, (-Math.log10(p))/8)); }  // 8 == p=1e-8 saturates
+
+  // ── GO DAG propagation (Section 4/5): bottom-up accumulation ─────────────
+  //   ES_prop(t) = ES_raw(t) + beta · Σ_children ES_prop(child)
+  function propagate(beta){
+    const prop={};
+    // process specific→general (descending row)
+    const order=[...TERMS].sort((a,b)=>b.row-a.row);
+    order.forEach(t=>{
+      let s=t.es;
+      childrenOf(t.id).forEach(cid=>{ s+=beta*prop[cid]; });
+      prop[t.id]=s;
+    });
+    return prop;
+  }
+
+  let sceneSnap={};
+
+  const CY=new (window.THREE.Color)("#4dd7ff");   // GSEA / ranked
+  const GR=new (window.THREE.Color)("#34d399");   // strongly enriched / activation
+  const AM=new (window.THREE.Color)("#fbbf24");   // ORA / flat
+  const VI=new (window.THREE.Color)("#a78bfa");   // propagation gain
+  const SL=new (window.THREE.Color)("#54667c");   // dim / not enriched
+  const RO=new (window.THREE.Color)("#fb7185");   // repression / NHEJ
+
+  // colour a term by its score (0..1)
+  function scoreCol(s){
+    if(s<0.30) return SL.clone();
+    return SL.clone().lerp(GR, Math.min(1,(s-0.30)/0.55));
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const beta=s.beta;
+    const cutoff=s.minSet;              // min gene-set size filter (specificity gate)
+    const topThr=s.sigThr;             // significance threshold on score (0..1)
+
+    const gDag   =api.group("dag");
+    const gScore =api.group("scores");
+    const gRank  =api.group("rank");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // layout: DAG laid out top(general)→bottom(specific) on the y axis.
+    const rowY=[3.4,1.1,-1.2,-3.5];     // row 0..3
+    const rowX={0:[0],1:[-2.6,2.6],2:[-2.2,2.2],3:[-4.2,-1.4,1.4]};
+    // assign x within each row deterministically by appearance order
+    const rowFill={0:0,1:0,2:0,3:0};
+    const allTerms=[...TERMS, DISTRACTOR];
+    const pos={};
+    allTerms.forEach(t=>{
+      const r=t.row; const slot=rowFill[r]++;
+      const xs=rowX[r]||[0]; const x=xs[Math.min(slot,xs.length-1)];
+      pos[t.id]=new T.Vector3(x, rowY[r], 0);
+    });
+
+    // propagation once (used by dag-propagation mode and snapshot)
+    const prop=propagate(beta);
+
+    // ════════════════════════════════════════════════════════════════
+    // shared: draw the DAG skeleton (child→parent arrows up the hierarchy)
+    // ════════════════════════════════════════════════════════════════
+    function drawSkeleton(highlightProp){
+      allTerms.forEach(t=>{
+        if(t.parent<0) return;
+        const pa=pos[t.id], pb=pos[t.parent];
+        if(!pa||!pb) return;
+        // edge colour: violet if propagation is active and carries signal up
+        const carry = highlightProp ? Math.min(1, prop[t.id]/0.7) : 0;
+        const eCol = highlightProp ? "#a78bfa" : "#26405c";
+        const op   = highlightProp ? (0.30+0.55*carry) : 0.5;
+        api.edge([pa.x,pa.y+0.42,0],[pb.x,pb.y-0.42,0],{color:eCol,opacity:op,width:highlightProp?0.05+0.06*carry:0.05,group:"dag"});
+        if(highlightProp && carry>0.25){
+          // upward signal arrow
+          const mid=new T.Vector3((pa.x+pb.x)/2,(pa.y+pb.y)/2,0.05);
+          const cone=new T.Mesh(new T.ConeGeometry(0.10+0.05*carry,0.34,10),new T.MeshBasicMaterial({color:VI}));
+          cone.position.copy(mid); cone.position.y+=0.0;
+          gDag.add(cone);
+        }
+      });
+    }
+
+    // shared: draw a term sphere with score-driven size + colour
+    function drawTerm(t, score, enriched, special){
+      const p=pos[t.id];
+      const r=0.30+0.45*Math.min(1,score);
+      let col = enriched ? scoreCol(score) : SL.clone();
+      if(t.id===4 && enriched) col=GR.clone();              // HR = the headline
+      if(t.id===5 && enriched) col=RO.clone().lerp(GR,0.25);// NHEJ
+      if(special) col=col.lerp(SL,0.55);
+      const emi = enriched ? 0.55 : 0.18;
+      const sph=new T.Mesh(new T.SphereGeometry(r,22,16),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(enriched?0.7:0.2),emissiveIntensity:emi,roughness:0.4,transparent:!enriched,opacity:enriched?1:0.5}));
+      sph.position.copy(p);
+      gScore.add(sph);
+      api.pick(sph,{term:{go:t.go,label:t.label,score:+score.toFixed(3),deg:t.deg,bg:t.bg,oraP:t.p,esRaw:t.es,esProp:+(prop[t.id]||t.es).toFixed(3),enriched}});
+      // term label + score
+      addSlbl(t.label,"#cfe0f0",0.30,p.x,p.y-r-0.32,0);
+      if(enriched) addLbl(score.toFixed(2),(t.id===4?"#34d399":(t.id===5?"#fb7185":"#9fb6cc")),1.0,p.x,p.y+r+0.30,0);
+      return r;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: ora — flat hypergeometric, every term independent
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="ora"){
+      drawSkeleton(false);
+      let nSig=0, topGo="—", topScore=0;
+      allTerms.forEach(t=>{
+        const sc=oraScore(t.p);
+        // specificity gate: terms with bg below the slider, or bg above 1000, behave differently
+        const tooBroad = t.bg>1000;                       // root / cell-cycle: huge set
+        const tooSmall = t.bg < cutoff;                   // below min set size
+        const enriched = sc>=topThr && !tooBroad && !tooSmall;
+        if(enriched){nSig++; if(sc>topScore){topScore=sc;topGo=t.go;}}
+        drawTerm(t, sc, enriched, false);
+        // ORA shows the p-value as a flat label
+        if(t.id===4||t.id===2||t.id===6){
+          addSlbl("p="+t.p.toExponential(0),enriched?"#fbbf24":"#6b7a8d",0.26,pos[t.id].x,pos[t.id].y-pos[t.id].y*0+ -0.66- (0.30+0.45*Math.min(1,sc)),0);
+        }
+      });
+      addLbl("ORA · each term independent","#fbbf24",1.2,0,4.4,0);
+      addLbl("hypergeometric p per term","#6b7a8d",0.95,0,-4.7,0);
+
+      const hr=oraScore(termById(4).p), rep=oraScore(termById(2).p);
+      sceneSnap={mode,beta:0,minSet:cutoff,sigThr:+topThr.toFixed(2),
+        scoreHR:+hr.toFixed(3),scoreDNArepair:+rep.toFixed(3),nEnriched:nSig,
+        propGainDNArepair:0};
+
+      return {
+        badge:"ORA · "+nSig+" terms significant · top GO:"+topGo,
+        formula:"p(t) = Σ_{i≥k} C(K,i)C(N−K,n−i) / C(N,n)   (hypergeometric, per term)",
+        insight:"Over-representation analysis tests each GO term in isolation: does the DEG list contain more "+termById(4).go+"-genes than chance? It is fast and threshold-based, but blind to the DAG — the specific 'DSB repair via HR' term ("+termById(4).go+", p=2.1e-7) and the broad 'DNA repair' parent are scored separately, and 'cell cycle' stays unenriched (p=0.23). No signal flows between related terms.",
+        state:"ORA: "+nSig+" of "+allTerms.length+" terms pass threshold "+topThr.toFixed(2)+". HR-repair −log10p maps to "+hr.toFixed(2)+", DNA-repair to "+rep.toFixed(2)+". Raise min set size to mute broad terms.",
+        metrics:{scoreHR:hr.toFixed(2),scoreDNArepair:rep.toFixed(2),propGain:"—",nEnriched:""+nSig},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: gsea — ranked-list running sum (threshold-free, still flat)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="gsea"){
+      drawSkeleton(false);
+      // draw terms coloured by ES_raw, with the running-sum trace for the focal HR term
+      let nSig=0;
+      allTerms.forEach(t=>{
+        const sc=t.es;
+        const enriched = sc>=topThr && t.bg>=cutoff;
+        if(enriched)nSig++;
+        drawTerm(t, sc, enriched, false);
+      });
+
+      // running-sum curve for GO:0000724 (HR) drawn as a 2D trace to the right
+      const focal=termById(4);
+      const g=gseaTrace(focal.es, focal.deg, 60);
+      const x0=4.6, y0=-3.2, xS=4.4/60, yS=2.4;
+      gRank.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,y0,0),new T.Vector3(x0+60*xS,y0,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gRank.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,y0,0),new T.Vector3(x0,y0+yS,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      const pts=g.trace.map((v,i)=>new T.Vector3(x0+i*xS, y0 + (v/(g.es||1))*yS*0.92, 0));
+      gRank.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:CY.getHex()})));
+      // peak marker (the ES)
+      let pkI=0,pk=0; g.trace.forEach((v,i)=>{if(Math.abs(v)>pk){pk=Math.abs(v);pkI=i;}});
+      const mk=new T.Mesh(new T.SphereGeometry(0.16,12,12),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.9,roughness:0.2}));
+      mk.position.set(x0+pkI*xS, y0+(g.trace[pkI]/(g.es||1))*yS*0.92, 0.1); gRank.add(mk);
+      api.pick(mk,{rank:{term:focal.go,es:+focal.es.toFixed(2),nes:F.NES,q:F.FDRq}});
+      addLbl("running sum · GO:"+focal.go,"#4dd7ff",1.0,x0+30*xS,y0+yS+0.5,0);
+      addSlbl("ES="+focal.es.toFixed(2),"#4dd7ff",0.34,x0+pkI*xS+0.5,y0+(g.trace[pkI]/(g.es||1))*yS*0.92+0.2,0);
+      addSlbl("rank →  low log2FC","#6b7a8d",0.28,x0+30*xS,y0-0.4,0);
+
+      addLbl("GSEA · ranked list, no topology","#4dd7ff",1.2,0,4.4,0);
+
+      sceneSnap={mode,beta:0,minSet:cutoff,sigThr:+topThr.toFixed(2),
+        scoreHR:+focal.es.toFixed(3),scoreDNArepair:+termById(2).es.toFixed(3),
+        nEnriched:nSig,propGainDNArepair:0};
+
+      return {
+        badge:"GSEA · ES(HR)="+focal.es.toFixed(2)+" · NES="+F.NES+" · q="+F.FDRq,
+        formula:"ES(S_t)=max_i |RS_i|,  RS steps +√((N−|S|)/|S|) on a hit, −√(|S|/(N−|S|)) on a miss",
+        insight:"GSEA walks the full ranked list of "+F.nRanked+" genes and accumulates a running sum, stepping up at every gene in S_t. HR genes pile up at the top (BRCA1-mutant cells upregulate HR machinery), so the running sum peaks at ES=0.61, NES="+F.NES+", q="+F.FDRq+". It is threshold-free and uses every gene — but each gene set is still a flat list: the DAG edges above carry no signal.",
+        state:"GSEA running-sum peak (ES) for GO:"+focal.go+" = "+focal.es.toFixed(2)+". "+nSig+" terms exceed threshold. The curve climbs while HR genes appear at the top of the rank, then decays.",
+        metrics:{scoreHR:focal.es.toFixed(2),scoreDNArepair:termById(2).es.toFixed(2),propGain:"—",nEnriched:""+nSig},
+        focus:{center:[1.2,0,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: dag-propagation — hierarchical signal up the GO DAG
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="dag-propagation"){
+      drawSkeleton(true);
+      let nSig=0;
+      allTerms.forEach(t=>{
+        const sc=Math.min(1,prop[t.id]);
+        const enriched = sc>=topThr && t.bg>=cutoff;
+        if(enriched)nSig++;
+        drawTerm(t, sc, enriched, false);
+        // show the gain Δ = prop − raw on the boosted parent terms
+        const gain=prop[t.id]-t.es;
+        if(gain>0.04){
+          addSlbl("+"+gain.toFixed(2),"#a78bfa",0.30,pos[t.id].x+ (0.30+0.45*Math.min(1,sc))+0.25, pos[t.id].y+0.05, 0);
+        }
+      });
+      addLbl("GO DAG propagation · β="+beta.toFixed(2),"#a78bfa",1.2,0,4.4,0);
+      addLbl("ES_prop(t) = ES_raw(t) + β·Σ children","#9fb6cc",0.9,0,-4.7,0);
+
+      const hrP=prop[4], drRaw=termById(2).es, drP=prop[2];
+      const gainDR=drP-drRaw;
+      sceneSnap={mode,beta:+beta.toFixed(2),minSet:cutoff,sigThr:+topThr.toFixed(2),
+        scoreHR:+hrP.toFixed(3),scoreDNArepair:+drP.toFixed(3),nEnriched:nSig,
+        propGainDNArepair:+gainDR.toFixed(3)};
+
+      return {
+        badge:"DAG propagation · β="+beta.toFixed(2)+" · DNA-repair "+drRaw.toFixed(2)+"→"+drP.toFixed(2),
+        formula:"ES_prop(t) = ES_raw(t) + β · Σ_{c∈children(t)} ES_prop(c)",
+        insight:"Now the DAG carries signal. Specific child terms (HR "+termById(4).es.toFixed(2)+", NHEJ "+termById(5).es.toFixed(2)+") push evidence up the violet edges to their parent. 'DNA repair' rises from its weak raw "+drRaw.toFixed(2)+" to "+drP.toFixed(2)+" — the true-path rule made quantitative. 'Response to DNA damage' is boosted in turn. The trade-off: large β inflates broad parents, so a min-set-size gate is needed to keep the root honest.",
+        state:"β="+beta.toFixed(2)+". DNA-repair ES "+drRaw.toFixed(2)+" → "+drP.toFixed(2)+" (+"+gainDR.toFixed(2)+"). HR propagated "+hrP.toFixed(2)+". "+nSig+" terms now pass threshold "+topThr.toFixed(2)+". Lower β to suppress parent inflation.",
+        metrics:{scoreHR:hrP.toFixed(2),scoreDNArepair:drP.toFixed(2),propGain:"+"+gainDR.toFixed(2),nEnriched:""+nSig},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    return {badge:"D13",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d13",
+    kind:"go-dag-enrichment",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D13 · Gene set, ontology, and pathway graphs",
+    subtitle:"BRCA1-mutant MCF-7: the DSB-repair GO DAG, scored three ways. ORA tests each term alone, GSEA walks the ranked list, and DAG propagation sends evidence up the is_a hierarchy.",
+    selectedLabel:"GO term",
+    selectedHint:"Click a GO-term sphere or the running-sum marker.",
+    modes:[
+      {value:"ora",            label:"ORA (flat hypergeometric)"},
+      {value:"gsea",           label:"GSEA (ranked running sum)"},
+      {value:"dag-propagation",label:"GO DAG propagation (hierarchical)"}
+    ],
+    params:[
+      {key:"beta",  label:"propagation weight β",min:0,max:0.6,step:0.05,value:0.30,
+       fmt:v=>v.toFixed(2),modes:["dag-propagation"]},
+      {key:"sigThr",label:"significance threshold",min:0.1,max:0.65,step:0.01,value:0.30,
+       fmt:v=>v.toFixed(2)},
+      {key:"minSet",label:"min gene-set size",min:0,max:300,step:10,value:0,
+       fmt:v=>Math.round(v).toString()}
+    ],
+    metrics:[
+      {key:"scoreHR",        label:"HR-repair score (GO:0000724)",accent:"green"},
+      {key:"scoreDNArepair", label:"DNA-repair score (GO:0006281)",accent:"cyan"},
+      {key:"propGain",       label:"propagation gain Δ",accent:"violet"},
+      {key:"nEnriched",      label:"# enriched terms",accent:"amber"}
+    ],
+    layers:[
+      {group:"dag",   label:"DAG edges"},
+      {group:"scores",label:"GO terms"},
+      {group:"rank",  label:"Running sum"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"β = 0 (no propagation)",
+      on:api=>{api.setParam("beta",0);}
+    },
+    secondary:{
+      label:"β = 0.3 (note default)",
+      on:api=>{api.setParam("beta",0.30);}
+    },
+    defaultCam:{theta:-0.15,phi:0.5,r:13.5},
+    hint:'<span style="color:#34d399">green</span>=strongly enriched (HR) · <span style="color:#4dd7ff">cyan</span>=GSEA/DNA-repair · <span style="color:#fbbf24">amber</span>=ORA p · <span style="color:#a78bfa">violet</span>=propagation signal up the DAG · <span style="color:#fb7185">rose</span>=NHEJ · grey=not enriched.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="gsea") api.frame([1.2,0,0],14);
+      else api.frame([0,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.term){
+        api.setSelected("GO:"+d.term.go+" · "+d.term.label+" · DEGs "+d.term.deg+"/"+d.term.bg+" · ES_raw "+d.term.esRaw.toFixed(2)+" · ES_prop "+d.term.esProp.toFixed(2)+(d.term.enriched?" · ENRICHED":" · dim"));
+      }
+      if(d.rank) api.setSelected("GO:"+d.rank.term+" running sum · ES "+d.rank.es.toFixed(2)+" · NES "+d.rank.nes+" · q "+d.rank.q);
+    },
+    build,
+    snapshot(s){
+      const beta=(s.mode==="dag-propagation")?s.beta:0;
+      const prop=propagate(beta);
+      const hrP   = (s.mode==="ora")  ? oraScore(TERMS.find(t=>t.id===4).p)
+                  : (s.mode==="gsea") ? TERMS.find(t=>t.id===4).es
+                  : prop[4];
+      const drRaw = TERMS.find(t=>t.id===2).es;
+      const drP   = (s.mode==="ora")  ? oraScore(TERMS.find(t=>t.id===2).p)
+                  : (s.mode==="gsea") ? drRaw
+                  : prop[2];
+      const gainDR= (s.mode==="dag-propagation") ? (prop[2]-drRaw) : 0;
+      // count enriched under current rules
+      const all=[...TERMS,DISTRACTOR]; let nSig=0;
+      all.forEach(t=>{
+        let sc;
+        if(s.mode==="ora"){ if(t.bg>1000){sc=0;} else sc=oraScore(t.p); }
+        else if(s.mode==="gsea") sc=t.es;
+        else sc=Math.min(1,prop[t.id]);
+        if(sc>=s.sigThr && t.bg>=s.minSet) nSig++;
+      });
+      return {
+        mode:s.mode,
+        beta:+beta.toFixed(2),
+        minSet:Math.round(s.minSet),
+        sigThr:+s.sigThr.toFixed(2),
+        scoreHR:+hrP.toFixed(3),
+        scoreDNArepair:+drP.toFixed(3),
+        propGainDNArepair:+gainDR.toFixed(3),
+        nEnriched:nSig,
+        propagationLiftsParent: gainDR>0.05
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

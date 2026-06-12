@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F01 — A GRN edge is not a correlation: four claims, five tiers of evidence</title>
+<desc id="d">Four-panel captioned figure: A GRN edge is not a correlation: four claims, five tiers of evidence</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F01 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="19" font-weight="700">A GRN edge is not a correlation: four claims, five tiers of evidence</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">What one edge claims</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">object</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">directed TF→gene</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">asserts</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">4 claims</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">evidence</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">5 tiers</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Evidence hierarchy (tier per edge)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">(t,g) ∈ E  ⇔  tier(t→g) ≥ τ</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">τ=5 keeps only causal edges</text>
+<rect x="502" y="198.8" width="12" height="5.2" rx="2" fill="#fb7185"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">FOXA2</text>
+<rect x="540" y="183.2" width="12" height="20.8" rx="2" fill="#4dd7ff"/>
+<text x="546" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">GATA1</text>
+<rect x="578" y="178" width="12" height="26" rx="2" fill="#a78bfa"/>
+<text x="584" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">TP53</text>
+<rect x="616" y="178" width="12" height="26" rx="2" fill="#34d399"/>
+<text x="622" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">HNF4A</text>
+<line x1="502" y1="178" x2="654" y2="178" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Claims met per edge</text>
+<rect x="56" y="340" width="12" height="16" rx="2" fill="#fb7185"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">corr</text>
+<rect x="102" y="292" width="12" height="64" rx="2" fill="#34d399"/>
+<text x="108" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">in vivo</text>
+<line x1="56" y1="292" x2="148" y2="292" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393.5" fill="#fbbf24" font-size="11.5" font-weight="700">FOXA2→CLDN4</text>
+<text x="196" y="393.5" fill="#9fb4cc" font-size="11.5">1/4 (context)</text>
+<text x="56" y="413.5" fill="#fbbf24" font-size="11.5" font-weight="700">HNF4A→ALB</text>
+<text x="196" y="413.5" fill="#9fb4cc" font-size="11.5">4/4 (all)</text>
+<text x="56" y="441" fill="#8a99ad" font-size="11">Same arrow glyph; correlation proves none of</text>
+<text x="56" y="461" fill="#8a99ad" font-size="11">direction/mechanism/causality.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Context: same edge, two fates</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">hepatocyte</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">FOXA2 2.8 → ACTIVE</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">neuron</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">FOXA2 0.3 → INACTIVE</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">chromatin</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">open vs closed</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">C: E →</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">2^(types×conds)</text>
+<text x="502" y="389" fill="#8a99ad" font-size="11">A GRN inferred in one cell type does not transfer to</text>
+<text x="502" y="409" fill="#8a99ad" font-size="11">another.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F01. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="196.3" y="538" fill="#c7d2dd" font-size="13">edge </text>
+<text x="236.6" y="538" fill="#c7d2dd" font-size="13">makes </text>
+<text x="284.96" y="538" fill="#c7d2dd" font-size="13">strong </text>
+<text x="341.38" y="538" fill="#c7d2dd" font-size="13">claims </text>
+<text x="397.8" y="538" fill="#c7d2dd" font-size="13">that </text>
+<text x="438.1" y="538" fill="#c7d2dd" font-size="13">correlation </text>
+<text x="534.82" y="538" fill="#c7d2dd" font-size="13">cannot </text>
+<text x="591.24" y="538" fill="#c7d2dd" font-size="13">support. </text>
+<text x="663.78" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="697.31" y="538" fill="#c7d2dd" font-size="13">Each </text>
+<text x="738.82" y="538" fill="#c7d2dd" font-size="13">directed </text>
+<text x="811.36" y="538" fill="#c7d2dd" font-size="13">TF→gene</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">edge </text>
+<text x="80.3" y="559" fill="#c7d2dd" font-size="13">asserts </text>
+<text x="144.78" y="559" fill="#c7d2dd" font-size="13">direction, </text>
+<text x="233.44" y="559" fill="#c7d2dd" font-size="13">mechanism, </text>
+<text x="322.1" y="559" fill="#c7d2dd" font-size="13">causality, </text>
+<text x="410.76" y="559" fill="#c7d2dd" font-size="13">and </text>
+<text x="443" y="559" fill="#c7d2dd" font-size="13">context. </text>
+<text x="515.54" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="549.07" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="582.52" y="559" fill="#c7d2dd" font-size="13">four </text>
+<text x="622.82" y="559" fill="#c7d2dd" font-size="13">worked </text>
+<text x="679.24" y="559" fill="#c7d2dd" font-size="13">edges </text>
+<text x="727.6" y="559" fill="#c7d2dd" font-size="13">sit </text>
+<text x="759.84" y="559" fill="#c7d2dd" font-size="13">at </text>
+<text x="784.02" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="816.26" y="559" fill="#c7d2dd" font-size="13">tier</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">their </text>
+<text x="88.36" y="580" fill="#c7d2dd" font-size="13">evidence </text>
+<text x="160.9" y="580" fill="#c7d2dd" font-size="13">earns: </text>
+<text x="217.32" y="580" fill="#c7d2dd" font-size="13">FOXA2→CLDN4 </text>
+<text x="330.16" y="580" fill="#c7d2dd" font-size="13">tier </text>
+<text x="370.46" y="580" fill="#c7d2dd" font-size="13">1 </text>
+<text x="386.58" y="580" fill="#c7d2dd" font-size="13">(r=0.72), </text>
+<text x="467.18" y="580" fill="#c7d2dd" font-size="13">GATA1→HBB </text>
+<text x="562.69" y="580" fill="#c7d2dd" font-size="13">tier </text>
+<text x="602.99" y="580" fill="#c7d2dd" font-size="13">4 </text>
+<text x="619.11" y="580" fill="#c7d2dd" font-size="13">(ChIP </text>
+<text x="671.1" y="580" fill="#c7d2dd" font-size="13">45:2), </text>
+<text x="727.52" y="580" fill="#c7d2dd" font-size="13">TP53→CDKN1A </text>
+<text x="839.15" y="580" fill="#c7d2dd" font-size="13">and</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">HNF4A→ALB </text>
+<text x="135.51" y="601" fill="#c7d2dd" font-size="13">tier </text>
+<text x="175.81" y="601" fill="#c7d2dd" font-size="13">5. </text>
+<text x="199.99" y="601" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="233.52" y="601" fill="#c7d2dd" font-size="13">FOXA2→CLDN4 </text>
+<text x="346.36" y="601" fill="#c7d2dd" font-size="13">meets </text>
+<text x="394.72" y="601" fill="#c7d2dd" font-size="13">1/4 </text>
+<text x="426.96" y="601" fill="#c7d2dd" font-size="13">claims; </text>
+<text x="491.44" y="601" fill="#c7d2dd" font-size="13">HNF4A→ALB </text>
+<text x="586.95" y="601" fill="#c7d2dd" font-size="13">meets </text>
+<text x="635.31" y="601" fill="#c7d2dd" font-size="13">4/4. </text>
+<text x="675.61" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="709.14" y="601" fill="#c7d2dd" font-size="13">The </text>
+<text x="742.59" y="601" fill="#c7d2dd" font-size="13">FOXA2→CLDN4 </text>
+<text x="855.43" y="601" fill="#c7d2dd" font-size="13">edge</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">is </text>
+<text x="64.18" y="622" fill="#c7d2dd" font-size="13">active </text>
+<text x="120.6" y="622" fill="#c7d2dd" font-size="13">in </text>
+<text x="144.78" y="622" fill="#c7d2dd" font-size="13">hepatocytes </text>
+<text x="241.5" y="622" fill="#c7d2dd" font-size="13">(FOXA2 </text>
+<text x="302.76" y="622" fill="#c7d2dd" font-size="13">2.8, </text>
+<text x="343.06" y="622" fill="#c7d2dd" font-size="13">open </text>
+<text x="383.36" y="622" fill="#c7d2dd" font-size="13">promoter) </text>
+<text x="463.96" y="622" fill="#c7d2dd" font-size="13">and </text>
+<text x="496.2" y="622" fill="#c7d2dd" font-size="13">inactive </text>
+<text x="568.74" y="622" fill="#c7d2dd" font-size="13">in </text>
+<text x="592.92" y="622" fill="#c7d2dd" font-size="13">neurons </text>
+<text x="657.4" y="622" fill="#c7d2dd" font-size="13">(FOXA2 </text>
+<text x="718.65" y="622" fill="#c7d2dd" font-size="13">0.3, </text>
+<text x="758.95" y="622" fill="#c7d2dd" font-size="13">closed).</text>
+</svg>

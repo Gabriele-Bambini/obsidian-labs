@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G07 · Sheaf positional encodings and graph transformers</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no rng, no clock) ──────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — Section-5 worked example, frozen from the note.
+  // 4-node GRN: TF1(0) TF2(1) GeneA(2) GeneB(3), stalk d=2.
+  // e1=(TF1,GeneA) activation R=0.9·I ; e2=(TF2,GeneA) activation R=0.5·I ;
+  // e3=(TF2,GeneB) repression R=-0.4·I  (heads use identity).
+  // ════════════════════════════════════════════════════════════════════════
+  const F={
+    nodes:["TF1","TF2","GeneA","GeneB"],
+    type:["TF","TF","gene","gene"],
+    // node features h_v = (expression, ATAC)
+    h:[[0.8,0.6],[0.3,0.4],[0.7,0.5],[0.1,0.2]],
+    // edges: [src,dst, sign(+1/-1), |R| restriction scale, name]
+    edges:[
+      {s:0,d:2,sign:+1,r:0.9,name:"e1"},
+      {s:1,d:2,sign:+1,r:0.5,name:"e2"},
+      {s:1,d:3,sign:-1,r:0.4,name:"e3"}
+    ],
+    // first non-trivial sheaf-Laplacian eigenvector block per node (note §5,
+    // corrected values). Both stalk dims share the same value (decoupled maps).
+    u1:[0.56,0.42,0.51,-0.47],     // TF1, TF2, GeneA, GeneB
+    lambda1:0.20,                  // smallest nonzero eigenvalue
+    // scalar LapPE (sign-blind): magnitude only -> GeneB collides with TF2
+    lapPE:[0.56,0.47,0.51,0.47],   // |u1| up to the GeneB/TF2 near-tie
+    // attention biases A_bias[i,j] computed in the note
+    Abias_e1:0.547,                // TF1->GeneA activation
+    Abias_e3:0.031,                // TF2->GeneB repression (still positive: consistent)
+    sqrt2:1.414
+  };
+
+  // 2D layout (x,z) for the 4 nodes — TFs on the left, genes on the right.
+  const POS=[[-3.2,0,-1.7],[-3.2,0,1.9],[2.6,0,-1.9],[2.9,0,1.9]];
+
+  let sceneSnap={};
+
+  // ── helper: signed restriction-projected feature R·h for an edge tail ────
+  function projFeat(e){
+    const h=F.h[e.s];
+    const sc=e.sign*e.r;                // signed scale on tail side
+    return [sc*h[0],sc*h[1]];
+  }
+  function dot2(a,b){return a[0]*b[0]+a[1]*b[1];}
+
+  // recompute the e3 attention bias as a function of the repression strength
+  // slider so the scene + snapshot move with the control.
+  function abiasE3(repStr){
+    const tail=[-repStr*F.h[1][0],-repStr*F.h[1][1]]; // R_{TF2->e3} h_TF2
+    const head=F.h[3];                                // identity on GeneB
+    return (-1)*dot2(tail,head)/F.sqrt2;
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const peScale =s.peScale;     // visual length of PE arrows
+    const repStr  =s.repStr;      // |R| on the repression edge e3
+    const kModes  =Math.round(s.kModes);   // # eigvecs stacked (visual depth)
+    const headTemp=s.headTemp;    // attention softmax temperature (attn mode)
+
+    const gGraph =api.group("graph");
+    const gPE    =api.group("pe");
+    const gAttn  =api.group("attn");
+    const gLabels=api.group("labels");
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY="#4dd7ff";   // genes / activation-aligned
+    const GR="#34d399";   // activation
+    const AM="#fbbf24";   // scalar / blind
+    const RO="#fb7185";   // repression
+    const VI="#a78bfa";   // PE / mode axis
+    const SL="#54667c";
+
+    // ── shared: draw the 4-node signed GRN on the ground plane ──────────────
+    function drawGRN(dimNodes){
+      F.edges.forEach(e=>{
+        const a=new T.Vector3(...POS[e.s]), b=new T.Vector3(...POS[e.d]);
+        const col=e.sign>0?GR:RO;
+        api.arrow(a,b,{color:col,width:0.05,head:0.34,group:"graph"});
+        const mid=a.clone().add(b).multiplyScalar(0.5);
+        slbl(e.name+(e.sign>0?" +":" −"),col,0.40,mid.x,0.55,mid.z+0.1);
+      });
+      F.nodes.forEach((nm,i)=>{
+        const isTF=F.type[i]==="TF";
+        const baseCol=isTF?VI:CY;
+        const c=dimNodes?SL:baseCol;
+        const sph=new T.Mesh(new T.SphereGeometry(isTF?0.40:0.34,20,16),
+          new T.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:dimNodes?0.25:0.6,roughness:0.4}));
+        sph.position.set(POS[i][0],POS[i][1],POS[i][2]);
+        gGraph.add(sph);
+        api.pick(sph,{node:{id:i,name:nm,type:F.type[i],pe:F.u1[i]}});
+        lbl(nm,dimNodes?"#7c8aa0":(isTF?"#c9b8ff":"#bfeaff"),1.25,POS[i][0],1.05,POS[i][2]);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: sheaf-pe  — the hero. d=2 signed eigenvector block per node.
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="sheaf-pe"){
+      drawGRN(false);
+
+      // Each node gets a 2-vector PE arrow (u1[v] in both stalk dims => the
+      // block is (u1, u1)). Render it as an upward arrow whose direction +
+      // length encode sign & magnitude. GeneB points DOWN (negative => repressed).
+      let alignedPairs=0, antiPairs=0;
+      F.u1.forEach((u,i)=>{
+        const base=new T.Vector3(POS[i][0],1.55,POS[i][2]);
+        const dir =u>=0?1:-1;
+        const len =Math.abs(u)*3.2*peScale + 0.2;
+        const tip =base.clone().add(new T.Vector3(0,dir*len,0));
+        const col =u>=0?CY:RO;
+        api.arrow(base,tip,{color:col,width:0.07,head:0.30,group:"pe"});
+        lbl("["+u.toFixed(2)+","+u.toFixed(2)+"]",col,1.05,POS[i][0],base.y+dir*len+dir*0.55,POS[i][2]);
+      });
+      // count aligned vs anti-aligned across the 3 edges (sign of product)
+      F.edges.forEach(e=>{
+        const prod=F.u1[e.s]*F.u1[e.d];
+        if(prod>=0)alignedPairs++; else antiPairs++;
+      });
+
+      // mode axis plate behind the genes — "smooth mode u1"
+      lbl("eigvec u₁  (λ₁≈"+F.lambda1.toFixed(2)+")",VI,1.25,-0.2,3.0,0.0);
+      slbl("up = + direction · down = repressed",  "#8a99ad",0.42,-0.2,2.55,0.0);
+
+      sceneSnap={mode,peScale:+peScale.toFixed(2),repStr:+repStr.toFixed(2),kModes,
+        geneB_pe:F.u1[3], geneA_pe:F.u1[2], tf2_pe:F.u1[1],
+        signedDiscriminable:1, antiAlignedPairs:antiPairs, lambda1:F.lambda1};
+
+      return {
+        badge:"SheafPE · d=2 block per node · k="+kModes,
+        formula:"SheafPE(v) = u₁[v] ∈ ℝ²  ·  u₁[GeneB]=[−0.47,−0.47]",
+        insight:"Each node carries the d=2 block of the first sheaf-Laplacian eigenvector. TF1, TF2, GeneA point UP (same regulatory direction); GeneB points DOWN — its block is negative because TF2 represses it (e3 flips the off-diagonal sign). The transformer reads opposite-direction blocks as a repression relationship before any attention is computed.",
+        state:"u₁ blocks: TF1 +0.56, TF2 +0.42, GeneA +0.51, GeneB −0.47. "+antiPairs+" anti-aligned edge (the repressor e3). λ₁≈"+F.lambda1.toFixed(2)+".",
+        metrics:{geneB:F.u1[3].toFixed(2),geneA:F.u1[2].toFixed(2),sep:"signed ✓",lambda:F.lambda1.toFixed(2)},
+        focus:{center:[0,1.2,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: scalar-lap  — flat LapPE. one scalar per node, sign-blind.
+    // GeneB and TF2 collide; repression is invisible.
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="scalar-lap"){
+      drawGRN(false);
+
+      // one scalar bar per node (height ∝ |LapPE| — magnitude only)
+      F.lapPE.forEach((p,i)=>{
+        const h=p*3.4*peScale+0.15;
+        const bar=new T.Mesh(new T.BoxGeometry(0.5,h,0.5),
+          new T.MeshStandardMaterial({color:AM,emissive:AM,emissiveIntensity:0.45,roughness:0.4}));
+        bar.position.set(POS[i][0],1.55+h/2,POS[i][2]);
+        gPE.add(bar);
+        lbl(p.toFixed(2),AM,1.05,POS[i][0],1.55+h+0.5,POS[i][2]);
+      });
+
+      // collision callout: TF2 (0.47) ≈ GeneB (0.47) → indistinguishable
+      const collide=Math.abs(F.lapPE[1]-F.lapPE[3])<0.02;
+      lbl("scalar LapPE — one number / node",AM,1.25,-0.2,3.0,0.0);
+      slbl("TF2 ≈ GeneB → repression erased","#fb7185",0.46,-0.2,2.55,0.0);
+
+      sceneSnap={mode,peScale:+peScale.toFixed(2),repStr:+repStr.toFixed(2),kModes,
+        geneB_pe:F.lapPE[3], tf2_pe:F.lapPE[1], geneB_tf2_collision:collide?1:0,
+        signedDiscriminable:0, antiAlignedPairs:0, lambda1:F.lambda1};
+
+      return {
+        badge:"Scalar LapPE · sign-blind · "+(collide?"GeneB≡TF2":"split"),
+        formula:"LapPE(v) = u₁(v) ∈ ℝ  ·  |GeneB|=|TF2|=0.47",
+        insight:"A scalar Laplacian eigenvector assigns ONE number per node — it knows nothing about edge signs. GeneB and TF2 land at the same magnitude (0.47), so the transformer cannot tell the repressed gene from its repressor. The direction information that SheafPE keeps is permanently discarded here.",
+        state:"LapPE magnitudes: TF1 0.56, TF2 0.47, GeneA 0.51, GeneB 0.47. GeneB and TF2 collide — activation vs repression is invisible.",
+        metrics:{geneB:F.lapPE[3].toFixed(2),geneA:F.lapPE[2].toFixed(2),sep:collide?"collide ✗":"split",lambda:F.lambda1.toFixed(2)},
+        focus:{center:[0,1.2,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: attn-bias  — restriction-map attention bias on each edge.
+    // A_bias[i,j] = sign(e)·(R_i h_i)·(R_j h_j)/√d_e
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="attn-bias"){
+      drawGRN(false);
+
+      // recompute biases: e1 fixed; e3 scales with repStr slider
+      const a1=F.Abias_e1;
+      const a3=abiasE3(repStr);
+      const biasByEdge={e1:a1, e2:0.40, e3:a3};   // e2 nominal activation bias
+
+      let maxBias=0;
+      F.edges.forEach(e=>{
+        const a=new T.Vector3(...POS[e.s]), b=new T.Vector3(...POS[e.d]);
+        const mid=a.clone().add(b).multiplyScalar(0.5);
+        const bias=biasByEdge[e.name];
+        maxBias=Math.max(maxBias,Math.abs(bias));
+        // attention-weight bar standing on the edge midpoint
+        const hh=Math.abs(bias)*5.2+0.12;
+        const col=bias>=0?GR:RO;
+        const bar=new T.Mesh(new T.CylinderGeometry(0.16,0.16,hh,14),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.6,roughness:0.35}));
+        bar.position.set(mid.x,1.4+hh/2,mid.z);
+        gAttn.add(bar);
+        api.pick(bar,{edge:{name:e.name,bias:+bias.toFixed(3),sign:e.sign}});
+        lbl("A="+bias.toFixed(3),col,1.05,mid.x,1.4+hh+0.5,mid.z);
+      });
+
+      // softmax-style halo over the strongest-attended edge (temperature)
+      const eMax=F.edges.reduce((m,e)=>Math.abs(biasByEdge[e.name])>Math.abs(biasByEdge[m.name])?e:m,F.edges[0]);
+      const am=new T.Vector3(...POS[eMax.s]).add(new T.Vector3(...POS[eMax.d])).multiplyScalar(0.5);
+      api.halo([am.x,1.4,am.z],{color:CY,r:1.1+0.5/Math.max(0.2,headTemp),group:"attn"});
+
+      lbl("A_bias[i,j] = σ(e)·(Rᵢhᵢ)·(Rⱼhⱼ)/√dₑ",CY,1.15,-0.2,3.0,0.0);
+      slbl("repression e3 bias stays POSITIVE: consistent low-low state","#fb7185",0.40,-0.2,2.55,0.0);
+
+      sceneSnap={mode,peScale:+peScale.toFixed(2),repStr:+repStr.toFixed(2),kModes,
+        abias_e1:+a1.toFixed(3), abias_e3:+a3.toFixed(3), headTemp:+headTemp.toFixed(2),
+        signedDiscriminable:1, antiAlignedPairs:0, lambda1:F.lambda1};
+
+      return {
+        badge:"Attention bias · e1="+a1.toFixed(2)+" · e3="+a3.toFixed(3),
+        formula:"A_bias[TF1,GeneA]=+0.547 · A_bias[TF2,GeneB]=+0.031",
+        insight:"For each connected pair the bias is the signed inner product of restriction-map-projected features. The activation edge e1 gives a strong +0.547. The repression edge e3 gives a small POSITIVE +0.031 — TF2 is low and GeneB is low, so they AGREE about the repression: a consistent regulatory state. The signed bias encodes consistency even for repression.",
+        state:"A_bias: e1 (activation) "+a1.toFixed(3)+", e3 (repression) "+a3.toFixed(3)+". Both positive → both consistent. Drag |R| on e3 to scale its bias.",
+        metrics:{geneB:a3.toFixed(3),geneA:a1.toFixed(3),sep:"signed ✓",lambda:F.lambda1.toFixed(2)},
+        focus:{center:[0,1.2,0],radius:12}
+      };
+    }
+
+    return {badge:"G07",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g07",
+    kind:"sheaf-positional-encodings",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G07 · Sheaf positional encodings and graph transformers",
+    subtitle:"Four-node GRN (TF1, TF2, GeneA, GeneB; d=2). Three views contrast SheafPE (signed d-vector blocks), scalar LapPE (sign-blind), and the restriction-map attention bias.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, PE arrow, or edge bias.",
+    modes:[
+      {value:"sheaf-pe",   label:"SheafPE (d=2 signed blocks)"},
+      {value:"scalar-lap", label:"Scalar LapPE (sign-blind)"},
+      {value:"attn-bias",  label:"Restriction-map attention bias"}
+    ],
+    params:[
+      {key:"peScale", label:"PE arrow / bar scale",min:0.5,max:1.6,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)+"×",modes:["sheaf-pe","scalar-lap"]},
+      {key:"repStr",  label:"|R| on repression edge e3",min:0.1,max:0.9,step:0.05,value:0.4,
+       fmt:v=>v.toFixed(2),modes:["attn-bias"]},
+      {key:"kModes",  label:"# eigenvectors k (PE depth)",min:1,max:6,step:1,value:1,
+       fmt:v=>Math.round(v).toString(),modes:["sheaf-pe"]},
+      {key:"headTemp",label:"attention temperature τ",min:0.2,max:2.0,step:0.1,value:1.0,
+       fmt:v=>v.toFixed(1),modes:["attn-bias"]}
+    ],
+    metrics:[
+      {key:"geneB",  label:"GeneB encoding",accent:"rose"},
+      {key:"geneA",  label:"GeneA encoding",accent:"cyan"},
+      {key:"sep",    label:"activation vs repression",accent:"violet"},
+      {key:"lambda", label:"λ₁ (smallest nonzero)",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph", label:"GRN graph"},
+      {group:"pe",    label:"PE arrows / bars"},
+      {group:"attn",  label:"Attention bias"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"SheafPE view",
+      on:api=>{api.setMode("sheaf-pe");}
+    },
+    secondary:{
+      label:"Scalar LapPE view",
+      on:api=>{api.setMode("scalar-lap");}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:12.5},
+    hint:'<span style="color:#a78bfa">violet</span>=TF / PE axis · <span style="color:#4dd7ff">cyan</span>=gene / aligned · <span style="color:#34d399">green</span>=activation (+) · <span style="color:#fb7185">rose</span>=repression (−) · <span style="color:#fbbf24">amber</span>=scalar LapPE.',
+    onParam(api){
+      api.frame([0,1.2,0],12);
+    },
+    onMode(api){
+      api.frame([0,1.2,0],12);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node.name+" · "+d.node.type+" · u₁ block ["+d.node.pe.toFixed(2)+","+d.node.pe.toFixed(2)+"]");
+      if(d.edge) api.setSelected("edge "+d.edge.name+" · A_bias="+d.edge.bias+" · sign "+(d.edge.sign>0?"+":"−"));
+    },
+    build,
+    snapshot(s){
+      const repStr=s.repStr;
+      const a3=abiasE3(repStr);
+      const out={
+        mode:s.mode,
+        peScale:+s.peScale.toFixed(2),
+        repStr:+repStr.toFixed(2),
+        kModes:Math.round(s.kModes),
+        headTemp:+s.headTemp.toFixed(2),
+        lambda1:F.lambda1,
+        geneB_sheafPE:F.u1[3],
+        geneB_lapPE:F.lapPE[3],
+        abias_e1:+F.Abias_e1.toFixed(3),
+        abias_e3:+a3.toFixed(3)
+      };
+      // sign-discriminability flag: only SheafPE & attention keep the sign
+      out.signedDiscriminable=(s.mode==="scalar-lap")?0:1;
+      out.geneB_tf2_collision=(s.mode==="scalar-lap" && Math.abs(F.lapPE[1]-F.lapPE[3])<0.02)?1:0;
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

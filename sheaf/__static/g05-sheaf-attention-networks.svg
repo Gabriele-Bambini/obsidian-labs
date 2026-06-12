@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure G05 — Attention weights the restriction maps: R^att = α·R</title>
+<desc id="d">Four-panel captioned figure: Attention weights the restriction maps: R^att = α·R</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#fbbf24" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE G05 · BLOCK G · SHEAF GNN FOR BIOLOGY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Attention weights the restriction maps: R^att = α·R</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Three-node GRN</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">h(TF1)</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">[3.0, 2.5]</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">h(GeneA)</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">[2.5, 2.0]</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">h(GeneB)</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">[0.2, 0.8]</text>
+<circle cx="61" cy="205" r="5" fill="#34d399"/>
+<text x="70" y="209" fill="#9fb4cc" font-size="11">TF1→GeneA: activate</text>
+<circle cx="230.13" cy="205" r="5" fill="#fb7185"/>
+<text x="239.13" y="209" fill="#9fb4cc" font-size="11">TF1→GeneB: repress</text>
+<text x="56" y="218" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="510" cy="108" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="510" y="113" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Attention α (strength)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">e = a^T[W h_u || W h_v]</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">α = softmax(e_A, e_B)</text>
+<text x="502" y="187.5" fill="#fbbf24" font-size="11.5" font-weight="700">logits e</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">5 , 3.25</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="64" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="64" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Attended map R^att = α·R</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">R encodes the invariant mechanism; its dominant eigenvalue</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">sign is direction. Scaling by α keeps the sign.</text>
+<text x="56" y="349.5" fill="#34d399" font-size="11.5" font-weight="700">λ(α·R_A)</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">+0.72</text>
+<text x="56" y="369.5" fill="#fb7185" font-size="11.5" font-weight="700">λ(α·R_B)</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">-0.08</text>
+<rect x="56" y="388" width="12" height="64" rx="2" fill="#34d399"/>
+<text x="62" y="464" fill="#8a99ad" font-size="9" text-anchor="middle">A+</text>
+<rect x="74" y="444.89" width="12" height="7.11" rx="2" fill="#fb7185"/>
+<text x="80" y="464" fill="#8a99ad" font-size="9" text-anchor="middle">B-</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#34d399"/>
+<circle cx="510" cy="270" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="510" y="275" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Disentangled GRN signal</text>
+<text x="502" y="301.5" fill="#34d399" font-size="11.5" font-weight="700">α (amber)</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">cell-context strength</text>
+<text x="502" y="321.5" fill="#34d399" font-size="11.5" font-weight="700">R (sign)</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">invariant mechanism</text>
+<text x="502" y="341.5" fill="#34d399" font-size="11.5" font-weight="700">off-block</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">scales as α²</text>
+<text x="502" y="361.5" fill="#34d399" font-size="11.5" font-weight="700">vs GAT</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">GAT shares W, loses sign</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure G05. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">SAT </text>
+<text x="178.97" y="538" fill="#c7d2dd" font-size="13">factorises </text>
+<text x="267.63" y="538" fill="#c7d2dd" font-size="13">a </text>
+<text x="283.75" y="538" fill="#c7d2dd" font-size="13">TF→gene </text>
+<text x="357.1" y="538" fill="#c7d2dd" font-size="13">edge </text>
+<text x="397.4" y="538" fill="#c7d2dd" font-size="13">into </text>
+<text x="437.7" y="538" fill="#c7d2dd" font-size="13">two </text>
+<text x="469.94" y="538" fill="#c7d2dd" font-size="13">knobs </text>
+<text x="518.3" y="538" fill="#c7d2dd" font-size="13">on </text>
+<text x="542.48" y="538" fill="#c7d2dd" font-size="13">the </text>
+<text x="574.72" y="538" fill="#c7d2dd" font-size="13">note's </text>
+<text x="631.14" y="538" fill="#c7d2dd" font-size="13">3-node </text>
+<text x="687.56" y="538" fill="#c7d2dd" font-size="13">example. </text>
+<text x="760.1" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="793.63" y="538" fill="#c7d2dd" font-size="13">TF1</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">activates </text>
+<text x="120.6" y="559" fill="#c7d2dd" font-size="13">GeneA, </text>
+<text x="179.44" y="559" fill="#c7d2dd" font-size="13">represses </text>
+<text x="260.04" y="559" fill="#c7d2dd" font-size="13">GeneB. </text>
+<text x="318.88" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="352.41" y="559" fill="#c7d2dd" font-size="13">Attention </text>
+<text x="434.21" y="559" fill="#c7d2dd" font-size="13">α=softmax(5, </text>
+<text x="538.99" y="559" fill="#c7d2dd" font-size="13">3.25) </text>
+<text x="587.35" y="559" fill="#c7d2dd" font-size="13">gives </text>
+<text x="635.71" y="559" fill="#c7d2dd" font-size="13">α_A=0.852, </text>
+<text x="725.58" y="559" fill="#c7d2dd" font-size="13">α_B=0.148 </text>
+<text x="807.39" y="559" fill="#c7d2dd" font-size="13">— </text>
+<text x="829.96" y="559" fill="#c7d2dd" font-size="13">5.8×</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">more </text>
+<text x="80.3" y="580" fill="#c7d2dd" font-size="13">to </text>
+<text x="104.48" y="580" fill="#c7d2dd" font-size="13">GeneA. </text>
+<text x="163.32" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="196.85" y="580" fill="#c7d2dd" font-size="13">The </text>
+<text x="230.3" y="580" fill="#c7d2dd" font-size="13">attended </text>
+<text x="302.84" y="580" fill="#c7d2dd" font-size="13">map </text>
+<text x="335.08" y="580" fill="#c7d2dd" font-size="13">α·R </text>
+<text x="374.97" y="580" fill="#c7d2dd" font-size="13">keeps </text>
+<text x="423.33" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="455.57" y="580" fill="#c7d2dd" font-size="13">eigenvalue </text>
+<text x="544.23" y="580" fill="#c7d2dd" font-size="13">sign: </text>
+<text x="592.59" y="580" fill="#c7d2dd" font-size="13">+0.72 </text>
+<text x="640.95" y="580" fill="#c7d2dd" font-size="13">activate, </text>
+<text x="721.55" y="580" fill="#c7d2dd" font-size="13">-0.08 </text>
+<text x="769.91" y="580" fill="#c7d2dd" font-size="13">repress. </text>
+<text x="842.45" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="875.98" y="580" fill="#c7d2dd" font-size="13">α</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">is </text>
+<text x="64.18" y="601" fill="#c7d2dd" font-size="13">cell-context </text>
+<text x="168.96" y="601" fill="#c7d2dd" font-size="13">strength, </text>
+<text x="249.56" y="601" fill="#c7d2dd" font-size="13">R </text>
+<text x="266.89" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="299.13" y="601" fill="#c7d2dd" font-size="13">invariant </text>
+<text x="379.73" y="601" fill="#c7d2dd" font-size="13">mechanism; </text>
+<text x="468.39" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="500.63" y="601" fill="#c7d2dd" font-size="13">off-block </text>
+<text x="581.23" y="601" fill="#c7d2dd" font-size="13">scales </text>
+<text x="637.65" y="601" fill="#c7d2dd" font-size="13">as </text>
+<text x="661.83" y="601" fill="#c7d2dd" font-size="13">α², </text>
+<text x="691.65" y="601" fill="#c7d2dd" font-size="13">pruning </text>
+<text x="756.13" y="601" fill="#c7d2dd" font-size="13">low-α </text>
+<text x="804.49" y="601" fill="#c7d2dd" font-size="13">edges </text>
+<text x="852.85" y="601" fill="#c7d2dd" font-size="13">— </text>
+<text x="875.42" y="601" fill="#c7d2dd" font-size="13">a</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">split </text>
+<text x="88.36" y="622" fill="#c7d2dd" font-size="13">GAT </text>
+<text x="124.23" y="622" fill="#c7d2dd" font-size="13">cannot </text>
+<text x="180.65" y="622" fill="#c7d2dd" font-size="13">make.</text>
+</svg>

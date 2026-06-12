@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure K05 — Three views of a molecule, five pretrained encoders</title>
+<desc id="d">Four-panel captioned figure: Three views of a molecule, five pretrained encoders</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE K05 · BLOCK K · GRAPH FOUNDATION MODELS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Three views of a molecule, five pretrained encoders</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Three representations</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">SMILES</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">1D string</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">2D graph</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">atoms+bonds</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">3D coords</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">geometry</text>
+<circle cx="61" cy="205" r="5" fill="#fbbf24"/>
+<text x="70" y="209" fill="#9fb4cc" font-size="11">SMILES (ChemBERTa)</text>
+<circle cx="225.01" cy="205" r="5" fill="#4dd7ff"/>
+<text x="234.01" y="209" fill="#9fb4cc" font-size="11">2D graph (MPNN)</text>
+<text x="56" y="218" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="108" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="113" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Five encoders</text>
+<text x="502" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">ESM-2</text>
+<text x="642" y="139.5" fill="#9fb4cc" font-size="11.5">1280d</text>
+<text x="502" y="159.5" fill="#a78bfa" font-size="11.5" font-weight="700">ESM-3</text>
+<text x="642" y="159.5" fill="#9fb4cc" font-size="11.5">1536d</text>
+<text x="502" y="179.5" fill="#fbbf24" font-size="11.5" font-weight="700">ChemBERTa</text>
+<text x="642" y="179.5" fill="#9fb4cc" font-size="11.5">768d</text>
+<text x="502" y="199.5" fill="#34d399" font-size="11.5" font-weight="700">Uni-Mol</text>
+<text x="642" y="199.5" fill="#9fb4cc" font-size="11.5">512d</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">E-box CACGTG scores</text>
+<rect x="56" y="292" width="12" height="64" rx="2" fill="#4dd7ff"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">MYC</text>
+<rect x="87" y="294.88" width="12" height="61.12" rx="2" fill="#4dd7ff"/>
+<text x="93" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">MAX</text>
+<rect x="118" y="299.91" width="12" height="56.09" rx="2" fill="#4dd7ff"/>
+<text x="124" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">MAD1</text>
+<rect x="149" y="311.42" width="12" height="44.58" rx="2" fill="#fbbf24"/>
+<text x="155" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">USF1</text>
+<rect x="180" y="347.37" width="12" height="8.63" rx="2" fill="#fb7185"/>
+<text x="186" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">E2F1</text>
+<line x1="56" y1="292" x2="211" y2="292" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393" fill="#8a99ad" font-size="11">ESM-2 + GNN separate bHLH binders from E2F1 (different</text>
+<text x="56" y="413" fill="#8a99ad" font-size="11">fold).</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#34d399"/>
+<circle cx="510" cy="270" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="510" y="275" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Why sequence works</text>
+<text x="502" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">e_TF = ESM2_pool(DBD)</text>
+<text x="502" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">sim = cos(e_i, e_j)</text>
+<text x="502" y="349.5" fill="#4dd7ff" font-size="11.5" font-weight="700">bHLH sim</text>
+<text x="642" y="349.5" fill="#9fb4cc" font-size="11.5">0.99</text>
+<text x="502" y="369.5" fill="#fb7185" font-size="11.5" font-weight="700">E2F1 sim</text>
+<text x="642" y="369.5" fill="#9fb4cc" font-size="11.5">0.65</text>
+<text x="502" y="389.5" fill="#a78bfa" font-size="11.5" font-weight="700">MAX degree</text>
+<text x="642" y="389.5" fill="#9fb4cc" font-size="11.5">3</text>
+<text x="502" y="417" fill="#8a99ad" font-size="11">Co-evolution encodes 3D contacts; ESM-2 reads it from</text>
+<text x="502" y="437" fill="#8a99ad" font-size="11">sequence alone.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure K05. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Molecular </text>
+<text x="224.91" y="538" fill="#c7d2dd" font-size="13">foundation </text>
+<text x="313.57" y="538" fill="#c7d2dd" font-size="13">models </text>
+<text x="369.99" y="538" fill="#c7d2dd" font-size="13">on </text>
+<text x="394.17" y="538" fill="#c7d2dd" font-size="13">the </text>
+<text x="426.41" y="538" fill="#c7d2dd" font-size="13">bHLH </text>
+<text x="470.34" y="538" fill="#c7d2dd" font-size="13">TF-DNA </text>
+<text x="532.8" y="538" fill="#c7d2dd" font-size="13">binding </text>
+<text x="597.28" y="538" fill="#c7d2dd" font-size="13">example. </text>
+<text x="669.82" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="703.35" y="538" fill="#c7d2dd" font-size="13">One </text>
+<text x="736.8" y="538" fill="#c7d2dd" font-size="13">molecule, </text>
+<text x="817.4" y="538" fill="#c7d2dd" font-size="13">three</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">representations </text>
+<text x="168.96" y="559" fill="#c7d2dd" font-size="13">— </text>
+<text x="191.53" y="559" fill="#c7d2dd" font-size="13">only </text>
+<text x="231.83" y="559" fill="#c7d2dd" font-size="13">3D </text>
+<text x="257.22" y="559" fill="#c7d2dd" font-size="13">captures </text>
+<text x="329.76" y="559" fill="#c7d2dd" font-size="13">stereochemistry. </text>
+<text x="466.78" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="500.31" y="559" fill="#c7d2dd" font-size="13">Five </text>
+<text x="541.82" y="559" fill="#c7d2dd" font-size="13">encoders; </text>
+<text x="622.42" y="559" fill="#c7d2dd" font-size="13">only </text>
+<text x="662.72" y="559" fill="#c7d2dd" font-size="13">ESM-3 </text>
+<text x="714.7" y="559" fill="#c7d2dd" font-size="13">and </text>
+<text x="746.94" y="559" fill="#c7d2dd" font-size="13">Uni-Mol </text>
+<text x="813.84" y="559" fill="#c7d2dd" font-size="13">(2/5) </text>
+<text x="862.2" y="559" fill="#c7d2dd" font-size="13">are</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">3D-aware. </text>
+<text x="121.81" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="155.34" y="580" fill="#c7d2dd" font-size="13">ESM-2 </text>
+<text x="207.33" y="580" fill="#c7d2dd" font-size="13">+ </text>
+<text x="223.45" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="239.57" y="580" fill="#c7d2dd" font-size="13">2-layer </text>
+<text x="304.05" y="580" fill="#c7d2dd" font-size="13">GNN </text>
+<text x="339.91" y="580" fill="#c7d2dd" font-size="13">score </text>
+<text x="388.27" y="580" fill="#c7d2dd" font-size="13">E-box </text>
+<text x="437.84" y="580" fill="#c7d2dd" font-size="13">CACGTG: </text>
+<text x="509.58" y="580" fill="#c7d2dd" font-size="13">MYC </text>
+<text x="545.44" y="580" fill="#c7d2dd" font-size="13">0.89, </text>
+<text x="593.8" y="580" fill="#c7d2dd" font-size="13">USF1 </text>
+<text x="637.73" y="580" fill="#c7d2dd" font-size="13">0.62, </text>
+<text x="686.09" y="580" fill="#c7d2dd" font-size="13">E2F1 </text>
+<text x="728.81" y="580" fill="#c7d2dd" font-size="13">0.12 </text>
+<text x="769.11" y="580" fill="#c7d2dd" font-size="13">(different</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">fold). </text>
+<text x="96.42" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="129.95" y="601" fill="#c7d2dd" font-size="13">Co-evolution </text>
+<text x="235.94" y="601" fill="#c7d2dd" font-size="13">clusters </text>
+<text x="308.48" y="601" fill="#c7d2dd" font-size="13">bHLH </text>
+<text x="352.41" y="601" fill="#c7d2dd" font-size="13">(cos </text>
+<text x="392.71" y="601" fill="#c7d2dd" font-size="13">0.99) </text>
+<text x="441.07" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="473.31" y="601" fill="#c7d2dd" font-size="13">diverges </text>
+<text x="545.85" y="601" fill="#c7d2dd" font-size="13">E2F1 </text>
+<text x="588.56" y="601" fill="#c7d2dd" font-size="13">(cos </text>
+<text x="628.86" y="601" fill="#c7d2dd" font-size="13">0.65) </text>
+<text x="677.22" y="601" fill="#c7d2dd" font-size="13">via </text>
+<text x="709.46" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="741.7" y="601" fill="#c7d2dd" font-size="13">MAX </text>
+<text x="777.57" y="601" fill="#c7d2dd" font-size="13">hub.</text>
+</svg>

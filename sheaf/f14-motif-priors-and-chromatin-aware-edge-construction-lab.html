@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F14 · Motif priors and chromatin-aware edge construction</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no Math.random / Date) ──────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS: the note's Section-5 worked example (single source of truth) ──
+  // PWM (6 positions, background 0.25 each), log2-odds scores per nucleotide.
+  // Rows: A,C,G,T  ·  Columns: positions 1..6
+  const PWM={
+    A:[ 2.0,-2.0, 1.5,-2.0, 2.0, 0.5],
+    C:[-2.0, 2.0,-2.0, 1.5,-2.0, 0.5],
+    G:[-2.0,-2.0, 2.0,-2.0,-2.0, 0.5],
+    T:[ 0.0, 0.0,-1.0, 0.0, 0.0, 0.5]
+  };
+  const CONSENSUS="ACGCAN";
+  // The three candidate target genes near TF1 binding sites.
+  //   seq      : the 6-mer in the gene's regulatory window
+  //   atac     : normalized ATAC-seq peak score (0..1); null = no accessible peak
+  // note: theta = 8.0 (80th pct) ; exprTF1 = 3.5
+  const GENES=[
+    {id:"GeneA", seq:"ACGCAG", atac:0.72},  // score 10.0, accessible  → included
+    {id:"GeneB", seq:"ACACAT", atac:0.30},  // score  7.0, weak peak   → borderline
+    {id:"GeneC", seq:"TTGCAA", atac:null}   // no accessible peak      → excluded
+  ];
+  const EXPR_TF1=3.5;     // TF1 mean expression (log-normalized)
+  const F={
+    thetaDefault:8.0, exprTF1:EXPR_TF1, zMinDefault:10.0,
+    scoreA:10.0, scoreB:7.0,
+    atacA:0.72, atacB:0.30,
+    zSeqA:7.2, zFullA:25.2, zFullB:7.35   // motif*atac (*expr)
+  };
+
+  // PWM score of a 6-mer against the matrix (sum of per-position log-odds).
+  function pwmScore(seq){
+    let s=0;
+    for(let k=0;k<6;k++){ const b=seq[k]; s+=PWM[b]?PWM[b][k]:0; }
+    return +s.toFixed(2);
+  }
+  // Best (max-scoring) base at a position.
+  function bestBaseAt(k){
+    const order=["A","C","G","T"]; let bb="A",bv=-99;
+    order.forEach(b=>{ if(PWM[b][k]>bv){bv=PWM[b][k];bb=b;} });
+    return bb;
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const theta=s.theta;                 // motif call threshold
+    const useExpr=Math.round(s.useExpr); // 0=motif*atac, 1=*expr
+    const zMin=s.zMin;                   // prior-graph inclusion threshold on Z
+    const atacGain=s.atacGain;           // accessibility multiplier (0.4..1.4)
+
+    const gScene =api.group("scene");
+    const gBars  =api.group("bars");
+    const gGraph =api.group("graph");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY="#4dd7ff";   // motif / PWM / TF1
+    const GR="#34d399";   // match / accessible / included edge
+    const AM="#fbbf24";   // ATAC / borderline
+    const VI="#a78bfa";   // confidence Z / threshold
+    const RO="#fb7185";   // excluded / below threshold
+    const SL="#54667c";   // closed chromatin
+
+    // effective per-gene quantities (deterministic functions of controls)
+    function geneData(g){
+      const score=pwmScore(g.seq);
+      const atac=(g.atac==null)?0:Math.min(1,g.atac*atacGain);
+      const accessible=(g.atac!=null);
+      const called=(score>=theta);                       // motif call
+      const motifPos=Math.max(0,score);                  // motif evidence (>=0)
+      const expr=useExpr?EXPR_TF1:1;
+      const Z=accessible?(+(motifPos*atac*expr).toFixed(2)):0; // 0 if no peak
+      const included=accessible && Z>=zMin;
+      return {score,atac,accessible,called,Z,included,expr};
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: scan  — PWM motif scanning vs threshold theta
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="scan"){
+      const x0=-3.6, dx=1.45;
+      // PWM consensus track (top row): best base + position label
+      for(let k=0;k<6;k++){
+        const bb=bestBaseAt(k);
+        const x=x0+k*dx;
+        const cell=new T.Mesh(new T.BoxGeometry(0.95,0.95,0.18),
+          new T.MeshStandardMaterial({color:new T.Color(CY),emissive:new T.Color(CY).multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+        cell.position.set(x,2.7,0);gScene.add(cell);
+        api.pick(cell,{pos:{k:k+1,base:bb,wMax:PWM[bb][k]}});
+        addLbl(bb,"#071015",1.4,x,2.7,0.12);
+        addSlbl("p"+(k+1),"#8a99ad",0.34,x,3.4,0);
+      }
+      addLbl("PWM consensus  "+CONSENSUS,CY,1.25,x0+2.5*dx,4.0,0);
+
+      // GeneA 6-mer read underneath, coloured by match to PWM max
+      const ga=GENES[0];
+      for(let k=0;k<6;k++){
+        const b=ga.seq[k];
+        const x=x0+k*dx;
+        const isMax=(b===bestBaseAt(k));
+        const w=PWM[b][k];
+        const col=isMax?GR:(w<0?RO:AM);
+        const cell=new T.Mesh(new T.BoxGeometry(0.95,0.95,0.18),
+          new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(0.45),emissiveIntensity:0.5,roughness:0.45}));
+        cell.position.set(x,1.45,0);gScene.add(cell);
+        api.pick(cell,{base:{k:k+1,base:b,w}});
+        addLbl(b,"#071015",1.3,x,1.45,0.12);
+        addSlbl((w>=0?"+":"")+w.toFixed(1),col,0.3,x,0.78,0);
+      }
+      addLbl("GeneA  ACGCAG  →  Σ = "+F.scoreA.toFixed(1),GR,1.2,x0+2.5*dx,0.25,0);
+
+      // per-gene score bars (back), with threshold plane
+      const gd=GENES.map(geneData);
+      const bx=[-3.0,0,3.0];
+      gd.forEach((d,i)=>{
+        const x=bx[i];
+        const h=0.12+Math.max(0,d.score)*0.42;
+        const ok=d.called;
+        const col=ok?GR:RO;
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.2),
+          new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(ok?0.7:0.3),emissiveIntensity:ok?0.6:0.25,roughness:0.4,transparent:!ok,opacity:ok?1:0.6}));
+        bar.position.set(x,h/2,-3.4);gBars.add(bar);
+        api.pick(bar,{gene:{id:GENES[i].id,score:d.score,called:ok}});
+        addLbl(d.score.toFixed(1),col,1.5,x,h+0.5,-3.4);
+        addSlbl(GENES[i].id,col,0.4,x,-0.05,-3.4);
+      });
+      // threshold plane at the theta height
+      const ty=0.12+theta*0.42;
+      const thp=new T.Mesh(new T.PlaneGeometry(9,0.06),new T.MeshBasicMaterial({color:new T.Color(VI)}));
+      thp.position.set(0,ty,-3.4);gBars.add(thp);
+      addLbl("θ = "+theta.toFixed(1),VI,1.1,4.4,ty,-3.4);
+
+      const nCalled=gd.filter(d=>d.called).length;
+      sceneSnap={mode,theta:+theta.toFixed(2),useExpr,zMin:+zMin.toFixed(2),atacGain:+atacGain.toFixed(2),
+        scoreA:gd[0].score,scoreB:gd[1].score,scoreC:gd[2].score,
+        motifCalls:nCalled, includedEdges:null, zA:null, zB:null};
+
+      return {
+        badge:"Step 1-2 · PWM scan · θ="+theta.toFixed(1)+" · "+nCalled+"/3 called",
+        formula:"score(S,M) = Σ<sub>k=1..6</sub> M[S[k],k]  ;  call if score ≥ θ",
+        insight:"Slide the 6×4 PWM across each gene's regulatory window. GeneA's 6-mer ACGCAG hits the consensus on every informative position → score 10.0. GeneB has one mismatch at p3 (A scores −1.0 vs G's +2.0) → score 7.0. Only sites with score ≥ θ become candidate edges. Drag θ to watch GeneB cross in and out.",
+        state:"GeneA 10.0"+(gd[0].called?" ✓":" ✗")+" · GeneB 7.0"+(gd[1].called?" ✓":" ✗")+" · θ = "+theta.toFixed(1)+". Green = base matches PWM max; rose bar = below θ.",
+        metrics:{motifCalls:nCalled+"/3", topZ:"—", priorEdges:"—", precisionLift:"—"},
+        focus:{center:[0,1.8,-1],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: atac  — chromatin accessibility gate (Step 3)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="atac"){
+      const gd=GENES.map(geneData);
+      const bx=[-3.4,0,3.4];
+      const accThr=0.10;  // a site needs an open peak to pass
+
+      // genome baseline
+      gScene.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-5.2,0,0),new T.Vector3(5.2,0,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      addSlbl("genome →","#7f93a8",0.4,5.0,-0.5,0);
+
+      gd.forEach((d,i)=>{
+        const x=bx[i];
+        const g=GENES[i];
+        // TSS marker
+        const tss=new T.Mesh(new T.CylinderGeometry(0.07,0.07,0.7,8),
+          new T.MeshStandardMaterial({color:new T.Color(CY),emissive:new T.Color(CY),emissiveIntensity:0.4,roughness:0.4}));
+        tss.position.set(x,0.35,0);gScene.add(tss);
+        addSlbl(g.id+" TSS",CY,0.34,x,-0.5,0);
+
+        if(d.accessible){
+          // ATAC peak as a tapered open cone; height = accessibility
+          const h=0.3+d.atac*4.0;
+          const open=d.atac>=accThr;
+          const col=open?AM:SL;
+          const peak=new T.Mesh(new T.CylinderGeometry(0.1,1.0,h,20,1,true),
+            new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4,transparent:true,opacity:0.55,side:T.DoubleSide}));
+          peak.position.set(x,h/2,0);gScene.add(peak);
+          api.pick(peak,{atac:{id:g.id,score:d.atac,accessible:true}});
+          addLbl("ATAC "+d.atac.toFixed(2),col,1.2,x,h+0.5,0);
+          // accessible badge sphere
+          const ball=new T.Mesh(new T.SphereGeometry(0.26,20,16),
+            new T.MeshStandardMaterial({color:new T.Color(GR),emissive:new T.Color(GR),emissiveIntensity:0.7,roughness:0.3}));
+          ball.position.set(x,h+1.4,0);gScene.add(ball);
+        } else {
+          // closed chromatin: nucleosome stack; motif hit discarded
+          let lastNuc=null;
+          for(let n=0;n<3;n++){
+            const nuc=new T.Mesh(new T.SphereGeometry(0.42,16,12),
+              new T.MeshStandardMaterial({color:new T.Color(SL),emissive:new T.Color(SL).multiplyScalar(0.3),emissiveIntensity:0.25,roughness:0.7}));
+            nuc.position.set(x+(n-1)*0.55,0.5,0);gScene.add(nuc);lastNuc=nuc;
+          }
+          api.pick(lastNuc,{atac:{id:g.id,score:0,accessible:false}});
+          addLbl("no peak",RO,1.15,x,1.5,0);
+          const xm=new T.Mesh(new T.SphereGeometry(0.24,16,12),
+            new T.MeshStandardMaterial({color:new T.Color(RO),emissive:new T.Color(RO),emissiveIntensity:0.7,roughness:0.3}));
+          xm.position.set(x,2.2,0);gScene.add(xm);
+        }
+      });
+
+      addLbl("motif hit in CLOSED chromatin is discarded",RO,1.05,0,-1.4,0);
+      addLbl("accessibility gain ×"+atacGain.toFixed(2),AM,1.05,0,5.4,0);
+
+      const nAcc=gd.filter(d=>d.accessible && d.atac>=accThr).length;
+      sceneSnap={mode,theta:+theta.toFixed(2),useExpr,zMin:+zMin.toFixed(2),atacGain:+atacGain.toFixed(2),
+        scoreA:gd[0].score,scoreB:gd[1].score,scoreC:gd[2].score,
+        atacA:+gd[0].atac.toFixed(2),atacB:+gd[1].atac.toFixed(2),accessibleSites:nAcc,
+        includedEdges:null,zA:null,zB:null};
+
+      return {
+        badge:"Step 3 · ATAC gate · "+nAcc+"/3 accessible",
+        formula:"keep (TF₁,gene) iff motif-hit overlaps an open ATAC peak",
+        insight:"A high PWM score is necessary but not sufficient. The ATAC-seq peak (amber cone height = accessibility) decides whether the machinery can physically reach the site. GeneA: 0.72 open. GeneB: 0.30 weak but present. GeneC: the motif hit lands in closed chromatin (grey nucleosomes) → the candidate edge is discarded entirely.",
+        state:"accessible: GeneA "+gd[0].atac.toFixed(2)+" · GeneB "+gd[1].atac.toFixed(2)+" · GeneC closed (dropped). Sites passing the gate: "+nAcc+"/3.",
+        metrics:{motifCalls:"—", topZ:"—", priorEdges:nAcc+" cand", precisionLift:"+ATAC"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: prior — confidence scoring Z + bipartite prior graph (Step 4-5)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="prior"){
+      const gd=GENES.map(geneData);
+
+      // TF1 node (left), three gene nodes (right) — bipartite directed graph
+      const tfPos=[-3.6,0.6,0];
+      const tf=new T.Mesh(new T.SphereGeometry(0.55,28,20),
+        new T.MeshStandardMaterial({color:new T.Color(CY),emissive:new T.Color(CY),emissiveIntensity:0.6,roughness:0.3}));
+      tf.position.set(tfPos[0],tfPos[1],tfPos[2]);gGraph.add(tf);
+      api.pick(tf,{tf:{id:"TF1",expr:EXPR_TF1}});
+      addLbl("TF1",CY,1.6,tfPos[0],tfPos[1]+1.0,0);
+      addSlbl(useExpr?("expr "+EXPR_TF1.toFixed(1)):"expr off","#8a99ad",0.4,tfPos[0],tfPos[1]-1.0,0);
+
+      const gy=[2.6,0.4,-1.8];
+      const gx=3.4;
+      let included=0, topZ=0;
+      gd.forEach((d,i)=>{
+        const gp=[gx,gy[i],0];
+        const inc=d.included;
+        const col=inc?GR:(d.accessible?AM:RO);
+        const r=inc?0.46:0.36;
+        const gn=new T.Mesh(new T.SphereGeometry(r,24,18),
+          new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(inc?0.7:0.3),emissiveIntensity:inc?0.6:0.3,roughness:0.4,transparent:!inc,opacity:inc?1:0.7}));
+        gn.position.set(gp[0],gp[1],gp[2]);gGraph.add(gn);
+        api.pick(gn,{gene:{id:GENES[i].id,Z:d.Z,included:inc,accessible:d.accessible}});
+        addLbl(GENES[i].id,col,1.2,gp[0]+0.95,gp[1]+0.45,0);
+
+        if(d.accessible && d.Z>0){
+          // directed edge TF1 -> gene: solid arrow if kept, dashed if borderline
+          const w=0.04+Math.min(0.16,d.Z/180);
+          if(inc){
+            api.arrow(tfPos,[gp[0]-r,gp[1],0],{color:GR,width:w,head:0.26,group:"graph"});
+          } else {
+            api.edge(tfPos,[gp[0]-r,gp[1],0],{color:AM,width:0.04,dashed:true,opacity:0.85,group:"graph"});
+          }
+          const mid=[(tfPos[0]+gp[0])/2,(tfPos[1]+gp[1])/2+0.25,0.1];
+          addLbl("Z="+d.Z.toFixed(2),inc?GR:AM,1.05,mid[0],mid[1],mid[2]);
+        } else {
+          addLbl("excluded",RO,1.0,(tfPos[0]+gp[0])/2,(tfPos[1]+gp[1])/2+0.2,0);
+        }
+        if(inc)included++;
+        if(d.Z>topZ)topZ=d.Z;
+      });
+
+      // Z bars (foreground) vs z_min plane
+      const bx=[-3.0,0,3.0];
+      gd.forEach((d,i)=>{
+        const x=bx[i];
+        const h=0.1+Math.min(28,d.Z)*0.16;
+        const inc=d.included;
+        const col=inc?GR:(d.accessible?AM:RO);
+        const bar=new T.Mesh(new T.BoxGeometry(1.4,h,1.1),
+          new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(inc?0.6:0.25),emissiveIntensity:inc?0.55:0.22,roughness:0.4,transparent:!inc,opacity:inc?1:0.6}));
+        bar.position.set(x,h/2,-3.6);gBars.add(bar);
+        addLbl(d.Z>0?("Z "+d.Z.toFixed(1)):"—",col,1.15,x,h+0.45,-3.6);
+        addSlbl(GENES[i].id,col,0.36,x,-0.05,-3.6);
+      });
+      const zy=0.1+Math.min(28,zMin)*0.16;
+      const zp=new T.Mesh(new T.PlaneGeometry(8.5,0.06),new T.MeshBasicMaterial({color:new T.Color(VI)}));
+      zp.position.set(0,zy,-3.6);gBars.add(zp);
+      addLbl("z_min = "+zMin.toFixed(1),VI,1.1,4.2,zy,-3.6);
+
+      // precision lift heuristic from the note (motif-only ~18% -> +ATAC ~42%)
+      const precMotif=0.18, precAtac=0.42;
+      const lift=precAtac-precMotif;
+
+      sceneSnap={mode,theta:+theta.toFixed(2),useExpr,zMin:+zMin.toFixed(2),atacGain:+atacGain.toFixed(2),
+        scoreA:gd[0].score,scoreB:gd[1].score,scoreC:gd[2].score,
+        atacA:+gd[0].atac.toFixed(2),atacB:+gd[1].atac.toFixed(2),
+        zA:gd[0].Z,zB:gd[1].Z,zC:gd[2].Z,includedEdges:included,topZ:+topZ.toFixed(2)};
+
+      return {
+        badge:"Step 4-5 · prior graph · "+included+" edge"+(included===1?"":"s")+" kept",
+        formula:"Z<sub>ij</sub> = motif · atac"+(useExpr?" · expr":"")+"  ;  keep if Z ≥ z_min",
+        insight:"Combine the surviving evidence into one confidence. With expression on, Z(TF1,GeneA)=10.0·0.72·3.5=25.2 (kept, solid arrow), Z(TF1,GeneB)=7.0·0.30·3.5=7.35 (borderline, dashed), GeneC is excluded — no accessible motif. The prior graph G_prior is the scaffold the expression model refines; it can re-weight an edge but cannot invent one without prior support.",
+        state:"G_prior: TF1→GeneA Z="+gd[0].Z.toFixed(2)+(gd[0].included?" ✓":" ✗")+" · TF1→GeneB Z="+gd[1].Z.toFixed(2)+(gd[1].included?" ✓":" ✗")+" · GeneC excluded. Kept edges: "+included+". z_min="+zMin.toFixed(1)+".",
+        metrics:{motifCalls:"—", topZ:topZ.toFixed(1), priorEdges:""+included, precisionLift:"+"+(lift*100).toFixed(0)+"pp"},
+        focus:{center:[0,0.6,-1],radius:13}
+      };
+    }
+
+    return {badge:"F14",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f14",
+    kind:"motif-priors-chromatin-edges",
+    eyebrow:"Block F · GRN Inference",
+    title:"F14 · Motif priors and chromatin-aware edge construction",
+    subtitle:"Build the prior graph G_prior before any expression data. Three steps on TF1: PWM motif scan, ATAC accessibility gate, and confidence-scored prior edges.",
+    selectedLabel:"Element",
+    selectedHint:"Click a PWM cell, ATAC peak, gene node, or edge.",
+    insightLabel:"What the prior encodes",
+    modes:[
+      {value:"scan",  label:"PWM scan (score vs θ)"},
+      {value:"atac",  label:"ATAC gate (accessibility)"},
+      {value:"prior", label:"Prior graph (confidence Z)"}
+    ],
+    params:[
+      {key:"theta",   label:"θ — motif call threshold",min:4,max:12,step:0.5,value:8,
+       fmt:v=>v.toFixed(1),modes:["scan"]},
+      {key:"atacGain",label:"ATAC accessibility gain",min:0.4,max:1.4,step:0.05,value:1.0,
+       fmt:v=>"×"+v.toFixed(2),modes:["atac","prior"]},
+      {key:"useExpr", label:"expression term (0=off 1=×3.5)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"off":"× 3.5",modes:["prior"]},
+      {key:"zMin",    label:"z_min — prior inclusion threshold",min:2,max:26,step:0.5,value:10,
+       fmt:v=>v.toFixed(1),modes:["prior"]}
+    ],
+    metrics:[
+      {key:"motifCalls",   label:"Motif calls (≥θ)",accent:"cyan"},
+      {key:"topZ",         label:"Top confidence Z",accent:"violet"},
+      {key:"priorEdges",   label:"Edges in G_prior",accent:"green"},
+      {key:"precisionLift",label:"Precision (+ATAC)",accent:"amber"}
+    ],
+    layers:[
+      {group:"scene", label:"PWM / ATAC scene"},
+      {group:"bars",  label:"Score / Z bars"},
+      {group:"graph", label:"Prior graph"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Strict θ=10",
+      on:api=>{api.setParam("theta",10);}
+    },
+    secondary:{
+      label:"Loose θ=6",
+      on:api=>{api.setParam("theta",6);}
+    },
+    defaultCam:{theta:-0.5,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=PWM / TF1 · <span style="color:#34d399">green</span>=match / kept edge · <span style="color:#fbbf24">amber</span>=ATAC / borderline · <span style="color:#a78bfa">violet</span>=threshold (θ, z_min) / Z · <span style="color:#fb7185">rose</span>=below threshold / excluded · grey=closed chromatin.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="scan") api.frame([0,1.8,-1],13);
+      else if(s.mode==="atac") api.frame([0,2,0],13);
+      else api.frame([0,0.6,-1],13);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="scan") api.frame([0,1.8,-1],13);
+      else if(s.mode==="atac") api.frame([0,2,0],13);
+      else api.frame([0,0.6,-1],13);
+    },
+    onSelect(api,d){
+      if(d.pos)  api.setSelected("PWM p"+d.pos.k+" · best "+d.pos.base+" ("+(d.pos.wMax>=0?"+":"")+d.pos.wMax.toFixed(1)+")");
+      if(d.base) api.setSelected("base "+d.base.base+" @ p"+d.base.k+" · M = "+(d.base.w>=0?"+":"")+d.base.w.toFixed(1));
+      if(d.gene) api.setSelected(d.gene.id+(d.gene.score!=null?(" · score "+d.gene.score.toFixed(1)+(d.gene.called?" ✓":" ✗")):"")+(d.gene.Z!=null?(" · Z "+d.gene.Z.toFixed(2)+(d.gene.included?" KEPT":(d.gene.accessible?" dropped":" excluded"))):""));
+      if(d.atac) api.setSelected(d.atac.id+" · ATAC "+(d.atac.accessible?d.atac.score.toFixed(2)+" open":"no peak (closed)"));
+      if(d.tf)   api.setSelected("TF1 · expression "+d.tf.expr.toFixed(1));
+    },
+    build,
+    snapshot(s){
+      const theta=s.theta, useExpr=Math.round(s.useExpr), zMin=s.zMin, atacGain=s.atacGain;
+      const sc=GENES.map(g=>pwmScore(g.seq));
+      const atacEff=GENES.map(g=>g.atac==null?0:Math.min(1,g.atac*atacGain));
+      const expr=useExpr?EXPR_TF1:1;
+      const Z=GENES.map((g,i)=>g.atac==null?0:+(Math.max(0,sc[i])*atacEff[i]*expr).toFixed(2));
+      const included=GENES.filter((g,i)=>g.atac!=null && Z[i]>=zMin).length;
+      const calls=GENES.filter((g,i)=>sc[i]>=theta).length;
+      const accessible=GENES.filter((g,i)=>g.atac!=null && atacEff[i]>=0.10).length;
+      return {
+        mode:s.mode,
+        theta:+theta.toFixed(2),
+        useExpr:useExpr,
+        zMin:+zMin.toFixed(2),
+        atacGain:+atacGain.toFixed(2),
+        scoreA:sc[0], scoreB:sc[1], scoreC:sc[2],
+        atacA:+atacEff[0].toFixed(2), atacB:+atacEff[1].toFixed(2),
+        zA:Z[0], zB:Z[1], zC:Z[2],
+        motifCalls:calls,
+        accessibleSites:accessible,
+        includedEdges:included,
+        topZ:+Math.max.apply(null,Z).toFixed(2),
+        geneAKept:(GENES[0].atac!=null && Z[0]>=zMin),
+        geneCExcluded:(GENES[2].atac==null)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

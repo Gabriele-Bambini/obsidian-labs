@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H01 · DREAM challenges and synthetic regulatory networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no RNG, no clock) ───────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── DREAM4 10-gene Ecoli1 worked example (note §5) ────────────────────────
+  // 10 genes G0..G9, 14 true directed edges among 10*9 = 90 possible pairs.
+  const N=10;
+  const TOTAL_PAIRS=N*(N-1);          // 90
+  const trueEdges=[
+    [0,1],[0,5],[1,2],[1,7],[2,3],[2,8],
+    [3,4],[4,5],[4,9],[5,6],[6,7],[7,8],[8,9],[9,0]
+  ];
+  const P=trueEdges.length;           // 14 positives
+  const Q=TOTAL_PAIRS-P;              // 76 negatives
+  const RANDOM_AUPRC=P/TOTAL_PAIRS;  // 14/90 = 0.1556
+
+  // edge-set membership key
+  const ek=(i,j)=>i*N+j;
+  const trueSet=new Set(trueEdges.map(e=>ek(e[0],e[1])));
+
+  // GENIE3 published top-10 ranking from note §5 (rank, src, dst).
+  // rank 8 (G3->G1) is the one false positive.
+  const genieTop=[
+    [0,1],[1,2],[9,0],[5,6],[0,5],[2,3],[4,5],[3,1],[7,8],[2,8]
+  ];
+
+  // ── deterministic scoring model for all 90 pairs ──────────────────────────
+  // GENIE3-style: score = signal·1[true edge] + gaussian noise. evidence ∈ [0,1]
+  // widens the true/non-edge separation; noise ∈ [0,1] is the simulation σ that
+  // muddies it. At the calibrated defaults (evidence 0.5, noise 0.4) this lands
+  // on the note's published Ecoli1 numbers: AUROC ≈ 0.92, AUPRC ≈ 0.69, ratio ≈ 4×.
+  // gz = deterministic Box–Muller gaussian from the sin-hash (no RNG, no clock).
+  function gz(seed){
+    const u1=Math.min(0.9999,Math.max(0.0001,prand(seed*1.7+3)));
+    const u2=prand(seed*2.3+7);
+    return Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);
+  }
+  // fixed uniform hash for the random baseline; salt 117 is the one whose ranking
+  // reproduces the textbook random scores (AUROC ≈ 0.50, AUPRC ≈ 0.156 = 14/90).
+  function randScore(pidx,i,j){
+    return frac(Math.sin((pidx*12.9898+i*78.233+j*37.719+117*0.137)*43758.5453));
+  }
+  function scoreAllPairs(method,evidence,noise,bias){
+    bias=bias||0;
+    const pairs=[];
+    let pidx=0;
+    for(let i=0;i<N;i++){
+      for(let j=0;j<N;j++){
+        if(i===j) continue;
+        const isTrue=trueSet.has(ek(i,j));
+        let s;
+        if(method==="random"){
+          s=randScore(pidx,i,j);
+        }else{
+          const sep=0.25+0.95*evidence;   // signal gap for a true edge
+          const sd =0.30+0.85*noise;       // gaussian σ
+          const g=gz(pidx*4.1+i*13+j*7+bias*1000);
+          s=(isTrue?sep:0)+g*sd;
+        }
+        pairs.push({i,j,isTrue,s});
+        pidx++;
+      }
+    }
+    return pairs;
+  }
+
+  // ── AUROC + AUPRC from a scored, descending-sorted list ────────────────────
+  function rankMetrics(pairs){
+    const sorted=pairs.slice().sort((a,b)=>b.s-a.s);
+    let tp=0,fp=0;
+    // AUROC via trapezoidal area under TPR(FPR)
+    let prevFPR=0,prevTPR=0,auroc=0;
+    // AUPRC via stepwise precision over recall increments
+    let prevRecall=0,auprc=0;
+    for(let k=0;k<sorted.length;k++){
+      if(sorted[k].isTrue) tp++; else fp++;
+      const tpr=tp/P, fpr=fp/Q;
+      auroc+=(fpr-prevFPR)*(tpr+prevTPR)/2;
+      const recall=tp/P;
+      const precision=tp/(tp+fp);
+      if(recall>prevRecall){ auprc+=(recall-prevRecall)*precision; prevRecall=recall; }
+      prevFPR=fpr; prevTPR=tpr;
+    }
+    return {auroc,auprc,sorted};
+  }
+
+  // precision / recall at a given rank cutoff k over a sorted list
+  function prAtK(sorted,k){
+    let tp=0;
+    for(let r=0;r<k && r<sorted.length;r++) if(sorted[r].isTrue) tp++;
+    return {tp,precision:tp/k,recall:tp/P};
+  }
+
+  // ── ensemble: rank-average M deterministic "methods" (DREAM5 finding) ──────
+  // Each method m gets its own evidence/noise spread AND its own gaussian bias
+  // salt (m+1), so the methods make decorrelated errors. Rank-averaging the M
+  // ranked lists yields a consensus that beats every individual method — exactly
+  // the DREAM5 community-averaging result. Per-method ev/nz spread is a fixed
+  // deterministic function of m (no RNG): method-to-method diversity.
+  function methodEvNz(m,evidence,noise){
+    return {ev:evidence*(0.65+0.5*prand(m*5.3+1)), nz:noise*(0.75+0.6*prand(m*7.9+2))};
+  }
+  function ensembleMetrics(M,evidence,noise){
+    const individual=[];
+    const rankSum=new Array(TOTAL_PAIRS).fill(0);
+    let best=0;
+    for(let m=0;m<M;m++){
+      const {ev,nz}=methodEvNz(m,evidence,noise);
+      const mr=rankMetrics(scoreAllPairs("genie",ev,nz,m+1));
+      if(mr.auprc>best) best=mr.auprc;
+      individual.push(mr.auprc);
+      mr.sorted.forEach((p,rank)=>{ rankSum[p.i*N+p.j]+=rank; });   // rank 0 = top
+    }
+    // consensus: lower mean rank = higher confidence -> score = -meanRank
+    const consensus=[];
+    for(let i=0;i<N;i++){
+      for(let j=0;j<N;j++){
+        if(i===j) continue;
+        consensus.push({i,j,isTrue:trueSet.has(ek(i,j)),s:-(rankSum[i*N+j]/M)});
+      }
+    }
+    const cons=rankMetrics(consensus);
+    const meanInd=individual.reduce((a,b)=>a+b,0)/individual.length;
+    return {consensusAUPRC:cons.auprc,consensusAUROC:cons.auroc,bestInd:best,meanInd};
+  }
+
+  let sceneSnap={};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const evidence=s.evidence;            // 0..1 signal strength
+    const noise=s.noise;                  // 0..1 simulation noise
+    const rankK=Math.round(s.rankK);      // top-K cutoff for the ranking table
+    const nMethods=Math.round(s.nMethods);// ensemble size
+
+    const gNet   =api.group("network");
+    const gRank  =api.group("ranking");
+    const gEns   =api.group("ensemble");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // truth / known network
+    const GR=new T.Color("#34d399");   // GENIE3 / true positives
+    const AM=new T.Color("#fbbf24");   // random baseline / hub
+    const VI=new T.Color("#a78bfa");   // ensemble / consensus
+    const RO=new T.Color("#fb7185");   // false positives / held-out
+    const SL=new T.Color("#54667c");
+
+    // 10-gene ring layout shared by network + ranking modes
+    const R=3.6;
+    const genePos=[];
+    for(let i=0;i<N;i++){
+      const ang=i/N*Math.PI*2 - Math.PI/2;
+      genePos.push(new T.Vector3(Math.cos(ang)*R,0,Math.sin(ang)*R));
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: network — the held-out ground-truth GRN (GeneNetWeaver)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="network"){
+      // gene nodes
+      for(let i=0;i<N;i++){
+        const p=genePos[i];
+        const sphere=new T.Mesh(
+          new T.SphereGeometry(0.34,18,14),
+          new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4})
+        );
+        sphere.position.copy(p);
+        gNet.add(sphere);
+        // out-degree of gene i (how many targets it regulates)
+        let outDeg=0; trueEdges.forEach(e=>{if(e[0]===i)outDeg++;});
+        api.pick(sphere,{gene:{id:i,outDeg}});
+        addSlbl("G"+i,"#bfe9ff",0.42,p.x*1.18,0.55,p.z*1.18);
+      }
+
+      // directed true edges as arrows (held-out adjacency)
+      trueEdges.forEach(e=>{
+        const a=genePos[e[0]], b=genePos[e[1]];
+        const dir=b.clone().sub(a);
+        const len=dir.length();
+        const u=dir.clone().normalize();
+        const from=a.clone().add(u.clone().multiplyScalar(0.40));
+        const to=b.clone().sub(u.clone().multiplyScalar(0.42));
+        const seg=[from,to];
+        gNet.add(new T.Line(new T.BufferGeometry().setFromPoints(seg),new T.LineBasicMaterial({color:0x2e6f55,transparent:true,opacity:0.85})));
+        // arrowhead
+        const cone=new T.Mesh(new T.ConeGeometry(0.10,0.30,8),new T.MeshBasicMaterial({color:GR.getHex()}));
+        cone.position.copy(to);
+        const axis=new T.Vector3(0,1,0);
+        const q=new T.Quaternion().setFromUnitVectors(axis,u);
+        cone.setRotationFromQuaternion(q);
+        gNet.add(cone);
+      });
+
+      // held-out vault: a translucent plane below symbolising "organizers hold A"
+      const vault=new T.Mesh(new T.PlaneGeometry(9,9),new T.MeshBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.06,side:T.DoubleSide}));
+      vault.rotation.x=-Math.PI/2; vault.position.y=-1.6;
+      gNet.add(vault);
+
+      // sparsity readout column: P true vs Q negative
+      const sparsity=P/TOTAL_PAIRS;
+      const barX=5.4;
+      const bP=new T.Mesh(new T.BoxGeometry(0.7,P*0.18,0.7),new T.MeshStandardMaterial({color:GR,emissive:GR.clone().multiplyScalar(0.4),emissiveIntensity:0.5,roughness:0.4}));
+      bP.position.set(barX,P*0.09,-1.2); gEns.add(bP);
+      const bQ=new T.Mesh(new T.BoxGeometry(0.7,Q*0.18,0.7),new T.MeshStandardMaterial({color:SL,emissive:SL.clone().multiplyScalar(0.3),emissiveIntensity:0.3,roughness:0.5,transparent:true,opacity:0.55}));
+      bQ.position.set(barX+1.0,Q*0.09,-1.2); gEns.add(bQ);
+      addLbl(P+" true","#34d399",1.15,barX,P*0.18+0.55,-1.2);
+      addLbl(Q+" neg","#7f93a8",1.05,barX+1.0,Q*0.18+0.55,-1.2);
+      addLbl("DREAM4 10-gene Ecoli1","#4dd7ff",1.35,0,0.05,R+1.5);
+
+      api.setMetric("auprcRandom",RANDOM_AUPRC.toFixed(3));
+      api.setMetric("trueEdges",""+P);
+
+      sceneSnap={
+        mode,evidence:+evidence.toFixed(3),noise:+noise.toFixed(3),rankK,nMethods,
+        nGenes:N,truePositives:P,negatives:Q,possiblePairs:TOTAL_PAIRS,
+        sparsity:+sparsity.toFixed(3),randomAUPRC:+RANDOM_AUPRC.toFixed(3),
+        auroc:null,auprc:null,auprcRatio:null
+      };
+
+      return {
+        badge:"Ground truth · "+N+" genes · "+P+" true edges / "+TOTAL_PAIRS+" pairs",
+        formula:"A ∈ {0,1}<sup>10×10</sup> &nbsp; |E| = "+P+" &nbsp; random AUPRC = P/(P+Q) = "+P+"/"+TOTAL_PAIRS+" = "+RANDOM_AUPRC.toFixed(3),
+        insight:"GeneNetWeaver simulates expression from a <b>fixed</b> E. coli topology, so every edge is known with certainty — there are no false negatives inside the simulation. The organizers hold this adjacency matrix back (red vault). Sparsity P/(P+Q) = "+RANDOM_AUPRC.toFixed(3)+" is exactly the random-AUPRC denominator that every claimed score must be measured against.",
+        state:"Network Ecoli1: "+N+" genes, "+P+" directed regulatory edges (green arrows), "+Q+" non-edges held as negatives. Out-degree per gene drives the hub structure. Click a gene to read its out-degree.",
+        metrics:{auprcRandom:RANDOM_AUPRC.toFixed(3),auroc:"—",auprc:"—",auprcRatio:"—",trueEdges:""+P},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: ranking — GENIE3 vs random, the ranked edge list + AUPRC
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="ranking"){
+      const genie=rankMetrics(scoreAllPairs("genie",evidence,noise));
+      const rand =rankMetrics(scoreAllPairs("random",evidence,noise));
+      const gPR=prAtK(genie.sorted,rankK);
+
+      // ranked column of the top-rankK GENIE3 pairs (green = TP, red = FP)
+      const x0=-4.6, yTop=4.2, dy=0.62;
+      for(let r=0;r<rankK && r<genie.sorted.length;r++){
+        const p=genie.sorted[r];
+        const y=yTop-r*dy;
+        const col=p.isTrue?GR:RO;
+        const cell=new T.Mesh(new T.BoxGeometry(2.4,0.46,0.5),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.4}));
+        cell.position.set(x0,y,0);
+        gRank.add(cell);
+        api.pick(cell,{rankRow:{rank:r+1,src:p.i,dst:p.j,isTrue:p.isTrue,score:+p.s.toFixed(3)}});
+        addSlbl("G"+p.i+"→G"+p.j,"#dce9f6",0.34,x0,y+0.02,0.45);
+      }
+      addLbl("GENIE3 ranked list (top "+rankK+")","#34d399",1.15,x0,yTop+0.75,0);
+      addSlbl("green=true edge · red=false positive","#8a99ad",0.34,x0,yTop+0.30,0);
+
+      // precision-recall step curve for GENIE3 (cyan) and random (amber)
+      const px0=1.2, py0=-1.6, pw=4.2, ph=4.6;
+      // axes
+      gRank.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(px0,py0,0),new T.Vector3(px0+pw,py0,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gRank.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(px0,py0,0),new T.Vector3(px0,py0+ph,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      addSlbl("recall →","#7f93a8",0.36,px0+pw*0.45,py0-0.45,0);
+      addSlbl("precision","#7f93a8",0.36,px0-0.55,py0+ph*0.55,0);
+
+      function prCurve(sorted,col,zoff){
+        let tp=0,fp=0; const pts=[];
+        for(let k=0;k<sorted.length;k++){
+          if(sorted[k].isTrue) tp++; else fp++;
+          const recall=tp/P, precision=tp/(tp+fp);
+          pts.push(new T.Vector3(px0+recall*pw, py0+precision*ph, zoff));
+        }
+        gRank.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:col.getHex()})));
+      }
+      prCurve(genie.sorted,CY,0.05);
+      prCurve(rand.sorted,AM,0.0);
+      // random-AUPRC floor line
+      gRank.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(px0,py0+RANDOM_AUPRC*ph,0.02),new T.Vector3(px0+pw,py0+RANDOM_AUPRC*ph,0.02)
+      ]),new T.LineBasicMaterial({color:AM.getHex(),transparent:true,opacity:0.5})));
+      addSlbl("GENIE3","#4dd7ff",0.40,px0+pw+0.2,py0+ph*0.85,0);
+      addSlbl("random","#fbbf24",0.40,px0+pw+0.2,py0+RANDOM_AUPRC*ph,0);
+
+      const ratio=genie.auprc/RANDOM_AUPRC;
+      api.setMetric("auroc",genie.auroc.toFixed(3));
+      api.setMetric("auprc",genie.auprc.toFixed(3));
+      api.setMetric("auprcRatio",ratio.toFixed(2)+"×");
+      api.setMetric("auprcRandom",RANDOM_AUPRC.toFixed(3));
+
+      sceneSnap={
+        mode,evidence:+evidence.toFixed(3),noise:+noise.toFixed(3),rankK,nMethods,
+        auroc:+genie.auroc.toFixed(3),auprc:+genie.auprc.toFixed(3),
+        randomAUPRC:+RANDOM_AUPRC.toFixed(3),auprcRatio:+ratio.toFixed(3),
+        precisionAtK:+gPR.precision.toFixed(3),recallAtK:+gPR.recall.toFixed(3),
+        tpAtK:gPR.tp,randomAUROC:+rand.auroc.toFixed(3)
+      };
+
+      // verdict band from the note's ratio thresholds
+      let verdict="strong signal (DREAM4-level)";
+      if(ratio<1.5) verdict="barely above random (noise)";
+      else if(ratio<4) verdict="moderate signal";
+      else if(ratio>10) verdict="suspect leakage / trivially sparse";
+
+      return {
+        badge:"Ranking · GENIE3 AUPRC "+genie.auprc.toFixed(2)+" · ratio "+ratio.toFixed(1)+"×",
+        formula:"AUPRC ratio = AUPRC / (P/(P+Q)) = "+genie.auprc.toFixed(2)+" / "+RANDOM_AUPRC.toFixed(3)+" = "+ratio.toFixed(1)+"×",
+        insight:"A method emits a confidence score for all "+TOTAL_PAIRS+" directed pairs; sort descending and scan. The PR curve (cyan) sits far above the random floor (amber) — but the diagnostic number is the <b>ratio</b> AUPRC ÷ random-AUPRC, not AUROC alone. AUROC looks impressive even when the top of the list is full of trivial hub edges; AUPRC ÷ "+RANDOM_AUPRC.toFixed(3)+" = "+ratio.toFixed(1)+"× tells you whether the ranking is actually useful.",
+        state:"GENIE3: AUROC "+genie.auroc.toFixed(2)+", AUPRC "+genie.auprc.toFixed(2)+" (ratio "+ratio.toFixed(1)+"× → "+verdict+"). At rank "+rankK+": "+gPR.tp+"/"+rankK+" true → precision "+gPR.precision.toFixed(2)+", recall "+gPR.recall.toFixed(2)+". Random AUROC ≈ "+rand.auroc.toFixed(2)+".",
+        metrics:{auroc:genie.auroc.toFixed(3),auprc:genie.auprc.toFixed(3),auprcRatio:ratio.toFixed(2)+"×",auprcRandom:RANDOM_AUPRC.toFixed(3)},
+        focus:{center:[-0.5,1.2,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: community — DREAM5 ensemble: rank-average M methods
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="community"){
+      const ens=ensembleMetrics(nMethods,evidence,noise);
+
+      // M individual-method bars (amber) + the consensus bar (violet)
+      const x0=-5.0, bw=0.42, gap=0.10, yScale=5.2;
+      const indVals=[];
+      for(let m=0;m<nMethods;m++){
+        const {ev,nz}=methodEvNz(m,evidence,noise);
+        const a=rankMetrics(scoreAllPairs("genie",ev,nz,m+1)).auprc;
+        indVals.push(a);
+      }
+      indVals.forEach((a,m)=>{
+        const x=x0+m*(bw+gap);
+        const h=Math.max(0.05,a*yScale);
+        const bar=new T.Mesh(new T.BoxGeometry(bw,h,bw),
+          new T.MeshStandardMaterial({color:AM,emissive:AM.clone().multiplyScalar(0.25),emissiveIntensity:0.3,roughness:0.45,transparent:true,opacity:0.78}));
+        bar.position.set(x,h/2,1.0);
+        gEns.add(bar);
+        api.pick(bar,{method:{id:m,auprc:+a.toFixed(3)}});
+      });
+      // consensus bar (violet), placed to the right
+      const cx=x0+nMethods*(bw+gap)+0.9;
+      const ch=Math.max(0.05,ens.consensusAUPRC*yScale);
+      const cbar=new T.Mesh(new T.BoxGeometry(0.9,ch,0.9),
+        new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.7),emissiveIntensity:0.75,roughness:0.3}));
+      cbar.position.set(cx,ch/2,1.0);
+      gEns.add(cbar);
+      api.pick(cbar,{consensus:{auprc:+ens.consensusAUPRC.toFixed(3)}});
+      addLbl("consensus","#a78bfa",1.2,cx,ch+0.6,1.0);
+      addLbl("rank-avg of "+nMethods+" methods","#fbbf24",1.05,x0+nMethods*(bw+gap)*0.4,0.05,1.9);
+
+      // best-individual reference line
+      const bh=ens.bestInd*yScale;
+      gEns.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(x0-0.4,bh,1.0),new T.Vector3(cx+0.7,bh,1.0)
+      ]),new T.LineBasicMaterial({color:GR.getHex(),transparent:true,opacity:0.7})));
+      addSlbl("best individual "+ens.bestInd.toFixed(2),"#34d399",0.40,cx+0.8,bh,1.0);
+
+      // random floor
+      const rh=RANDOM_AUPRC*yScale;
+      gEns.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(x0-0.4,rh,1.0),new T.Vector3(cx+0.7,rh,1.0)
+      ]),new T.LineBasicMaterial({color:0x8a6a2a,transparent:true,opacity:0.6})));
+      addSlbl("random "+RANDOM_AUPRC.toFixed(2),"#a07a30",0.38,cx+0.8,rh,1.0);
+
+      const lift=ens.consensusAUPRC-ens.bestInd;
+      const ratio=ens.consensusAUPRC/RANDOM_AUPRC;
+      api.setMetric("auprc",ens.consensusAUPRC.toFixed(3));
+      api.setMetric("auroc",ens.consensusAUROC.toFixed(3));
+      api.setMetric("auprcRatio",ratio.toFixed(2)+"×");
+      api.setMetric("auprcRandom",RANDOM_AUPRC.toFixed(3));
+
+      sceneSnap={
+        mode,evidence:+evidence.toFixed(3),noise:+noise.toFixed(3),rankK,nMethods,
+        consensusAUPRC:+ens.consensusAUPRC.toFixed(3),consensusAUROC:+ens.consensusAUROC.toFixed(3),
+        bestIndividualAUPRC:+ens.bestInd.toFixed(3),meanIndividualAUPRC:+ens.meanInd.toFixed(3),
+        communityLift:+lift.toFixed(3),beatsBest:lift>0,
+        randomAUPRC:+RANDOM_AUPRC.toFixed(3),auprcRatio:+ratio.toFixed(3)
+      };
+
+      return {
+        badge:"Community · "+nMethods+" methods → consensus AUPRC "+ens.consensusAUPRC.toFixed(2),
+        formula:"s_consensus(e) = −mean_m rank_m(e) &nbsp;⇒&nbsp; AUPRC_consensus "+ens.consensusAUPRC.toFixed(2)+" &gt; best individual "+ens.bestInd.toFixed(2),
+        insight:"DREAM5's strongest empirical finding: rank-averaging all 35 submitted lists beat <b>every</b> individual method on all 4 networks. Diverse methods make independent errors; averaging their ranks cancels the errors out. Here the violet consensus clears the green best-individual line by "+(lift*100).toFixed(0)+" pp — a ceiling no single GNN has matched. Add methods to watch the consensus pull away.",
+        state:"Consensus AUPRC "+ens.consensusAUPRC.toFixed(3)+" (AUROC "+ens.consensusAUROC.toFixed(3)+") vs best individual "+ens.bestInd.toFixed(3)+" and mean "+ens.meanInd.toFixed(3)+". Community lift +"+(lift*100).toFixed(0)+" pp. Ratio over random: "+ratio.toFixed(1)+"×. Diversity, not any one method, is what wins.",
+        metrics:{auprc:ens.consensusAUPRC.toFixed(3),auroc:ens.consensusAUROC.toFixed(3),auprcRatio:ratio.toFixed(2)+"×",auprcRandom:RANDOM_AUPRC.toFixed(3)},
+        focus:{center:[0,1.6,1.0],radius:13}
+      };
+    }
+
+    return {badge:"H01",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"h01",
+    kind:"dream-benchmark",
+    eyebrow:"Block H · Benchmarks and Datasets",
+    title:"H01 · DREAM challenges and synthetic regulatory networks",
+    subtitle:"Turn GRN inference into a scored link-prediction tournament. Three views on DREAM4 Ecoli1: the held-out network, the ranked edge list (GENIE3 vs random), and the DREAM5 community-averaging ceiling.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, ranked edge, or method bar.",
+    modes:[
+      {value:"network",   label:"Ground-truth network (GeneNetWeaver)"},
+      {value:"ranking",   label:"Ranking & AUROC/AUPRC (GENIE3 vs random)"},
+      {value:"community", label:"Community averaging (DREAM5 ensemble)"}
+    ],
+    params:[
+      {key:"evidence", label:"signal strength (GENIE3 separation)",min:0,max:1,step:0.02,value:0.5,
+       fmt:v=>v.toFixed(2),modes:["ranking","community"]},
+      {key:"noise",    label:"simulation noise σ",min:0,max:1,step:0.02,value:0.4,
+       fmt:v=>v.toFixed(2),modes:["network","ranking","community"]},
+      {key:"rankK",    label:"top-K ranking cutoff",min:5,max:14,step:1,value:10,
+       fmt:v=>Math.round(v).toString(),modes:["ranking"]},
+      {key:"nMethods", label:"# methods in ensemble",min:3,max:35,step:1,value:12,
+       fmt:v=>Math.round(v).toString(),modes:["community"]}
+    ],
+    metrics:[
+      {key:"auroc",       label:"AUROC",accent:"cyan"},
+      {key:"auprc",       label:"AUPRC",accent:"green"},
+      {key:"auprcRatio",  label:"AUPRC / random",accent:"violet"},
+      {key:"auprcRandom", label:"random AUPRC = P/(P+Q)",accent:"amber"}
+    ],
+    layers:[
+      {group:"network",  label:"True network"},
+      {group:"ranking",  label:"Ranking + PR curve"},
+      {group:"ensemble", label:"Ensemble bars"},
+      {group:"labels",   label:"Labels"}
+    ],
+    primary:{
+      label:"Reset (default)",
+      on:api=>{api.setParam("evidence",0.5);api.setParam("noise",0.4);api.setParam("rankK",10);api.setParam("nMethods",12);}
+    },
+    secondary:{
+      label:"Max diversity (35)",
+      on:api=>{api.setParam("nMethods",35);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=truth/AUROC · <span style="color:#34d399">green</span>=true edge/GENIE3 · <span style="color:#fbbf24">amber</span>=random baseline · <span style="color:#a78bfa">violet</span>=consensus · <span style="color:#fb7185">rose</span>=false positive / held-out.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="ranking") api.frame([-0.5,1.2,0],13);
+      else if(s.mode==="community") api.frame([0,1.6,1.0],13);
+      else api.frame([0,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.gene)      api.setSelected("Gene G"+d.gene.id+" · regulates "+d.gene.outDeg+" target"+(d.gene.outDeg===1?"":"s"));
+      if(d.rankRow)   api.setSelected("Rank "+d.rankRow.rank+" · G"+d.rankRow.src+"→G"+d.rankRow.dst+" · "+(d.rankRow.isTrue?"TRUE edge":"FALSE positive")+" · score "+d.rankRow.score);
+      if(d.method)    api.setSelected("Method "+(d.method.id+1)+" · AUPRC "+d.method.auprc);
+      if(d.consensus) api.setSelected("Consensus (rank-average) · AUPRC "+d.consensus.auprc);
+    },
+    build,
+    snapshot(s){
+      // deterministic recompute so the snapshot tracks modes + every param
+      const ev=s.evidence, nz=s.noise;
+      const rankK=Math.round(s.rankK), nMethods=Math.round(s.nMethods);
+      const genie=rankMetrics(scoreAllPairs("genie",ev,nz));
+      const ratio=genie.auprc/RANDOM_AUPRC;
+      const base={
+        mode:s.mode,
+        evidence:+ev.toFixed(3),
+        noise:+nz.toFixed(3),
+        rankK,
+        nMethods,
+        trueEdges:P,
+        negatives:Q,
+        possiblePairs:TOTAL_PAIRS,
+        randomAUPRC:+RANDOM_AUPRC.toFixed(3)
+      };
+      if(s.mode==="community"){
+        const ens=ensembleMetrics(nMethods,ev,nz);
+        base.auprc=+ens.consensusAUPRC.toFixed(3);
+        base.auroc=+ens.consensusAUROC.toFixed(3);
+        base.bestIndividualAUPRC=+ens.bestInd.toFixed(3);
+        base.communityLift=+(ens.consensusAUPRC-ens.bestInd).toFixed(3);
+        base.beatsBest=(ens.consensusAUPRC-ens.bestInd)>0;
+        base.auprcRatio=+(ens.consensusAUPRC/RANDOM_AUPRC).toFixed(3);
+      }else{
+        base.auroc=+genie.auroc.toFixed(3);
+        base.auprc=+genie.auprc.toFixed(3);
+        base.auprcRatio=+ratio.toFixed(3);
+        base.strongSignal=ratio>=4;
+        const pr=prAtK(genie.sorted,rankK);   // top-K cutoff tracks the rankK slider
+        base.precisionAtK=+pr.precision.toFixed(3);
+        base.recallAtK=+pr.recall.toFixed(3);
+        base.tpAtK=pr.tp;
+      }
+      return base;
+    }
+  });
+})();
+</script>
+</body>
+</html>

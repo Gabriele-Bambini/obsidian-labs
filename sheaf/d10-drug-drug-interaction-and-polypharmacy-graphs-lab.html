@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D10 · Drug-drug interaction and polypharmacy graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin, fully reproducible) ────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // LESSON FACTS (Section 5 worked example + Section 4/6 numbers)
+  // ════════════════════════════════════════════════════════════════════════
+  // 4 training drugs, feature vectors d=4 from the note
+  const DRUGS=[
+    {id:0,name:"warfarin",   feat:[0.8,0.1,0.9,0.0]},
+    {id:1,name:"aspirin",    feat:[0.7,0.8,0.1,0.0]},
+    {id:2,name:"clopidogrel",feat:[0.6,0.9,0.1,0.0]},
+    {id:3,name:"amiodarone", feat:[0.1,0.0,0.3,0.9]}
+  ];
+  // rivaroxaban: Factor Xa inhibitor, NOT CYP2C9 (CYP3A4/P-gp), anticoagulant
+  const RIVA={name:"rivaroxaban",feat:[0.78,0.05,0.15,0.0]};
+  // relation types (side effect categories)
+  const RELS=[
+    {key:"r1",label:"bleeding risk", color:"rose"},   // increased bleeding risk
+    {key:"r2",label:"QT prolongation",color:"violet"},// QT prolongation
+    {key:"r3",label:"hepatotoxicity", color:"amber"}  // hepatotoxicity
+  ];
+  // training edges (i,j,rel) from the note
+  const EDGES=[
+    [0,1,0],  // warfarin-aspirin     -> r1
+    [0,2,0],  // warfarin-clopidogrel -> r1
+    [1,2,0],  // aspirin-clopidogrel  -> r1
+    [3,0,1],  // amiodarone-warfarin  -> r2
+    [3,0,2]   // amiodarone-warfarin  -> r3
+  ];
+  // basis-decomposition counts (R=964, d=32, B=32)
+  const R_TYPES=964, HID=32;
+  const fullParams=(R_TYPES+1)*HID*HID;            // 988,160
+  const basisParams=HID*HID + R_TYPES*HID + HID*HID; // 64,608  (basis + coeff + self)
+  // illustrative inductive prediction scores (note §5)
+  const P_RIVA_ASP_R1=0.91;   // P(rivaroxaban,aspirin -> r1)
+  const P_RIVA_AMIO_R2=0.34;  // P(rivaroxaban,amiodarone -> r2)
+  const P_WARF_AMIO_R2=0.89;  // warfarin counterpart (CYP2C9 substrate)
+  // scale facts (§4 / §8)
+  const N_DRUGS=645, MAX_TRIPLES=400e6, TWOSIDES=4.6e6;
+  const COVERAGE=TWOSIDES/MAX_TRIPLES;   // ~0.0115
+
+  // cosine similarity of two feature vectors
+  function cos(a,b){let d=0,na=0,nb=0;for(let k=0;k<a.length;k++){d+=a[k]*b[k];na+=a[k]*a[k];nb+=b[k]*b[k];}
+    return d/(Math.sqrt(na)*Math.sqrt(nb)+1e-9);}
+
+  // ── circular layout for the 4 training drugs ────────────────────────────
+  const RING=3.6;
+  function drugPos(i){const ang=(-Math.PI/2)+i/DRUGS.length*Math.PI*2;return [Math.cos(ang)*RING,0,Math.sin(ang)*RING];}
+
+  // mean of r-neighbours of a node for a given relation (RGCN aggregation)
+  function relNeighbours(node,rel){
+    const out=[];
+    EDGES.forEach(([i,j,r])=>{if(r!==rel){return;} if(i===node)out.push(j); else if(j===node)out.push(i);});
+    return out;
+  }
+  function meanFeat(idxs){
+    if(!idxs.length) return [0,0,0,0];
+    const m=[0,0,0,0];idxs.forEach(k=>{for(let d=0;d<4;d++)m[d]+=DRUGS[k].feat[d];});
+    for(let d=0;d<4;d++)m[d]/=idxs.length;return m;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // BUILD
+  // ════════════════════════════════════════════════════════════════════════
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const relSel=Math.round(s.relation);      // 0..2 which relation to highlight
+    const focusNode=Math.round(s.focusDrug);  // 0..3 which drug RGCN centres on
+    const nBases=Math.round(s.bases);         // basis count 4..64
+    const simW=s.simWeight;                    // 0..1 feature-similarity weight (inductive)
+
+    const gGraph =api.group("graph");
+    const gMsg   =api.group("messages");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const RC=RELS.map(r=>api.col(r.color));
+    const CY=api.col("cyan"), GR=api.col("green"), SL="#54667c";
+
+    function addBig(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSm(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // helper: draw the 4 drug nodes (shared by all modes)
+    function drawDrugs(dim){
+      DRUGS.forEach((dr,i)=>{
+        const p=drugPos(i);
+        const isFocus=(mode!=="multigraph"&&i===focusNode);
+        const baseCol = i===3 ? "#a78bfa" : (i===0?"#4dd7ff":"#34d399");
+        const nd=api.node(p,{r:isFocus?0.5:0.4,color:baseCol,group:"graph",
+          halo:true,haloScale:isFocus?3.0:2.0,
+          label:dr.name,labelColor:"#dfeaf6",
+          pick:{drug:{id:i,name:dr.name,feat:dr.feat}}});
+        if(dim&&!isFocus){nd.traverse(o=>{if(o.material&&o.material.opacity!=null){o.material.transparent=true;o.material.opacity=0.5;}});}
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 — MULTIGRAPH: the 4-drug DDI multigraph, 3 edge types
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="multigraph"){
+      drawDrugs(false);
+
+      // count edges per relation, draw with slight per-relation arc offset so
+      // the multi-edge (amiodarone-warfarin: r2 AND r3) is visibly two edges
+      const relCount=[0,0,0];
+      EDGES.forEach(([i,j,r])=>{
+        relCount[r]++;
+        const dim=(relSel<3 && r!==relSel);
+        const a=drugPos(i), b=drugPos(j);
+        const off=(r-1)*0.55;                 // separate parallel edges
+        const mid=[(a[0]+b[0])/2,0.0+off*0.9,(a[2]+b[2])/2];
+        // bowed edge as two segments through a lifted midpoint
+        api.edge(a,mid,{color:dim?SL:RELS[r].color,width:dim?0.03:0.06,opacity:dim?0.3:0.95,group:"graph"});
+        api.edge(mid,b,{color:dim?SL:RELS[r].color,width:dim?0.03:0.06,opacity:dim?0.3:0.95,group:"graph"});
+      });
+
+      // highlight the multi-edge fact: warfarin<->amiodarone carries r2 AND r3
+      addBig("warfarin × amiodarone:  2 edge types (r2 QT, r3 hepatotoxic)","#a78bfa",1.1,0,2.7,0);
+
+      // legend of relation types
+      RELS.forEach((r,k)=>{
+        addSm("● "+r.key+"  "+r.label+"  ("+relCount[k]+")",api.col(r.color),0.5,-5.6,3.0-k*0.55,0);
+      });
+
+      const totalEdges=EDGES.length;
+      const triplesLine=(COVERAGE*100).toFixed(2);
+      addBig("R = "+R_TYPES+" side-effect types  ·  multigraph","#8a99ad",1.0,0,-3.1,0);
+
+      api.setMetric("edges", totalEdges+" / 3 types");
+      api.setMetric("focusDeg", "—");
+      api.setMetric("params", "—");
+      api.setMetric("coverage", triplesLine+"%");
+
+      sceneSnap={mode,relation:relSel,trainEdges:totalEdges,
+        edgesR1:relCount[0],edgesR2:relCount[1],edgesR3:relCount[2],
+        multiEdgePairs:1,coverageFrac:+COVERAGE.toFixed(5),
+        focusDrug:focusNode,bases:nBases,simWeight:+simW.toFixed(2)};
+
+      return {
+        badge:"Multigraph · "+totalEdges+" edges · 3 relation types",
+        formula:"G<sub>DDI</sub> = (V<sub>drugs</sub>, {E<sub>r</sub>}<sub>r=1</sub><sup>R</sup>, X<sub>drugs</sub>)",
+        insight:"A polypharmacy graph is a <b>multigraph</b>: one drug pair can sit in several E<sub>r</sub> at once. Warfarin–amiodarone carries both a QT-prolongation edge (hERG block + CYP2C9) and a hepatotoxicity edge (both hepatotoxic). Collapsing these to a single binary 'interacting' edge destroys the multirelational structure the model must learn.",
+        state:"r1 bleeding ("+relCount[0]+"), r2 QT ("+relCount[1]+"), r3 hepatotoxic ("+relCount[2]+"). Of "+N_DRUGS+" drugs × "+R_TYPES+" types ≈ "+(MAX_TRIPLES/1e6)+"M triples, TWOSIDES covers ~"+(TWOSIDES/1e6).toFixed(1)+"M = "+triplesLine+"% (OWA: rest are negatives).",
+        metrics:{edges:totalEdges+" / 3 types",focusDeg:"—",params:"—",coverage:triplesLine+"%"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 — RGCN: relation-specific message passing into a focus drug
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="rgcn"){
+      drawDrugs(true);
+      const fp=drugPos(focusNode);
+      const rel = relSel<3?relSel:0;
+
+      // gather r-neighbours of the focus node for the selected relation
+      const nbrs=relNeighbours(focusNode,rel);
+      const mf=meanFeat(nbrs);
+
+      // animate message arrows from each r-neighbour into the focus node
+      nbrs.forEach(k=>{
+        api.arrow(drugPos(k),fp,{color:RELS[rel].color,width:0.05,head:0.28,group:"messages"});
+      });
+      // self-loop indicator (W_0 h_i)
+      api.arrow([fp[0],1.4,fp[2]],[fp[0],0.5,fp[2]],{color:"cyan",width:0.05,head:0.26,group:"messages"});
+      addSm("W₀·hᵢ (self-loop)","#4dd7ff",0.5,fp[0],1.9,fp[2]);
+
+      // floating panel: the aggregated mean feature vector (the real numbers)
+      const degr=nbrs.length;
+      addBig("N_"+RELS[rel].key+"("+DRUGS[focusNode].name+") = {"+(nbrs.map(k=>DRUGS[k].name).join(", ")||"∅")+"}",
+        api.col(RELS[rel].color),1.05,0,3.0,0);
+      const mfStr="["+mf.map(v=>v.toFixed(2)).join(", ")+"]";
+      addBig("mean(neighbours) = "+mfStr,"#dfeaf6",1.0,0,2.4,0);
+
+      // basis-decomposition compression bars: full vs basis params
+      const bp=HID*HID + R_TYPES*nBases + HID*HID;  // basis(B·d²)+coeff(R·B)+self(d²)  with current B
+      const ratio=fullParams/bp;
+      const barX=[-2.0,2.0], barCol=["#54667c","#34d399"];
+      const vals=[fullParams,bp];
+      const maxV=fullParams;
+      vals.forEach((v,bi)=>{
+        const h=0.2+ (v/maxV)*3.6;
+        const bar=new T.Mesh(new T.BoxGeometry(1.3,h,1.0),
+          new T.MeshStandardMaterial({color:barCol[bi],emissive:new T.Color(barCol[bi]).multiplyScalar(0.4),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(barX[bi],h/2,-4.6);
+        gBars.add(bar);
+        api.pick(bar,{bar:{kind:bi===0?"full W_r":"basis decomp",params:Math.round(v)}});
+        addBig((v/1000).toFixed(0)+"K",barCol[bi],1.3,barX[bi],h+0.5,-4.6);
+        addSm(bi===0?"full Wᵣ":"basis (B="+nBases+")",barCol[bi],0.5,barX[bi],0.05,-4.6);
+      });
+      addBig(ratio.toFixed(1)+"× fewer params","#34d399",1.2,0,4.4,-4.6);
+
+      api.setMetric("edges", degr+" nbrs");
+      api.setMetric("focusDeg", "deg_"+RELS[rel].key+" = "+degr);
+      api.setMetric("params", (bp/1000).toFixed(0)+"K");
+      api.setMetric("coverage", ratio.toFixed(1)+"×");
+
+      sceneSnap={mode,relation:rel,focusDrug:focusNode,focusDegree:degr,
+        meanNbrFeat:mf.map(v=>+v.toFixed(3)),bases:nBases,
+        basisParams:Math.round(bp),fullParams:fullParams,compression:+ratio.toFixed(2),
+        coverageFrac:+COVERAGE.toFixed(5),simWeight:+simW.toFixed(2)};
+
+      return {
+        badge:"RGCN · "+DRUGS[focusNode].name+" · "+RELS[rel].key+" · "+degr+" nbrs",
+        formula:"h<sub>i</sub><sup>(l+1)</sup> = σ( W₀ h<sub>i</sub> + Σ<sub>r</sub> Σ<sub>j∈N<sub>r</sub>(i)</sub> (1/c<sub>i,r</sub>) W<sub>r</sub> h<sub>j</sub> )",
+        insight:"Each relation r owns its own weight matrix W<sub>r</sub>. The focus drug aggregates its r-neighbours (coloured arrows) plus a self-loop. With R="+R_TYPES+" types this is "+(fullParams/1000).toFixed(0)+"K params/layer — <b>basis decomposition</b> writes every W<sub>r</sub> as a mix of "+nBases+" shared bases, sharing pharmacological substrate across side-effects (QT and arrhythmia share hERG).",
+        state:DRUGS[focusNode].name+" has "+degr+" "+RELS[rel].label+" neighbour(s); mean feature "+mfStr+". Basis decomposition: "+(fullParams/1000).toFixed(0)+"K → "+(bp/1000).toFixed(0)+"K params ("+ratio.toFixed(1)+"× compression at B="+nBases+").",
+        metrics:{edges:degr+" nbrs",focusDeg:"deg = "+degr,params:(bp/1000).toFixed(0)+"K",coverage:ratio.toFixed(1)+"×"},
+        focus:{center:[0,0.5,-1.6],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 — INDUCTIVE: rivaroxaban enters with ZERO DDI edges
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="inductive"){
+      drawDrugs(true);
+
+      // place rivaroxaban at the centre — no DDI edges, embedded by features
+      const rivP=[0,0,0];
+      api.node(rivP,{r:0.55,color:"#4dd7ff",group:"graph",halo:true,haloScale:3.4,
+        label:"rivaroxaban (new)",labelColor:"#9fe6ff",
+        pick:{drug:{id:99,name:"rivaroxaban",feat:RIVA.feat}}});
+
+      // dashed feature-similarity links to training drugs (NOT DDI edges)
+      DRUGS.forEach((dr,i)=>{
+        const sim=cos(RIVA.feat,dr.feat);
+        if(sim>0.4){
+          api.edge(rivP,drugPos(i),{color:"#4dd7ff",dashed:true,opacity:0.25+0.5*sim*simW,group:"messages"});
+        }
+      });
+      addSm("dashed = feature similarity (no DDI edges yet)","#6b8aa8",0.5,0,1.0,2.6);
+
+      // similarity-weighted predicted score: blend feature-similarity into the
+      // two illustrative endpoints from the note so the slider visibly moves them
+      const simAsp=cos(RIVA.feat,DRUGS[1].feat);   // riva vs aspirin
+      const simAmio=cos(RIVA.feat,DRUGS[3].feat);  // riva vs amiodarone
+      const pAspR1 = P_RIVA_ASP_R1*(0.55+0.45*simW) + simAsp*0.10*simW;
+      const pAmioR2= P_RIVA_AMIO_R2*(0.55+0.45*simW)+ simAmio*0.10*simW;
+      const pAspC=Math.max(0,Math.min(0.99,pAspR1));
+      const pAmioC=Math.max(0,Math.min(0.99,pAmioR2));
+
+      // DEDICOM decoder scores as bars (riva,asp→r1) vs (riva,amio→r2) vs warf baseline
+      const items=[
+        {lab:"riva+asp → r1",v:pAspC,   c:"rose"},
+        {lab:"riva+amio → r2",v:pAmioC, c:"violet"},
+        {lab:"warf+amio → r2",v:P_WARF_AMIO_R2,c:"amber"}
+      ];
+      const bx=[-3.0,0,3.0];
+      items.forEach((it,bi)=>{
+        const h=0.15+it.v*4.0;
+        const hex=api.col(it.c);
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.2),
+          new T.MeshStandardMaterial({color:hex,emissive:new T.Color(hex).multiplyScalar(0.45),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(bx[bi],h/2,-4.4);
+        gBars.add(bar);
+        api.pick(bar,{bar:{pred:it.lab,score:+it.v.toFixed(3)}});
+        addBig(it.v.toFixed(2),hex,1.5,bx[bi],h+0.5,-4.4);
+        addSm(it.lab,hex,0.42,bx[bi],0.05,-4.4);
+      });
+      // decision threshold plane
+      const thrH=0.15+0.5*4.0;
+      api.plane([0,thrH,-4.4],{w:9,h:0.04,color:"#54667c",opacity:0.5,flat:false,group:"bars"});
+      addSm("decision 0.5","#8a99ad",0.45,4.1,thrH,-4.4);
+
+      addBig("DEDICOM:  σ( hᵢᵀ Dᵣ Rᵣ Dᵣ hⱼ )","#dfeaf6",1.0,0,3.0,-4.4);
+
+      api.setMetric("edges", "0 DDI edges");
+      api.setMetric("focusDeg", "sim(asp)="+simAsp.toFixed(2));
+      api.setMetric("params", "P(asp)="+pAspC.toFixed(2));
+      api.setMetric("coverage", "P(amio)="+pAmioC.toFixed(2));
+
+      sceneSnap={mode,relation:relSel,focusDrug:focusNode,bases:nBases,
+        rivaEdges:0,simAspirin:+simAsp.toFixed(3),simAmiodarone:+simAmio.toFixed(3),
+        predAspR1:+pAspC.toFixed(3),predAmioR2:+pAmioC.toFixed(3),
+        warfAmioR2:P_WARF_AMIO_R2,coverageFrac:+COVERAGE.toFixed(5),simWeight:+simW.toFixed(2)};
+
+      return {
+        badge:"Inductive · rivaroxaban · 0 DDI edges",
+        formula:"Score(i,j,r) = σ( h<sub>i</sub><sup>T</sup> D<sub>r</sub> R<sub>r</sub> D<sub>r</sub> h<sub>j</sub> )",
+        insight:"A newly approved drug enters with <b>no DDI edges</b>; its embedding comes entirely from features. Rivaroxaban resembles warfarin in the bleeding (r1) subgraph, so P(riva+aspirin→r1) is high ("+pAspC.toFixed(2)+"). But it is a Factor-Xa / CYP3A4 substrate — not CYP2C9 — so amiodarone's CYP2C9 inhibition does not raise its level: P(riva+amio→r2)="+pAmioC.toFixed(2)+", well below warfarin's "+P_WARF_AMIO_R2.toFixed(2)+".",
+        state:"sim(riva,aspirin)="+simAsp.toFixed(2)+", sim(riva,amiodarone)="+simAmio.toFixed(2)+". Predicted P(riva+asp→r1)="+pAspC.toFixed(2)+" (fires), P(riva+amio→r2)="+pAmioC.toFixed(2)+" (below 0.5). Feature specificity, not memorised FAERS reports.",
+        metrics:{edges:"0 DDI edges",focusDeg:"sim(asp)="+simAsp.toFixed(2),params:"P(asp)="+pAspC.toFixed(2),coverage:"P(amio)="+pAmioC.toFixed(2)},
+        focus:{center:[0,0.5,-1.8],radius:13}
+      };
+    }
+
+    return {badge:"D10",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // MathLab.create
+  // ════════════════════════════════════════════════════════════════════════
+  MathLab.create({
+    id:"d10",
+    kind:"ddi-polypharmacy",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D10 · Drug-drug interaction and polypharmacy graphs",
+    subtitle:"A 4-drug DDI multigraph (warfarin, aspirin, clopidogrel, amiodarone) with 3 side-effect edge types. Three views: the multirelational graph, RGCN + basis decomposition, and inductive prediction for a new drug (rivaroxaban).",
+    selectedLabel:"Element",
+    selectedHint:"Click a drug node, an edge, or a bar.",
+    insightLabel:"What this shows",
+    modes:[
+      {value:"multigraph",label:"Multigraph (3 side-effect edge types)"},
+      {value:"rgcn",      label:"RGCN (relation message passing + basis)"},
+      {value:"inductive", label:"Inductive (new drug, 0 DDI edges)"}
+    ],
+    params:[
+      {key:"relation",label:"relation (0=r1 1=r2 2=r3 3=all)",min:0,max:3,step:1,value:3,
+       fmt:v=>["r1 bleeding","r2 QT","r3 hepatotox","all"][Math.round(v)],modes:["multigraph","rgcn"]},
+      {key:"focusDrug",label:"RGCN focus drug",min:0,max:3,step:1,value:0,
+       fmt:v=>["warfarin","aspirin","clopidogrel","amiodarone"][Math.round(v)],modes:["rgcn","inductive"]},
+      {key:"bases",label:"# basis matrices B",min:4,max:64,step:4,value:32,
+       fmt:v=>Math.round(v).toString(),modes:["rgcn"]},
+      {key:"simWeight",label:"feature-similarity weight",min:0,max:1,step:0.05,value:1,
+       fmt:v=>v.toFixed(2),modes:["inductive"]}
+    ],
+    metrics:[
+      {key:"edges",   label:"Training edges",     accent:"cyan"},
+      {key:"focusDeg",label:"Focus / similarity", accent:"green"},
+      {key:"params",  label:"Params / prediction",accent:"violet"},
+      {key:"coverage",label:"Coverage / score",   accent:"amber"}
+    ],
+    layers:[
+      {group:"graph",   label:"Drugs & edges"},
+      {group:"messages",label:"Messages / similarity"},
+      {group:"bars",    label:"Bars / decoder"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"Focus warfarin · r1",
+      on:api=>{api.setParam("focusDrug",0);api.setParam("relation",0);}
+    },
+    secondary:{
+      label:"All relations",
+      on:api=>{api.setParam("relation",3);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#fb7185">rose</span>=r1 bleeding · <span style="color:#a78bfa">violet</span>=r2 QT · <span style="color:#fbbf24">amber</span>=r3 hepatotoxic · <span style="color:#4dd7ff">cyan</span>=warfarin/new drug · <span style="color:#34d399">green</span>=aspirin/clopidogrel.',
+    onMode(api){
+      const m=api.state.mode;
+      if(m==="multigraph") api.frame([0,0,0],12);
+      else if(m==="rgcn")  api.frame([0,0.5,-1.6],13);
+      else                 api.frame([0,0.5,-1.8],13);
+    },
+    onParam(api){
+      const m=api.state.mode;
+      if(m==="multigraph") api.frame([0,0,0],12);
+      else api.frame([0,0.5,-1.7],13);
+    },
+    onSelect(api,d){
+      if(d.drug) api.setSelected(d.drug.name+" · feat ["+d.drug.feat.map(v=>v.toFixed(1)).join(", ")+"]");
+      if(d.bar&&d.bar.pred!=null) api.setSelected(d.bar.pred+" · score "+d.bar.score.toFixed(2));
+      else if(d.bar&&d.bar.params!=null) api.setSelected(d.bar.kind+" · "+d.bar.params.toLocaleString()+" params");
+    },
+    build,
+    snapshot(s){
+      const rel=Math.round(s.relation);
+      const fd=Math.round(s.focusDrug);
+      const nb=Math.round(s.bases);
+      const sw=s.simWeight;
+      const bp=HID*HID + R_TYPES*nb + HID*HID;
+      const simAsp=cos(RIVA.feat,DRUGS[1].feat);
+      const simAmio=cos(RIVA.feat,DRUGS[3].feat);
+      return {
+        mode:s.mode,
+        relation:rel,
+        focusDrug:fd,
+        bases:nb,
+        simWeight:+sw.toFixed(2),
+        trainEdges:EDGES.length,
+        relationTypes:RELS.length,
+        compression:+(fullParams/bp).toFixed(2),
+        coverageFrac:+COVERAGE.toFixed(5),
+        simAspirin:+simAsp.toFixed(3),
+        simAmiodarone:+simAmio.toFixed(3),
+        predAspR1:+P_RIVA_ASP_R1.toFixed(3),
+        predAmioR2:+P_RIVA_AMIO_R2.toFixed(3),
+        multiEdgePair:"warfarin-amiodarone"
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

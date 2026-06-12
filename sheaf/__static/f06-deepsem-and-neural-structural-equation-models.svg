@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F06 — Joint SEM + DAG penalty removes the indirect chord GENIE3 keeps</title>
+<desc id="d">Four-panel captioned figure: Joint SEM + DAG penalty removes the indirect chord GENIE3 keeps</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F06 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="20" font-weight="700">Joint SEM + DAG penalty removes the indirect chord GENIE3 keeps</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The gated SEM</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">genes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">3</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">true edges</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">2</text>
+<text x="56" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="108" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="113" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">NOTEARS acyclicity</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">h(W) = tr(exp(W∘W)) − d</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">h = 0  ⇔  DAG</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">h (DAG)</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.00</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">h (cycle)</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">0.69</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#34d399"/>
+<circle cx="64" cy="270" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="64" y="275" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Train, then threshold</text>
+<text x="56" y="301.5" fill="#34d399" font-size="11.5" font-weight="700">W[GATA1,KLF1]</text>
+<text x="196" y="301.5" fill="#9fb4cc" font-size="11.5">0.92</text>
+<text x="56" y="321.5" fill="#34d399" font-size="11.5" font-weight="700">W[KLF1,HBB]</text>
+<text x="196" y="321.5" fill="#9fb4cc" font-size="11.5">0.83</text>
+<text x="56" y="341.5" fill="#fbbf24" font-size="11.5" font-weight="700">W[GATA1,HBB]</text>
+<text x="196" y="341.5" fill="#9fb4cc" font-size="11.5">0.05</text>
+<rect x="56" y="360" width="12" height="64" rx="2" fill="#34d399"/>
+<text x="62" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">G→K</text>
+<rect x="85" y="366.26" width="12" height="57.74" rx="2" fill="#34d399"/>
+<text x="91" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">K→H</text>
+<rect x="114" y="420.52" width="12" height="3.48" rx="2" fill="#fbbf24"/>
+<text x="120" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">G→H</text>
+<line x1="56" y1="403.13" x2="143" y2="403.13" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="270" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="275" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">vs GENIE3 (indirect)</text>
+<text x="502" y="301.5" fill="#fb7185" font-size="11.5" font-weight="700">GENIE3 G→H</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">0.35</text>
+<text x="502" y="321.5" fill="#34d399" font-size="11.5" font-weight="700">DeepSEM G→H</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.05</text>
+<text x="502" y="341.5" fill="#fb7185" font-size="11.5" font-weight="700">false +</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">+1</text>
+<text x="502" y="369" fill="#9fb4cc" font-size="11">GENIE3 cannot condition on KLF1, so the indirect chord</text>
+<text x="502" y="389" fill="#9fb4cc" font-size="11">survives any usable threshold.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F06. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">cascade </text>
+<text x="241.03" y="538" fill="#c7d2dd" font-size="13">GATA1→KLF1→HBB; </text>
+<text x="394.98" y="538" fill="#c7d2dd" font-size="13">true </text>
+<text x="435.28" y="538" fill="#c7d2dd" font-size="13">edges </text>
+<text x="483.64" y="538" fill="#c7d2dd" font-size="13">2, </text>
+<text x="507.82" y="538" fill="#c7d2dd" font-size="13">no </text>
+<text x="532" y="538" fill="#c7d2dd" font-size="13">direct </text>
+<text x="588.42" y="538" fill="#c7d2dd" font-size="13">GATA1→HBB. </text>
+<text x="691.99" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="725.52" y="538" fill="#c7d2dd" font-size="13">Each </text>
+<text x="767.03" y="538" fill="#c7d2dd" font-size="13">gene </text>
+<text x="807.33" y="538" fill="#c7d2dd" font-size="13">is</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">generated </text>
+<text x="120.6" y="559" fill="#c7d2dd" font-size="13">by </text>
+<text x="144.78" y="559" fill="#c7d2dd" font-size="13">MLP_j </text>
+<text x="196.77" y="559" fill="#c7d2dd" font-size="13">of </text>
+<text x="220.95" y="559" fill="#c7d2dd" font-size="13">its </text>
+<text x="253.19" y="559" fill="#c7d2dd" font-size="13">W-gated </text>
+<text x="318.88" y="559" fill="#c7d2dd" font-size="13">regulators. </text>
+<text x="415.6" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="449.13" y="559" fill="#c7d2dd" font-size="13">NOTEARS </text>
+<text x="522.07" y="559" fill="#c7d2dd" font-size="13">scores </text>
+<text x="578.49" y="559" fill="#c7d2dd" font-size="13">acyclicity </text>
+<text x="667.15" y="559" fill="#c7d2dd" font-size="13">with </text>
+<text x="707.45" y="559" fill="#c7d2dd" font-size="13">one </text>
+<text x="739.69" y="559" fill="#c7d2dd" font-size="13">number: </text>
+<text x="804.17" y="559" fill="#c7d2dd" font-size="13">h=0 </text>
+<text x="836.41" y="559" fill="#c7d2dd" font-size="13">for</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="72.24" y="580" fill="#c7d2dd" font-size="13">DAG, </text>
+<text x="116.17" y="580" fill="#c7d2dd" font-size="13">h=0.69 </text>
+<text x="172.59" y="580" fill="#c7d2dd" font-size="13">once </text>
+<text x="212.89" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="229.01" y="580" fill="#c7d2dd" font-size="13">KLF1→GATA1 </text>
+<text x="332.58" y="580" fill="#c7d2dd" font-size="13">back-edge </text>
+<text x="413.18" y="580" fill="#c7d2dd" font-size="13">adds </text>
+<text x="453.48" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="469.6" y="580" fill="#c7d2dd" font-size="13">cycle. </text>
+<text x="526.02" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="559.55" y="580" fill="#c7d2dd" font-size="13">After </text>
+<text x="609.12" y="580" fill="#c7d2dd" font-size="13">training, </text>
+<text x="689.72" y="580" fill="#c7d2dd" font-size="13">W[GATA1,HBB]=0.05 </text>
+<text x="844.47" y="580" fill="#c7d2dd" font-size="13">falls</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">below </text>
+<text x="88.36" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="120.6" y="601" fill="#c7d2dd" font-size="13">0.30 </text>
+<text x="160.9" y="601" fill="#c7d2dd" font-size="13">threshold </text>
+<text x="241.5" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="273.74" y="601" fill="#c7d2dd" font-size="13">is </text>
+<text x="297.92" y="601" fill="#c7d2dd" font-size="13">removed, </text>
+<text x="370.46" y="601" fill="#c7d2dd" font-size="13">while </text>
+<text x="418.82" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="451.06" y="601" fill="#c7d2dd" font-size="13">two </text>
+<text x="483.3" y="601" fill="#c7d2dd" font-size="13">direct </text>
+<text x="539.72" y="601" fill="#c7d2dd" font-size="13">edges </text>
+<text x="588.08" y="601" fill="#c7d2dd" font-size="13">(0.92, </text>
+<text x="644.5" y="601" fill="#c7d2dd" font-size="13">0.83) </text>
+<text x="692.86" y="601" fill="#c7d2dd" font-size="13">survive. </text>
+<text x="765.4" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="798.93" y="601" fill="#c7d2dd" font-size="13">GENIE3</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">keeps </text>
+<text x="88.36" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="120.6" y="622" fill="#c7d2dd" font-size="13">indirect </text>
+<text x="193.14" y="622" fill="#c7d2dd" font-size="13">chord </text>
+<text x="241.5" y="622" fill="#c7d2dd" font-size="13">(imp=0.35, </text>
+<text x="330.16" y="622" fill="#c7d2dd" font-size="13">1 </text>
+<text x="346.28" y="622" fill="#c7d2dd" font-size="13">false </text>
+<text x="394.64" y="622" fill="#c7d2dd" font-size="13">positive); </text>
+<text x="483.3" y="622" fill="#c7d2dd" font-size="13">DeepSEM </text>
+<text x="552.62" y="622" fill="#c7d2dd" font-size="13">removes </text>
+<text x="617.1" y="622" fill="#c7d2dd" font-size="13">it.</text>
+</svg>

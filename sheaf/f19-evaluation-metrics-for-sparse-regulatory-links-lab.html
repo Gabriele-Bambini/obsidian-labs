@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F19 · Evaluation metrics for sparse regulatory links</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no RNG, no clock) ────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS from the note's Section-5 worked example ────────────────────────
+  // 5,000-gene T-cell GRN · 200 TFs × 5,000 genes = 1,000,000 candidate edges
+  // 10,000 positive edges (1% rate) · 990,000 negatives
+  const F={
+    nGenes:5000, nTFs:200, nCand:1000000, nPos:10000, nNeg:990000,
+    pi:0.01,                          // positive rate = random AUPRC baseline
+    // Three methods: A co-expression (ARACNE), B GNN, C Sheaf GNN.
+    // Each row mirrors the note's "Expected results" table exactly.
+    methods:[
+      {key:"A", name:"A · Co-expression (ARACNE)", col:"amber",
+       auroc:0.782, auprc:0.074,
+       ep:{50:0.28,100:0.24,200:0.19,500:0.14,1000:0.09}},
+      {key:"B", name:"B · GNN link prediction", col:"cyan",
+       auroc:0.856, auprc:0.138,
+       ep:{50:0.44,100:0.39,200:0.31,500:0.22,1000:0.16}},
+      {key:"C", name:"C · Sheaf GNN (signed)", col:"green",
+       auroc:0.912, auprc:0.219,
+       ep:{50:0.64,100:0.58,200:0.47,500:0.35,1000:0.26}}
+    ],
+    Klist:[50,100,200,500,1000]
+  };
+
+  // ── deterministic score model (beta-like via shape exponent) ──────────────
+  // Method separation: A=beta(3,1)/beta(1,3), B=beta(5,1)/beta(1,5),
+  // C=beta(8,1)/beta(1,8). We sample CDF-style curves analytically:
+  // positives ~ x^a (skew high), negatives ~ 1-(1-x)^a (skew low).
+  const shape=[3,5,8];               // a for A,B,C
+  // density of positives at score x (unnormalised): a*x^(a-1)
+  function posDen(x,a){return a*Math.pow(x,a-1);}
+  // density of negatives at score x: a*(1-x)^(a-1)
+  function negDen(x,a){return a*Math.pow(1-x,a-1);}
+  // survival fraction above threshold t: positives P(score>t)=1-t^a ; negatives = (1-t)^a
+  function posAbove(t,a){return 1-Math.pow(t,a);}
+  function negAbove(t,a){return Math.pow(1-t,a);}
+
+  // ROC samples: as t sweeps 1→0, FPR & TPR rise from 0→1
+  function rocCurve(a){
+    const pts=[];
+    for(let k=0;k<=40;k++){
+      const t=1-k/40;
+      pts.push({fpr:negAbove(t,a),tpr:posAbove(t,a)});
+    }
+    return pts;
+  }
+  // PR samples: precision = TP/(TP+FP) with class prior pi
+  function prCurve(a){
+    const pts=[];
+    for(let k=1;k<=40;k++){
+      const t=1-k/40;
+      const tpr=posAbove(t,a);                     // recall
+      const fpr=negAbove(t,a);
+      const tp=tpr*F.pi, fp=fpr*(1-F.pi);
+      const prec=tp/(tp+fp+1e-9);
+      pts.push({recall:tpr,prec:prec});
+    }
+    return pts;
+  }
+
+  let sceneSnap={};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const mi=Math.round(s.method);                 // 0,1,2 → A,B,C
+    const M=F.methods[mi];
+    const a=shape[mi];
+    const K=F.Klist[Math.round(s.kbudget)];        // index → actual budget K
+    const piPct=Math.round(s.posrate*100)/100;     // shown positive rate (display)
+
+    const gAxes  =api.group("axes");
+    const gCurve =api.group("curve");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const CY=api.col("cyan"), GR=api.col("green"), AM=api.col("amber"),
+          VI=api.col("violet"), RO=api.col("rose"), SL="#54667c";
+    const Mcol=api.col(M.col);
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 1 — AUROC: the ROC curve, dominated by the 99:1 negatives
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="auroc"){
+      const xOff=-4.0, yOff=-2.4, S=5.2;
+      // axes
+      api.edge([xOff,yOff,0],[xOff+S,yOff,0],{color:"#2a3d52",width:0.03,group:"axes"});
+      api.edge([xOff,yOff,0],[xOff,yOff+S,0],{color:"#2a3d52",width:0.03,group:"axes"});
+      // diagonal random baseline (AUROC=0.5)
+      api.edge([xOff,yOff,0],[xOff+S,yOff+S,0],{color:SL,width:0.02,dashed:true,opacity:0.6,group:"axes"});
+      lbl("FPR  (1-specificity)","axis",0.9,xOff+S*0.5,yOff-0.5,0);
+      lbl("TPR (recall)","axis",0.9,xOff-0.9,yOff+S*0.5,0);
+      lbl("random AUROC = 0.50","#8a99ad",0.85,xOff+S*0.62,yOff+S*0.40,0);
+
+      // ROC curve for the selected method
+      const roc=rocCurve(a);
+      let prev=null;
+      roc.forEach(p=>{
+        const x=xOff+p.fpr*S, y=yOff+p.tpr*S;
+        if(prev) api.edge([prev.x,prev.y,0],[x,y,0],{color:Mcol,width:0.04,group:"curve"});
+        prev={x,y};
+      });
+      // node at operating point t=0.5 (note 4.1: TP≈0.56, FP≈0.44 for the toy uniform model)
+      const opF=negAbove(0.5,a), opT=posAbove(0.5,a);
+      api.node([xOff+opF*S,yOff+opT*S,0.05],{r:0.16,color:M.col,label:"t=0.5",labelColor:M.col,
+        pick:{op:{tpr:opT,fpr:opF}},group:"curve"});
+
+      // negatives:positives bar strip — visually show 99:1 imbalance dominates x-axis
+      const barY=yOff+S+0.7, bw=S;
+      api.plane([xOff+bw*0.5,barY,0],{w:bw,h:0.5,flat:false,color:"rose",opacity:0.30,group:"bars"});
+      api.plane([xOff+bw*0.005,barY,0.01],{w:bw*0.01,h:0.5,flat:false,color:"green",opacity:0.95,group:"bars"});
+      lbl("99 negatives : 1 positive  →  FPR axis barely moves","rose",0.85,xOff+bw*0.5,barY+0.55,0);
+
+      api.setMetric("auroc",M.auroc.toFixed(3));
+      api.setMetric("auprc",M.auprc.toFixed(3)+"  ("+(M.auprc/F.pi).toFixed(1)+"x)");
+      api.setMetric("epk",(M.ep[K]!=null?M.ep[K].toFixed(2):"—"));
+      api.setMetric("baseline","0.50  (vs π="+F.pi.toFixed(2)+")");
+
+      sceneSnap={mode,method:M.key,auroc:M.auroc,auprc:M.auprc,
+        epAtK:(M.ep[K]!=null?M.ep[K]:null),K,positiveRate:F.pi,randomBaseline:0.5,
+        opTPR:+opT.toFixed(3),opFPR:+opF.toFixed(3)};
+
+      return {
+        badge:"AUROC · "+M.name+" · "+M.auroc.toFixed(3),
+        formula:"AUROC = P( score(pos) &gt; score(neg) ) = &#8747; TPR d(FPR)",
+        insight:"AUROC averages over ALL thresholds, and with 99 negatives per positive the FPR axis barely moves no matter how many false edges accumulate. So AUROC looks high ("+M.auroc.toFixed(3)+") while the top of the list can still be mostly wrong. It is the WRONG primary metric for a sparse GRN.",
+        state:"Operating point t=0.5: TPR="+(opT*100).toFixed(0)+"%, FPR="+(opF*100).toFixed(0)+"%. Random baseline AUROC = 0.50 (diagonal). Switch the method slider to compare A/B/C.",
+        metrics:{auroc:M.auroc.toFixed(3),auprc:M.auprc.toFixed(3),epk:(M.ep[K]!=null?M.ep[K].toFixed(2):"—"),baseline:"0.50"},
+        focus:{center:[xOff+S*0.4,yOff+S*0.5,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 2 — AUPRC: the precision–recall curve, baseline = π = 0.01
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="auprc"){
+      const xOff=-4.0, yOff=-2.4, S=5.2;
+      api.edge([xOff,yOff,0],[xOff+S,yOff,0],{color:"#2a3d52",width:0.03,group:"axes"});
+      api.edge([xOff,yOff,0],[xOff,yOff+S,0],{color:"#2a3d52",width:0.03,group:"axes"});
+      lbl("recall","axis",0.9,xOff+S*0.5,yOff-0.5,0);
+      lbl("precision","axis",0.9,xOff-0.9,yOff+S*0.5,0);
+
+      // random baseline = pi (a tiny floor near the x-axis at y=pi*S)
+      const piY=yOff+F.pi*S;
+      api.edge([xOff,piY,0],[xOff+S,piY,0],{color:"rose",width:0.025,dashed:true,opacity:0.85,group:"axes"});
+      lbl("random AUPRC = π = "+F.pi.toFixed(2),"rose",0.85,xOff+S*0.55,piY+0.45,0);
+
+      const pr=prCurve(a);
+      let prev=null;
+      pr.forEach(p=>{
+        const x=xOff+p.recall*S, y=yOff+Math.min(1,p.prec)*S;
+        if(prev) api.edge([prev.x,prev.y,0],[x,y,0],{color:Mcol,width:0.04,group:"curve"});
+        prev={x,y};
+      });
+      // shade the practically-relevant low-recall zone (recall 0.01..0.10)
+      api.plane([xOff+0.055*S,yOff+S*0.5,-0.05],{w:0.10*S,h:S,flat:false,color:"violet",opacity:0.14,group:"bars"});
+      lbl("recall 1–10%: the zone that matters","violet",0.8,xOff+0.30*S,yOff+S*0.92,0);
+
+      // marker at the AUPRC value (area readout)
+      api.node([xOff+S*0.5,yOff+M.auprc*S+0.4,0.05],{r:0.15,color:M.col,label:"AUPRC "+M.auprc.toFixed(3),
+        labelColor:M.col,pick:{auprc:M.auprc},group:"curve"});
+
+      api.setMetric("auroc",M.auroc.toFixed(3));
+      api.setMetric("auprc",M.auprc.toFixed(3)+"  ("+(M.auprc/F.pi).toFixed(1)+"x)");
+      api.setMetric("epk",(M.ep[K]!=null?M.ep[K].toFixed(2):"—"));
+      api.setMetric("baseline","π = "+F.pi.toFixed(2));
+
+      const norm=M.auprc/F.pi;
+      sceneSnap={mode,method:M.key,auroc:M.auroc,auprc:M.auprc,auprcNorm:+norm.toFixed(2),
+        epAtK:(M.ep[K]!=null?M.ep[K]:null),K,positiveRate:F.pi,randomBaseline:F.pi};
+
+      return {
+        badge:"AUPRC · "+M.name+" · "+M.auprc.toFixed(3)+" ("+norm.toFixed(1)+"x)",
+        formula:"AUPRC = &#8747; Precision d(Recall) ,  baseline = π = |G_pos|/|G_cand| = 0.01",
+        insight:"AUPRC is sensitive to how the rare positives rank at the TOP. Its random baseline is π=0.01, not 0.5 — so AUPRC="+M.auprc.toFixed(3)+" is "+norm.toFixed(1)+"x better than chance. AUROC went 0.782→0.912 (modest), but AUPRC went 0.074→0.219 — a 3-fold gap that AUROC hid.",
+        state:"Method "+M.key+": AUPRC "+M.auprc.toFixed(3)+" = "+norm.toFixed(1)+"x the random baseline π="+F.pi.toFixed(2)+". The violet band marks recall 1–10%, the experimentally relevant range.",
+        metrics:{auroc:M.auroc.toFixed(3),auprc:M.auprc.toFixed(3),epk:(M.ep[K]!=null?M.ep[K].toFixed(2):"—"),baseline:"π="+F.pi.toFixed(2)},
+        focus:{center:[xOff+S*0.4,yOff+S*0.5,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE 3 — EP@K: early precision at the experimental budget K
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="epk"){
+      // Bars: EP@K for the 5 K values, the selected K highlighted.
+      const xs=[-4.0,-2.0,0.0,2.0,4.0];
+      const yBase=-2.0, hMax=5.0;
+      F.Klist.forEach((kk,idx)=>{
+        const ep=M.ep[kk];
+        const h=0.1+ep*hMax;
+        const active=(kk===K);
+        const x=xs[idx];
+        const bar=new T.Mesh(
+          new T.BoxGeometry(1.3,h,1.3),
+          new T.MeshStandardMaterial({color:new T.Color(Mcol),
+            emissive:new T.Color(Mcol).multiplyScalar(active?0.8:0.18),
+            emissiveIntensity:active?0.72:0.16,roughness:0.4,
+            transparent:!active,opacity:active?1.0:0.42}));
+        bar.position.set(x,yBase+h/2,0);
+        gBars.add(bar);
+        api.pick(bar,{kbar:{K:kk,ep:ep,foundEdges:Math.round(ep*kk),active}});
+        lbl((ep*100).toFixed(0)+"%",M.col,1.35,x,yBase+h+0.5,0);
+        slbl("K="+kk,active?M.col:"#8a99ad",0.4,x,yBase-0.45,0);
+        lbl("("+(ep/F.pi).toFixed(0)+"x)","#8a99ad",0.85,x,yBase+h+1.15,0);
+      });
+      // random baseline line at y = pi*hMax
+      const rY=yBase+F.pi*hMax;
+      api.edge([-5.0,rY,0],[5.0,rY,0],{color:"rose",width:0.025,dashed:true,opacity:0.85,group:"axes"});
+      lbl("random EP = π = 0.01","rose",0.85,3.2,rY+0.4,0);
+      lbl("Early Precision @ K","axis",1.0,0,yBase+hMax+1.9,0);
+
+      // budget annotation: of K tested, how many are real
+      const epK=M.ep[K], found=Math.round(epK*K);
+      lbl("validate top "+K+" → "+found+" real of "+K,"violet",1.05,0,yBase-1.3,0);
+
+      api.setMetric("auroc",M.auroc.toFixed(3));
+      api.setMetric("auprc",M.auprc.toFixed(3)+"  ("+(M.auprc/F.pi).toFixed(1)+"x)");
+      api.setMetric("epk",epK.toFixed(2)+"  ("+(epK/F.pi).toFixed(0)+"x)");
+      api.setMetric("baseline","π = "+F.pi.toFixed(2));
+
+      sceneSnap={mode,method:M.key,auroc:M.auroc,auprc:M.auprc,
+        epAtK:epK,K,foundReal:found,epNorm:+(epK/F.pi).toFixed(1),
+        positiveRate:F.pi,randomBaseline:F.pi};
+
+      return {
+        badge:"EP@"+K+" · "+M.name+" · "+epK.toFixed(2)+" ("+(epK/F.pi).toFixed(0)+"x)",
+        formula:"EP@K = |top-K(G_pred) &#8745; G_pos| / K ,  found = EP@K · K",
+        insight:"EP@K is the practical metric: of your top "+K+" predicted edges, EP@"+K+"="+epK.toFixed(2)+" are real — "+found+" true edges for a K="+K+" validation budget. With method C vs A at K=50 you get 32 vs 14 real edges. AUROC (0.912 vs 0.782) under-reports that 2.3x practical gap.",
+        state:"Method "+M.key+", budget K="+K+": EP@K="+epK.toFixed(2)+" = "+(epK/F.pi).toFixed(0)+"x random. Expected real edges in the top "+K+": "+found+". Slide K and method to compare; EP@K falls as K grows (you reach deeper into the list).",
+        metrics:{auroc:M.auroc.toFixed(3),auprc:M.auprc.toFixed(3),epk:epK.toFixed(2),baseline:"π="+F.pi.toFixed(2)},
+        focus:{center:[0,yBase+hMax*0.45,0],radius:12}
+      };
+    }
+
+    return {badge:"F19",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f19",
+    kind:"grn-sparse-metrics",
+    eyebrow:"Block F · GRN Inference",
+    title:"F19 · Evaluation metrics for sparse regulatory links",
+    subtitle:"A 5,000-gene T-cell GRN: 1,000,000 candidate edges, 10,000 real (1%). Three views show why AUROC misleads, why AUPRC is the right primary metric, and why EP@K is the practical one.",
+    selectedLabel:"Element",
+    selectedHint:"Click the curve point, AUPRC marker, or an EP@K bar.",
+    modes:[
+      {value:"auroc", label:"AUROC (misleads under imbalance)"},
+      {value:"auprc", label:"AUPRC (primary · baseline = π)"},
+      {value:"epk",   label:"EP@K (practical · validation budget)"}
+    ],
+    params:[
+      {key:"method",  label:"method (0=A coexpr 1=B GNN 2=C Sheaf)",min:0,max:2,step:1,value:2,
+       fmt:v=>["A · coexpr","B · GNN","C · Sheaf GNN"][Math.round(v)]},
+      {key:"kbudget", label:"K (validation budget)",min:0,max:4,step:1,value:1,
+       fmt:v=>"K="+[50,100,200,500,1000][Math.round(v)],modes:["auroc","auprc","epk"]},
+      {key:"posrate", label:"positive rate π (display)",min:0.01,max:0.20,step:0.01,value:0.01,
+       fmt:v=>(v*100).toFixed(0)+"%"}
+    ],
+    metrics:[
+      {key:"auroc",    label:"AUROC",accent:"cyan"},
+      {key:"auprc",    label:"AUPRC (x random)",accent:"green"},
+      {key:"epk",      label:"EP@K (x random)",accent:"violet"},
+      {key:"baseline", label:"random baseline",accent:"amber"}
+    ],
+    layers:[
+      {group:"axes",   label:"Axes / baselines"},
+      {group:"curve",  label:"Curve"},
+      {group:"bars",   label:"Bars / bands"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Method C (Sheaf GNN)",
+      on:api=>{api.setParam("method",2);}
+    },
+    secondary:{
+      label:"Method A (co-expr)",
+      on:api=>{api.setParam("method",0);}
+    },
+    defaultCam:{theta:-0.15,phi:0.32,r:11},
+    hint:'<span style="color:#fbbf24">amber</span>=A co-expr · <span style="color:#4dd7ff">cyan</span>=B GNN · <span style="color:#34d399">green</span>=C Sheaf GNN · <span style="color:#fb7185">rose</span>=random baseline · <span style="color:#a78bfa">violet</span>=practically-relevant zone. π=0.01 positive rate.',
+    onParam(api){
+      const s=api.state;
+      // re-center per mode (the kbudget index is read in build())
+      if(s.mode==="epk") api.frame([0,0.3,0],12); else api.frame([-1.5,0.5,0],11);
+    },
+    onSelect(api,d){
+      if(d.op)    api.setSelected("ROC point · TPR "+(d.op.tpr*100).toFixed(0)+"% · FPR "+(d.op.fpr*100).toFixed(0)+"%");
+      if(d.auprc) api.setSelected("AUPRC = "+d.auprc.toFixed(3)+" = "+(d.auprc/0.01).toFixed(1)+"x random");
+      if(d.kbar)  api.setSelected("EP@"+d.kbar.K+" = "+(d.kbar.ep*100).toFixed(0)+"% → "+d.kbar.foundEdges+" real of "+d.kbar.K+(d.kbar.active?" · ACTIVE":""));
+    },
+    build,
+    snapshot(s){
+      const mi=Math.round(s.method);
+      const M=F.methods[mi];
+      const K=[50,100,200,500,1000][Math.round(s.kbudget)];
+      const epK=M.ep[K];
+      return {
+        mode:s.mode,
+        method:M.key,
+        auroc:M.auroc,
+        auprc:M.auprc,
+        auprcNorm:+(M.auprc/F.pi).toFixed(2),
+        epAtK:epK,
+        epNorm:+(epK/F.pi).toFixed(1),
+        K:K,
+        foundReal:Math.round(epK*K),
+        positiveRate:F.pi,
+        randomBaseline:(s.mode==="auroc")?0.5:F.pi,
+        aurocMisleadsVsEp:(M.auroc>0.9 && epK<0.7)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

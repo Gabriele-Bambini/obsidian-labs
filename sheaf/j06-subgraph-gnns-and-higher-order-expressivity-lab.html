@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J06 · Subgraph GNNs and higher-order expressivity</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no entropy sources) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // FACTS — note §5 worked example: a 6-node bistable-switch GRN module.
+  //   Nodes: NANOG, OCT4, SOX2, CDX2, GATA6, KLF4.
+  //   Edges (signed, directed):
+  //     NANOG→OCT4 (+), OCT4→NANOG (+ mutual reinforcement),
+  //     OCT4→SOX2 (+), SOX2→NANOG (+),            ← NANOG·OCT4·SOX2 is an FFL triangle
+  //     NANOG⊣CDX2 (−), CDX2⊣NANOG (− mutual antagonism),  ← a 2-cycle
+  //     GATA6⊣OCT4 (−), KLF4→OCT4 (+).
+  //   1-WL (standard GCN) gives NANOG the SAME embedding in the triangle and in
+  //   a 3-chain (note §5): [0.7, 0.3, 0.8, 0.4]. A subgraph GNN appends extra
+  //   coordinates that DIFFER: triangle …,0.9,0.2,0.7,0.1 vs chain …,0.3,0.6,0.2,0.5.
+  // ═════════════════════════════════════════════════════════════════════════
+  // idx: 0 NANOG, 1 OCT4, 2 SOX2, 3 CDX2, 4 GATA6, 5 KLF4
+  const GENES=[
+    {id:"NANOG", short:"NAN", role:"hub TF",   note:"pluripotency hub · in FFL triangle + CDX2 antagonism"},
+    {id:"OCT4",  short:"OCT", role:"core TF",  note:"POU5F1 · mutual + with NANOG · FFL apex"},
+    {id:"SOX2",  short:"SOX", role:"core TF",  note:"FFL middle node · activates NANOG"},
+    {id:"CDX2",  short:"CDX", role:"antagonist",note:"trophectoderm · mutual − with NANOG (2-cycle)"},
+    {id:"GATA6", short:"GAT", role:"endoderm", note:"represses OCT4"},
+    {id:"KLF4",  short:"KLF", role:"booster",  note:"activates OCT4"}
+  ];
+  // 3D ring-ish positions (x, y, z). The FFL triangle (NANOG,OCT4,SOX2) clustered
+  // on the left; the antagonist arm (CDX2,GATA6,KLF4) on the right.
+  const POS=[
+    [-1.7,0, 0.0],   // NANOG  (shared apex of triangle + 2-cycle)
+    [-3.4,0, 2.3],   // OCT4
+    [-3.4,0,-2.3],   // SOX2
+    [ 2.0,0, 2.4],   // CDX2
+    [ 3.6,0,-1.4],   // GATA6
+    [ 0.4,0, 3.7]    // KLF4
+  ];
+  // edges: a→b. sign +1 activation / −1 repression. tri=member of FFL triangle.
+  const EDGES=[
+    {a:0,b:1, sign:+1, kind:"activation", tri:true },   // NANOG→OCT4
+    {a:1,b:0, sign:+1, kind:"activation", tri:true },   // OCT4→NANOG (mutual +)
+    {a:1,b:2, sign:+1, kind:"activation", tri:true },   // OCT4→SOX2
+    {a:2,b:0, sign:+1, kind:"activation", tri:true },   // SOX2→NANOG
+    {a:0,b:3, sign:-1, kind:"repression", tri:false},   // NANOG⊣CDX2
+    {a:3,b:0, sign:-1, kind:"repression", tri:false},   // CDX2⊣NANOG (mutual −, 2-cycle)
+    {a:4,b:1, sign:-1, kind:"repression", tri:false},   // GATA6⊣OCT4
+    {a:5,b:1, sign:+1, kind:"activation", tri:false}    // KLF4→OCT4
+  ];
+  // undirected triangles (3-cliques) in the underlying graph: only NANOG-OCT4-SOX2.
+  const TRIANGLES=[[0,1,2]];
+  // directed feedforward loops A→B, B→C, A→C : OCT4→SOX2→NANOG with OCT4→NANOG.
+  const FFLS=[[1,2,0]];
+  // directed 2-cycles (mutual edges): NANOG↔OCT4 (+,+) and NANOG↔CDX2 (−,−).
+  const TWOCYCLES=[[0,1],[0,3]];
+
+  const F={
+    nNodes:6, nEdges:8,
+    nTriangles:1, nFFL:1, nTwoCycles:2,
+    // the note's literal embedding vectors for NANOG
+    gcnEmbed:[0.7,0.3,0.8,0.4],
+    triExtra:[0.9,0.2,0.7,0.1],   // subgraph extra coords in TRIANGLE graph
+    chainExtra:[0.3,0.6,0.2,0.5], // subgraph extra coords in CHAIN graph
+    // WL-hierarchy expressivity ladder (note §3 / §9)
+    wl1:0,   // standard MP ≤ 1-WL
+    wlSub:1, // NGNN = DSS-GNN, strictly between 1-WL and 3-WL
+    wl3:2    // 3-WL ceiling
+  };
+  // L2 distance between triangle/chain subgraph-augmented embeddings (the gap
+  // that a standard GCN cannot see but a subgraph GNN can).
+  function embedGap(){
+    let s=0; for(let k=0;k<4;k++){const d=F.triExtra[k]-F.chainExtra[k]; s+=d*d;} return Math.sqrt(s);
+  }
+  const EMBED_GAP=embedGap(); // ≈ 0.825
+
+  // ── motif-counting capability model ──────────────────────────────────────
+  // depth = #node-deleted subgraphs the subgraph GNN is allowed to run (1..6).
+  // A subgraph GNN sees a triangle once it has run ≥3 leave-one-out subgraphs
+  // (it needs to remove each triangle vertex once to certify the 3-clique).
+  // 1-WL sees 0 triangles regardless of depth.
+  function trianglesSeen(arch,depth){
+    if(arch===0) return 0;                         // 1-WL: blind to triangles
+    return depth>=3 ? F.nTriangles : 0;            // subgraph GNN: certified at depth≥3
+  }
+  function fflSeen(arch,depth){
+    if(arch===0) return 0;
+    return depth>=3 ? F.nFFL : 0;
+  }
+  // edge-deletion / node-deletion variance: how much node v's embedding changes
+  // across the node-deleted subgraphs (the NGNN "structural-role" signal).
+  // High for the hub NANOG (in triangle + 2-cycle), low for a leaf like GATA6.
+  function structuralRole(idx){
+    // count motif memberships touching idx
+    let tri=0; TRIANGLES.forEach(t=>{ if(t.indexOf(idx)>=0) tri++; });
+    let cyc=0; TWOCYCLES.forEach(c=>{ if(c.indexOf(idx)>=0) cyc++; });
+    let deg=0; EDGES.forEach(e=>{ if(e.a===idx||e.b===idx) deg++; });
+    return (tri*0.5 + cyc*0.3 + deg*0.06); // deterministic role score
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const arch=Math.round(s.arch);          // 0 = standard 1-WL, 1 = subgraph GNN
+    const depth=Math.round(s.depth);        // # node-deleted subgraphs (1..6)
+    const delNode=Math.round(s.delNode);    // which node is "left out" (0..5)
+    const ladder=s.ladder;                  // 0..1 sweep of the WL ladder height
+
+    const gGraph =api.group("graph");
+    const gEdges =api.group("edges");
+    const gMotif =api.group("motif");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");  // core TFs / standard signal
+    const GR=new T.Color("#34d399");  // subgraph-GNN gain / "seen" motifs
+    const AM=new T.Color("#fbbf24");  // antagonist / warning
+    const VI=new T.Color("#a78bfa");  // subgraph context / deleted node
+    const RO=new T.Color("#fb7185");  // repression / blindness / failure
+    const SL=new T.Color("#54667c");
+    const roleCol=[CY,CY,CY,AM,AM,GR]; // node base colours by index
+
+    // ════════════════════════════════════════════════════════════════
+    // helper: draw the 6-gene module (shared by graph-bearing modes)
+    // ════════════════════════════════════════════════════════════════
+    function drawModule(opts){
+      opts=opts||{};
+      const deleted=(opts.deleted==null)?-1:opts.deleted;
+      const highlightTri=!!opts.highlightTri;
+      GENES.forEach((g,i)=>{
+        const p=POS[i];
+        const isDel=(i===deleted);
+        const inTri=highlightTri && (TRIANGLES[0].indexOf(i)>=0);
+        let col=roleCol[i].clone();
+        if(inTri) col=GR.clone();
+        if(isDel) col=VI.clone();
+        const r=(i===0?0.46:0.36);
+        const sphere=new T.Mesh(
+          new T.SphereGeometry(isDel?0.30:r,20,16),
+          new T.MeshStandardMaterial({color:isDel?new T.Color("#26203f"):col,emissive:col.clone().multiplyScalar(isDel?0.18:0.55),emissiveIntensity:isDel?0.2:(inTri?0.85:0.55),roughness:0.4,transparent:isDel,opacity:isDel?0.4:1})
+        );
+        sphere.position.set(p[0],0,p[2]);
+        gGraph.add(sphere);
+        api.pick(sphere,{gene:{id:g.id,role:g.role,note:g.note,deleted:isDel,roleScore:+structuralRole(i).toFixed(2)}});
+        addSlbl(g.short,(isDel?"#a78bfa":col.getStyle()),0.42,p[0],0.62,p[2]);
+        if(isDel){
+          const cone=new T.Mesh(new T.ConeGeometry(0.12,0.40,10),new T.MeshBasicMaterial({color:VI}));
+          cone.rotation.z=Math.PI; cone.position.set(p[0],1.05,p[2]); gGraph.add(cone);
+        }
+      });
+
+      // edges; an edge is "cut" when either endpoint is the deleted node
+      EDGES.forEach((e)=>{
+        const cut=(e.a===deleted||e.b===deleted);
+        const pa=POS[e.a], pb=POS[e.b];
+        const A=new T.Vector3(pa[0],0,pa[2]), B=new T.Vector3(pb[0],0,pb[2]);
+        const dir=B.clone().sub(A); const len=dir.length();
+        const inTri=highlightTri && e.tri;
+        const baseCol=(e.sign>0)?(inTri?GR:CY):RO;
+        if(cut){
+          gEdges.add(new T.Line(new T.BufferGeometry().setFromPoints([A,B]),new T.LineBasicMaterial({color:0x223247,transparent:true,opacity:0.28})));
+          return;
+        }
+        const tubeW=inTri?0.075:0.05;
+        const cyl=new T.Mesh(new T.CylinderGeometry(tubeW,tubeW,len*0.82,10),new T.MeshStandardMaterial({color:baseCol,emissive:baseCol.clone().multiplyScalar(inTri?0.7:0.4),emissiveIntensity:inTri?0.8:0.45,roughness:0.45}));
+        const mid=A.clone().add(B).multiplyScalar(0.5);
+        cyl.position.copy(mid);
+        cyl.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+        gEdges.add(cyl);
+        api.pick(cyl,{edge:{from:GENES[e.a].id,to:GENES[e.b].id,kind:e.kind,tri:e.tri}});
+        // arrow head (activation) or bar head (repression)
+        const hp=A.clone().add(dir.clone().multiplyScalar(0.80)); hp.y=0;
+        if(e.sign>0){
+          const head=new T.Mesh(new T.ConeGeometry(0.12,0.30,10),new T.MeshBasicMaterial({color:baseCol}));
+          head.position.copy(hp); head.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+          gEdges.add(head);
+        } else {
+          const bar=new T.Mesh(new T.BoxGeometry(0.30,0.06,0.30),new T.MeshBasicMaterial({color:RO}));
+          bar.position.copy(hp); bar.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+          gEdges.add(bar);
+        }
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: wl-blind — 1-WL cannot tell the FFL triangle from a 3-chain
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="wl-blind"){
+      drawModule({highlightTri:true});
+
+      // two side-by-side "embedding" read-outs: triangle vs chain.
+      // Standard GCN: identical 4-vectors. Subgraph GNN (arch=1): differing tails.
+      const sub=(arch===1);
+      const triVec = sub ? F.gcnEmbed.concat(F.triExtra)   : F.gcnEmbed.slice();
+      const chnVec = sub ? F.gcnEmbed.concat(F.chainExtra) : F.gcnEmbed.slice();
+      const identical = !sub; // standard GCN → identical embeddings
+
+      // draw the two embedding strips as little bar rows floating above the scene
+      const drawStrip=(vec,z,colTail,tag)=>{
+        vec.forEach((v,k)=>{
+          const x=-3.6+k*0.85;
+          const isTail=(k>=4);
+          const col=isTail?colTail:CY;
+          const h=0.08+v*1.7;
+          const bar=new T.Mesh(new T.BoxGeometry(0.52,h,0.42),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:isTail?0.8:0.45,roughness:0.4}));
+          bar.position.set(x,3.3+h/2,z); gBars.add(bar);
+        });
+        addLbl(tag,colTail.getStyle?colTail.getStyle():"#cfe0f0",1.0,-4.4,3.7,z);
+      };
+      drawStrip(triVec, 4.6, GR, "h(NANOG) | triangle");
+      drawStrip(chnVec, 6.4, RO, "h(NANOG) | 3-chain");
+      addLbl(identical?"embeddings IDENTICAL → motif invisible":"embeddings DIFFER → motif resolved",
+             identical?"#fb7185":"#34d399",1.25,-1.8,5.6,5.5);
+
+      sceneSnap={mode,arch,trianglesSeen:trianglesSeen(arch,6),embedGap:sub?+EMBED_GAP.toFixed(3):0,
+                 fflSeen:fflSeen(arch,6),expressLevel:sub?F.wlSub:F.wl1,distinguishable:sub?1:0};
+      return {
+        badge:"1-WL ceiling · "+(sub?"subgraph GNN resolves":"GCN BLIND")+" · gap "+(sub?EMBED_GAP.toFixed(2):"0.00"),
+        formula:"h(NANOG)|triangle  =?=  h(NANOG)|3-chain   (1-WL says equal)",
+        insight:"The NANOG·OCT4·SOX2 feedforward loop is a 3-clique triangle (green). A standard message-passing GCN is bounded by the 1-WL test: it gives NANOG the SAME 4-vector ["+F.gcnEmbed.join(", ")+"] in the FFL triangle and in a plain 3-chain — the motif is invisible. Flip the architecture to a subgraph GNN: it appends extra subgraph-context coordinates that DIFFER (triangle …"+F.triExtra.slice(0,2).join(",")+" vs chain …"+F.chainExtra.slice(0,2).join(",")+"), so the triangle is finally resolved.",
+        state:sub?("Subgraph GNN: tails differ, L2 gap "+EMBED_GAP.toFixed(2)+" → triangle distinguished from chain. Triangles seen: "+F.nTriangles+"."):
+                  ("Standard GCN (≤ 1-WL): both embeddings = ["+F.gcnEmbed.join(", ")+"]. Gap 0.00. Triangles seen: 0 — the FFL is undetectable."),
+        metrics:{architecture:sub?"subgraph GNN":"standard (1-WL)",trianglesSeen:""+trianglesSeen(arch,6)+" / "+F.nTriangles,embedGap:sub?EMBED_GAP.toFixed(2):"0.00",expressLevel:sub?"NGNN":"1-WL"},
+        focus:{center:[-1.4,2.4,1],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: node-deletion — NGNN leave-one-out: G_{-v}
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="node-deletion"){
+      drawModule({deleted:delNode});
+
+      // component-split readout: deleting NANOG (the hub) splits the module.
+      const role=structuralRole(delNode);
+      const splits=(delNode===0); // removing NANOG disconnects the antagonist arm (note §5)
+      // NGNN augmented-embedding bar for the deleted/affected node
+      const augH=0.2+role*1.0;
+      const augBar=new T.Mesh(new T.BoxGeometry(0.9,augH,0.7),new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.7),emissiveIntensity:0.75,roughness:0.4}));
+      augBar.position.set(4.6,augH/2,4.4); gBars.add(augBar);
+      addLbl("Δh role "+role.toFixed(2),"#a78bfa",1.05,4.6,augH+0.5,4.4);
+
+      addLbl("G₋"+GENES[delNode].short+"  ("+(splits?"2 components":"still connected")+")",
+             splits?"#fb7185":"#34d399",1.3,-1.4,3.2,1);
+      addLbl(splits?"removing the hub reveals its structural role":"leaf removal barely changes structure",
+             "#7f93a8",1.05,-1.4,2.4,1);
+
+      sceneSnap={mode,delNode,roleScore:+role.toFixed(3),componentsAfter:splits?2:1,
+                 structuralImportance:+role.toFixed(3),expressLevel:F.wlSub,trianglesSeen:trianglesSeen(1,6)};
+      return {
+        badge:"NGNN · leave-out "+GENES[delNode].id+(splits?" · SPLITS graph":" · stays connected"),
+        formula:"hᵤ^{NGNN} = GNN(G,u) + (1/n)·Σ_v GNN(G₋ᵥ, u)",
+        insight:"NGNN runs the base GNN on each node-deleted subgraph G₋ᵥ and averages the leave-one-out embeddings back into every node. Deleting the hub NANOG (violet) disconnects the CDX2–GATA6 antagonist arm — two components instead of one — a structural change that 1-WL on the full graph never sees. Deleting a leaf like GATA6 barely changes anything. The Δh role bar measures how much node "+GENES[delNode].id+"'s embedding shifts across deletions = its structural importance.",
+        state:"G₋"+GENES[delNode].id+": "+(splits?"graph splits into 2 components":"graph stays connected")+". Structural-role score "+role.toFixed(2)+". This leave-one-out signal is the NGNN's extra expressive power over a single full-graph pass.",
+        metrics:{architecture:"NGNN (node-deleted)",trianglesSeen:F.nTriangles+" / "+F.nTriangles,embedGap:role.toFixed(2),expressLevel:"NGNN"},
+        focus:{center:[0.5,1.6,1],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: motif-count — what each architecture can COUNT vs depth
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="motif-count"){
+      drawModule({highlightTri:true});
+
+      const tri=trianglesSeen(arch,depth);
+      const ffl=fflSeen(arch,depth);
+      const twoC=(arch===1 && depth>=2)?F.nTwoCycles:(arch===1?1:F.nTwoCycles>0&&arch===0?0:0);
+      const twoCount=(arch===0)?0:(depth>=2?F.nTwoCycles:1); // 1-WL never; subgraph grows with depth
+
+      // motif-count bars: triangles, FFLs, 2-cycles — true count vs seen count
+      const motifs=[
+        {lbl:"triangles", truth:F.nTriangles,  seen:tri,  col:GR},
+        {lbl:"FFLs",      truth:F.nFFL,         seen:ffl,  col:CY},
+        {lbl:"2-cycles",  truth:F.nTwoCycles,   seen:twoCount, col:VI}
+      ];
+      const xPos=[-4.0,-1.0,2.0];
+      motifs.forEach((m,k)=>{
+        const x=xPos[k];
+        // truth ghost bar
+        const ht=0.12+m.truth*1.6;
+        const ghost=new T.Mesh(new T.BoxGeometry(1.2,ht,1.0),new T.MeshStandardMaterial({color:SL,emissive:SL.clone().multiplyScalar(0.2),emissiveIntensity:0.15,roughness:0.5,transparent:true,opacity:0.35}));
+        ghost.position.set(x,3.0+ht/2,5.2); gBars.add(ghost);
+        // seen bar
+        const hs=0.12+m.seen*1.6;
+        const bar=new T.Mesh(new T.BoxGeometry(0.8,hs,0.7),new T.MeshStandardMaterial({color:m.col,emissive:m.col.clone().multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(x,3.0+hs/2,5.5); gBars.add(bar);
+        api.pick(bar,{motif:{name:m.lbl,truth:m.truth,seen:m.seen}});
+        addLbl(m.seen+"/"+m.truth,m.col.getStyle(),1.1,x,3.0+Math.max(ht,hs)+0.45,5.4);
+        addSlbl(m.lbl,m.col.getStyle(),0.4,x,2.95,5.4);
+      });
+      const total=tri+ffl+twoCount;
+      const totalTruth=F.nTriangles+F.nFFL+F.nTwoCycles;
+      addLbl(arch===0?"standard GCN (≤1-WL): counts 0":"subgraph GNN: counts grow with depth",
+             arch===0?"#fb7185":"#34d399",1.2,-1.0,3.0+1.6*Math.max(F.nTwoCycles,1)+1.1,5.4);
+
+      sceneSnap={mode,arch,depth,trianglesSeen:tri,fflSeen:ffl,twoCyclesSeen:twoCount,
+                 motifsSeen:total,motifsTruth:totalTruth,expressLevel:arch===0?F.wl1:F.wlSub};
+      return {
+        badge:"Motif count · "+(arch===0?"GCN":"subgraph")+" · "+total+"/"+totalTruth+" motifs",
+        formula:"NGNN/DSS can count: triangles, 4-cycles, FFLs   —   NOT 5-cycles",
+        insight:"The module contains "+F.nTriangles+" triangle, "+F.nFFL+" feedforward loop, and "+F.nTwoCycles+" mutual-antagonism 2-cycles (grey = ground truth). A standard GCN counts ZERO of them — triangle-blindness is the canonical 1-WL failure. A subgraph GNN certifies a triangle once it has run enough node-deleted subgraphs (depth ≥ 3 to remove each triangle vertex). Drag depth to watch the subgraph GNN's counts climb to the true values; the GCN stays flat at zero.",
+        state:(arch===0?"Standard GCN: triangles 0, FFLs 0, 2-cycles 0 — all motifs invisible (≤ 1-WL).":
+               "Subgraph GNN at depth "+depth+": triangles "+tri+"/"+F.nTriangles+", FFLs "+ffl+"/"+F.nFFL+", 2-cycles "+twoCount+"/"+F.nTwoCycles+"."),
+        metrics:{architecture:arch===0?"standard (1-WL)":"subgraph GNN",trianglesSeen:tri+" / "+F.nTriangles,embedGap:(total/totalTruth).toFixed(2),expressLevel:arch===0?"1-WL":"NGNN"},
+        focus:{center:[-1,2.6,2],radius:15}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: expressivity — the WL ladder  1-WL < NGNN=DSS < 3-WL
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="expressivity"){
+      // three stacked plinths of increasing height = the WL hierarchy.
+      const rungs=[
+        {lbl:"1-WL  (GCN/GAT/GIN)", h:1.0, col:RO, can:"no triangles", lvl:F.wl1},
+        {lbl:"NGNN = DSS-GNN",      h:2.4, col:GR, can:"triangles, 4-cycles, FFLs", lvl:F.wlSub},
+        {lbl:"3-WL  (k=3 tuples)",  h:3.8, col:CY, can:"all C₂-logic motifs", lvl:F.wl3}
+      ];
+      // ladder slider lifts a marker up the hierarchy
+      const markY = 0.5 + ladder*3.6;
+      const xPos=[-3.6,0,3.6];
+      rungs.forEach((r,k)=>{
+        const x=xPos[k];
+        const reached=(markY >= 0.5 + r.lvl*1.55 - 0.2);
+        const col=reached?r.col.clone():SL.clone();
+        const box=new T.Mesh(new T.BoxGeometry(2.0,r.h,1.6),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(reached?0.6:0.18),emissiveIntensity:reached?0.7:0.18,roughness:0.4,transparent:!reached,opacity:reached?1:0.5}));
+        box.position.set(x,r.h/2,0); gMotif.add(box);
+        api.pick(box,{rung:{name:r.lbl,can:r.can,level:r.lvl,reached:reached}});
+        addLbl(r.lbl,col.getStyle(),1.05,x,r.h+0.55,0);
+        addSlbl(r.can,(reached?r.col.getStyle():"#5a6b7e"),0.36,x,0.05,1.1);
+        // strict-inequality arrows between rungs
+        if(k<rungs.length-1){
+          const a=new T.Vector3(x+1.05,r.h*0.5,0), b=new T.Vector3(xPos[k+1]-1.05,rungs[k+1].h*0.5,0);
+          gMotif.add(new T.Line(new T.BufferGeometry().setFromPoints([a,b]),new T.LineBasicMaterial({color:0x33506e})));
+          addLbl("<","#8a99ad",1.4,(a.x+b.x)/2,(a.y+b.y)/2+0.3,0);
+        }
+      });
+      // the climbing marker sphere
+      const xm = xPos[0] + ladder*(xPos[2]-xPos[0]);
+      const mk=new T.Mesh(new T.SphereGeometry(0.26,16,12),new T.MeshStandardMaterial({color:AM,emissive:AM,emissiveIntensity:0.95,roughness:0.25}));
+      mk.position.set(xm,markY,1.9); gMotif.add(mk);
+      addLbl("expressivity","#fbbf24",1.05,xm,markY+0.5,1.9);
+
+      const reachedLevel = ladder<0.34?F.wl1:(ladder<0.7?F.wlSub:F.wl3);
+      const names=["1-WL","NGNN/DSS","3-WL"];
+      sceneSnap={mode,ladder:+ladder.toFixed(3),expressLevel:reachedLevel,
+                 trianglesSeen:reachedLevel>=F.wlSub?F.nTriangles:0,
+                 reaches3WL:reachedLevel===F.wl3?1:0,subgraphStrictlyAbove1WL:1};
+      return {
+        badge:"WL ladder · at "+names[reachedLevel]+(reachedLevel>=F.wlSub?" · counts triangles":" · blind"),
+        formula:"1-WL  <  NGNN = DSS-GNN  <  3-WL",
+        insight:"Subgraph GNNs sit STRICTLY between 1-WL and 3-WL. A standard GCN/GAT/GIN never exceeds 1-WL (red rung, no triangles) — and stacking more layers only widens the receptive field, it does not raise the WL level. NGNN/DSS-GNN (green) gain triangles, 4-cycles and feedforward loops, but cannot reach the 3-WL ceiling (cyan, all C₂-logic motifs). Drag the ladder to climb the hierarchy.",
+        state:"Marker at "+names[reachedLevel]+". "+(reachedLevel===F.wl1?"Counts no triangles.":reachedLevel===F.wlSub?"Counts the FFL triangle + 2-cycles, below 3-WL.":"3-WL ceiling: all C₂-logic motifs, O(n³) cost.")+" Depth does NOT change the WL level — only the architecture does.",
+        metrics:{architecture:names[reachedLevel],trianglesSeen:(reachedLevel>=F.wlSub?F.nTriangles:0)+" / "+F.nTriangles,embedGap:ladder.toFixed(2),expressLevel:names[reachedLevel]},
+        focus:{center:[0,2.0,0.6],radius:14}
+      };
+    }
+
+    return {badge:"J06",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:14}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"j06",
+    kind:"subgraph-gnns-expressivity",
+    eyebrow:"Block J · Advanced GNN Theory",
+    title:"J06 · Subgraph GNNs and higher-order expressivity",
+    subtitle:"A 6-gene bistable-switch module (NANOG·OCT4·SOX2 FFL + NANOG⊣CDX2 antagonism) that standard message passing cannot fully see. Four views: the 1-WL triangle-blindness, NGNN node-deletion, motif counting vs depth, and the 1-WL < subgraph < 3-WL ladder.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, edge, motif bar, or WL rung.",
+    modes:[
+      {value:"wl-blind",      label:"1-WL blindness (triangle = chain)"},
+      {value:"node-deletion", label:"NGNN node-deletion (leave-one-out)"},
+      {value:"motif-count",   label:"Motif counting (vs depth)"},
+      {value:"expressivity",  label:"WL ladder (1-WL < subgraph < 3-WL)"}
+    ],
+    params:[
+      {key:"arch",   label:"architecture (0=standard 1=subgraph)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"standard (1-WL)":"subgraph GNN",modes:["wl-blind","motif-count"]},
+      {key:"depth",  label:"# node-deleted subgraphs",min:1,max:6,step:1,value:3,
+       fmt:v=>Math.round(v)+" subgraphs",modes:["motif-count"]},
+      {key:"delNode",label:"leave-out gene (0=NANOG…5=KLF4)",min:0,max:5,step:1,value:0,
+       fmt:v=>["NANOG","OCT4","SOX2","CDX2","GATA6","KLF4"][Math.round(v)],modes:["node-deletion"]},
+      {key:"ladder", label:"climb the WL ladder",min:0,max:1,step:0.05,value:0.5,
+       fmt:v=>v<0.34?"1-WL":(v<0.7?"NGNN/DSS":"3-WL"),modes:["expressivity"]}
+    ],
+    metrics:[
+      {key:"architecture", label:"Architecture",accent:"cyan"},
+      {key:"trianglesSeen",label:"Triangles seen",accent:"green"},
+      {key:"embedGap",     label:"Embed gap / score",accent:"violet"},
+      {key:"expressLevel", label:"WL level",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph",  label:"Genes"},
+      {group:"edges",  label:"Regulatory edges"},
+      {group:"motif",  label:"Motifs / ladder"},
+      {group:"bars",   label:"Bars / readouts"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Use subgraph GNN",
+      on:api=>{api.setParam("arch",1);}
+    },
+    secondary:{
+      label:"Back to standard GCN",
+      on:api=>{api.setParam("arch",0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.72,r:14},
+    hint:'<span style="color:#4dd7ff">cyan</span>=core TF / activation · <span style="color:#fb7185">rose</span>=repression / 1-WL blindness · <span style="color:#34d399">green</span>=FFL triangle / subgraph gain · <span style="color:#a78bfa">violet</span>=deleted node / subgraph context · <span style="color:#fbbf24">amber</span>=antagonist / expressivity marker.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="wl-blind") api.frame([-1.4,2.4,1],14);
+      else if(s.mode==="node-deletion") api.frame([0.5,1.6,1],14);
+      else if(s.mode==="motif-count") api.frame([-1,2.6,2],15);
+      else api.frame([0,2.0,0.6],14);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="wl-blind") api.frame([-1.4,2.4,1],14);
+      else if(s.mode==="node-deletion") api.frame([0.5,1.6,1],14);
+      else if(s.mode==="motif-count") api.frame([-1,2.6,2],15);
+      else api.frame([0,2.0,0.6],14);
+    },
+    onSelect(api,d){
+      if(d.gene)  api.setSelected(d.gene.id+" · "+d.gene.role+(d.gene.deleted?" · DELETED (G₋v)":"")+" · role "+d.gene.roleScore+" · "+d.gene.note);
+      if(d.edge)  api.setSelected(d.edge.from+" → "+d.edge.to+" · "+d.edge.kind+(d.edge.tri?" · in FFL triangle":""));
+      if(d.motif) api.setSelected(d.motif.name+" · seen "+d.motif.seen+" / "+d.motif.truth+" true");
+      if(d.rung)  api.setSelected(d.rung.name+" · can count: "+d.rung.can+(d.rung.reached?" · REACHED":" · not reached"));
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const arch=Math.round(s.arch);
+      const depth=Math.max(1,Math.min(6,Math.round(s.depth)));
+      const delNode=Math.max(0,Math.min(5,Math.round(s.delNode)));
+      const ladder=Math.max(0,Math.min(1,s.ladder));
+      const tri=trianglesSeen(arch,depth);
+      const ffl=fflSeen(arch,depth);
+      const role=structuralRole(delNode);
+      const reachedLevel = ladder<0.34?F.wl1:(ladder<0.7?F.wlSub:F.wl3);
+      const splits=(delNode===0);
+      // per-mode "primary" expressivity level used by the verifier
+      let expressLevel=F.wl1;
+      if(mode==="wl-blind") expressLevel=(arch===1)?F.wlSub:F.wl1;
+      else if(mode==="node-deletion") expressLevel=F.wlSub;
+      else if(mode==="motif-count") expressLevel=(arch===1)?F.wlSub:F.wl1;
+      else if(mode==="expressivity") expressLevel=reachedLevel;
+      return {
+        mode,
+        arch,
+        depth,
+        delNode,
+        ladder:+ladder.toFixed(3),
+        trianglesSeen:tri,
+        fflSeen:ffl,
+        embedGap:(mode==="wl-blind"&&arch===1)?+EMBED_GAP.toFixed(3):0,
+        roleScore:+role.toFixed(3),
+        componentsAfter:splits?2:1,
+        expressLevel,
+        reaches3WL:(mode==="expressivity"&&reachedLevel===F.wl3)?1:0,
+        beatsOneWL:expressLevel>F.wl1?1:0
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

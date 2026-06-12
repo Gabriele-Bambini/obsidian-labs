@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F01 · What a gene regulatory network claims</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no rng, no clock) ──────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — Section 5 worked example: 4 TF→target edges across the 5-tier
+  // evidence hierarchy, plus the Section-4 cell-type-specificity numbers.
+  // ════════════════════════════════════════════════════════════════════════
+  // Each edge: name, TF, target, tier(1..5), and the four claim flags.
+  // tier: 1 correlation · 2 motif · 3 ATAC+motif · 4 ChIP · 5 perturbation
+  const EDGES=[
+    { id:"FOXA2->CLDN4", tf:"FOXA2", tg:"CLDN4", tier:1, evid:"r = 0.72 / 1500 hepatocytes",
+      dir:0, mech:0, caus:0, ctx:"hepatocytes",
+      claim:"co-expression only", strength:"weak" },
+    { id:"GATA1->HBB",   tf:"GATA1", tg:"HBB",   tier:4, evid:"ChIP 45:2 + WGATAR motif",
+      dir:1, mech:1, caus:0, ctx:"K562",
+      claim:"physical binding", strength:"moderate" },
+    { id:"TP53->CDKN1A", tf:"TP53",  tg:"CDKN1A",tier:5, evid:"CRISPRa 8x / KO 4x",
+      dir:1, mech:0, caus:1, ctx:"HCT116 + genotoxic",
+      claim:"causal (no rescue)", strength:"strong" },
+    { id:"HNF4A->ALB",   tf:"HNF4A", tg:"ALB",   tier:5, evid:"ChIP+motif+siRNA60%+KO-mouse",
+      dir:1, mech:1, caus:1, ctx:"liver (multi-system)",
+      claim:"direct + causal + in vivo", strength:"strongest" }
+  ];
+  // 5-tier hierarchy ladder labels (the y-axis of the evidence ladder).
+  const TIERS=[
+    "1 · correlation",
+    "2 · motif (JASPAR)",
+    "3 · ATAC + motif",
+    "4 · ChIP-seq",
+    "5 · perturbation"
+  ];
+
+  // Section-4 cell-type specificity (log-normalized expression):
+  const CTX={
+    hep:{ foxa2:2.8, cldn4:3.1, open:true  },   // hepatocyte: edge ACTIVE
+    neu:{ foxa2:0.3, cldn4:1.2, open:false }    // neuron: edge INACTIVE
+  };
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  const SAT=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+  // build() ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const tau=Math.round(s.tau);                 // evidence-tier threshold τ (1..5)
+    const ctxOpen=Math.round(s.context);         // 0 neuron(closed) · 1 hepatocyte(open)
+    const cascade=SAT(s.cascade,0,1);            // strength of TF1→TF2 path (cascade mode)
+    const focusIdx=Math.round(s.edge);           // highlighted edge 0..3
+
+    const gNet =api.group("network");
+    const gLad =api.group("ladder");
+    const gClaim=api.group("claims");
+    const gLbl =api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // structure / TF
+    const GR=new T.Color("#34d399");   // pass / claim satisfied / target
+    const AM=new T.Color("#fbbf24");   // threshold / caution
+    const VI=new T.Color("#a78bfa");   // perturbation / strongest
+    const RS=new T.Color("#f87171");   // spurious / missing claim
+    const SL=new T.Color("#54667c");   // dim
+    const TIERCOL=[SL,CY,CY,AM,VI];    // color per tier index (1..5 → 0..4 used as tier-1)
+
+    function tierColor(tier){ return [RS,SL,CY,CY,AM,VI][tier] || CY; }
+
+    // count edges that clear τ
+    let nKept=0; EDGES.forEach(e=>{ if(e.tier>=tau) nKept++; });
+    const fp=EDGES.length-nKept; // edges dropped below threshold (claims unmet)
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE: hierarchy — the 5-tier evidence ladder + 4 edges placed on it
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="hierarchy"){
+      const xOff=-4.6, yS=1.15, yOff=-2.4;
+      // ladder rungs (5 tiers)
+      for(let t=0;t<5;t++){
+        const y=yOff+t*yS;
+        const active=(t+1>=tau);
+        const col=active?tierColor(t+1):SL;
+        const rung=new T.Mesh(new T.BoxGeometry(9.2,0.05,0.05),
+          new T.MeshBasicMaterial({color:col.getHex(),transparent:true,opacity:active?0.6:0.22}));
+        rung.position.set(xOff+4.6,y,-1.6);
+        gLad.add(rung);
+        l(TIERS[t],active?col.getStyle():"#54667c",0.42,xOff-0.3,y,-1.6);
+      }
+      // threshold plane at τ
+      const yTau=yOff+(tau-1)*yS;
+      const plane=new T.Mesh(new T.PlaneGeometry(9.6,0.5),
+        new T.MeshBasicMaterial({color:AM.getHex(),transparent:true,opacity:0.14,side:T.DoubleSide}));
+      plane.position.set(xOff+4.6,yTau,-1.65);
+      gLad.add(plane);
+      L("τ = tier "+tau,"#fbbf24",1.25,xOff+9.7,yTau,-1.6);
+
+      // place the 4 edges as TF→target pairs at their tier height
+      EDGES.forEach((e,i)=>{
+        const y=yOff+(e.tier-1)*yS;
+        const x=xOff+1.4+i*2.45;
+        const kept=(e.tier>=tau);
+        const isFocus=(i===focusIdx);
+        const col=kept?(e.strength==="strongest"?VI:GR):RS;
+        const em=col.clone().multiplyScalar(isFocus?0.9:0.45);
+        // TF node
+        const tfM=new T.Mesh(new T.SphereGeometry(isFocus?0.34:0.26,16,12),
+          new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:isFocus?0.8:0.45,roughness:0.4}));
+        tfM.position.set(x-0.55,y,0); gNet.add(tfM);
+        api.pick(tfM,{edge:e,role:"TF",kept:kept});
+        // target node
+        const tgM=new T.Mesh(new T.SphereGeometry(isFocus?0.30:0.22,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:em,emissiveIntensity:kept?0.6:0.3,roughness:0.4,
+            transparent:!kept,opacity:kept?1:0.4}));
+        tgM.position.set(x+0.55,y,0); gNet.add(tgM);
+        api.pick(tgM,{edge:e,role:"target",kept:kept});
+        // directed arrow TF→target
+        const aCol=kept?col.getHex():0x5a3338;
+        const arr=new T.ArrowHelper(new T.Vector3(1,0,0),new T.Vector3(x-0.30,y,0),0.6,aCol,0.18,0.12);
+        gNet.add(arr);
+        // labels
+        l(e.tf,"#4dd7ff",0.36,x-0.55,y+0.42,0);
+        l(e.tg,kept?col.getStyle():"#7a5560",0.36,x+0.55,y+0.40,0);
+        if(isFocus){
+          L(e.id,col.getStyle(),1.05,x,y-0.62,0);
+        }
+      });
+
+      l("evidence tier ↑","#8a99ad",0.5,xOff-0.3,yOff+5*yS-0.3,-1.6);
+
+      sceneSnap={ mode, tau, context:ctxOpen, edge:focusIdx, cascade:0,
+        edgesKept:nKept, edgesDropped:fp, focusTier:EDGES[focusIdx].tier,
+        focusStrength:EDGES[focusIdx].strength };
+
+      return {
+        badge:"Evidence hierarchy · τ = tier "+tau+" · "+nKept+"/4 edges survive",
+        formula:"(t,g) ∈ E  ⇔  evidence_tier(t→g) ≥ τ",
+        insight:"The four worked-example edges sit at the tier their evidence earns: FOXA2→CLDN4 at tier 1 (r=0.72 co-expression), GATA1→HBB at tier 4 (ChIP), TP53→CDKN1A and HNF4A→ALB at tier 5 (perturbation). Raise τ and weak edges (red) drop out: a correlation graph is NOT a GRN. Only at τ=5 do you keep purely causal claims.",
+        state:"τ = "+tau+" → "+nKept+" edge"+(nKept===1?"":"s")+" survive, "+fp+" drop. Focused: "+EDGES[focusIdx].id+" ("+EDGES[focusIdx].strength+", "+EDGES[focusIdx].evid+").",
+        metrics:{ edgesKept:nKept+"/4", edgesDropped:""+fp, focusTier:"tier "+EDGES[focusIdx].tier, claimStrength:EDGES[focusIdx].strength },
+        focus:{center:[0,0.4,-0.8],radius:13}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE: claims — the four claims (direction/mechanism/causality/specificity)
+    //   per edge, shown as a satisfied/unmet grid in 3D
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="claims"){
+      const claimNames=["direction","mechanism","causality","specificity"];
+      const claimCols=[CY,GR,VI,AM];
+      const e=EDGES[focusIdx];
+      const flags=[e.dir,e.mech,e.caus,1]; // specificity (context) always stated
+      // central TF→target edge
+      const tfM=new T.Mesh(new T.SphereGeometry(0.5,20,16),
+        new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.6,roughness:0.35}));
+      tfM.position.set(-2.0,0,0); gNet.add(tfM);
+      api.pick(tfM,{edge:e,role:"TF",kept:true});
+      const tgCol=e.strength==="strongest"?VI:(e.caus?GR:AM);
+      const tgM=new T.Mesh(new T.SphereGeometry(0.42,20,16),
+        new T.MeshStandardMaterial({color:tgCol,emissive:tgCol,emissiveIntensity:0.55,roughness:0.35}));
+      tgM.position.set(2.0,0,0); gNet.add(tgM);
+      api.pick(tgM,{edge:e,role:"target",kept:true});
+      const arr=new T.ArrowHelper(new T.Vector3(1,0,0),new T.Vector3(-1.4,0,0),2.8,tgCol.getHex(),0.4,0.26);
+      gNet.add(arr);
+      L(e.tf,"#4dd7ff",1.6,-2.0,1.0,0);
+      L(e.tg,tgCol.getStyle(),1.5,2.0,0.95,0);
+      L(e.id,"#cfe6ff",1.15,0,1.7,0);
+
+      // four claim pillars below the edge
+      flags.forEach((ok,j)=>{
+        const x=-3.45+j*2.3;
+        const col=ok?claimCols[j]:RS;
+        const h=ok?1.6:0.45;
+        const bar=new T.Mesh(new T.BoxGeometry(1.2,h,1.2),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(ok?0.7:0.3),
+            emissiveIntensity:ok?0.6:0.25,roughness:0.4,transparent:!ok,opacity:ok?1:0.5}));
+        bar.position.set(x,-2.4+h/2,1.4); gClaim.add(bar);
+        api.pick(bar,{claim:{name:claimNames[j],ok:!!ok,edge:e.id}});
+        l(claimNames[j],ok?col.getStyle():"#7a5560",0.42,x,-2.62,1.4);
+        L(ok?"✓":"—",ok?col.getStyle():"#f87171",1.0,x,-2.4+h+0.45,1.4);
+      });
+      l("the four claims of edge "+e.id,"#8a99ad",0.5,0,-3.15,1.4);
+
+      const nClaims=flags.reduce((a,b)=>a+b,0);
+      sceneSnap={ mode, tau, context:ctxOpen, edge:focusIdx, cascade:0,
+        claimsMet:nClaims, dir:e.dir, mech:e.mech, caus:e.caus, focusTier:e.tier,
+        focusStrength:e.strength, edgesKept:nKept, edgesDropped:fp };
+
+      return {
+        badge:"Edge claims · "+e.id+" · "+nClaims+"/4 met",
+        formula:"edge(TF→g) ⊨ {direction, mechanism, causality, specificity}",
+        insight:"A GRN edge asserts four things at once. "+e.id+" carries "+nClaims+" of them: direction "+(e.dir?"yes":"no")+", mechanism "+(e.mech?"yes (binding)":"no")+", causality "+(e.caus?"yes (perturbation)":"no")+". Co-expression (FOXA2→CLDN4) asserts none beyond correlation; HNF4A→ALB asserts all four with in-vivo proof. Same arrow glyph, radically different epistemic content.",
+        state:e.id+" — claims met: "+nClaims+"/4 ("+claimNames.filter((_,j)=>flags[j]).join(", ")+"). Strength: "+e.strength+". Evidence: "+e.evid+".",
+        metrics:{ edgesKept:nKept+"/4", edgesDropped:""+fp, focusTier:"tier "+e.tier, claimStrength:nClaims+"/4 met" },
+        focus:{center:[0,-0.6,0.6],radius:12}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE: cascade — the indirect-edge problem  TF1 → TF2 → Gene_A
+    //   slider 'cascade' = strength of the spurious TF1→Gene_A correlation
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="cascade"){
+      // three nodes: TF1, TF2, Gene_A
+      const pos=[ new T.Vector3(-3.4,1.4,0), new T.Vector3(0,1.4,0), new T.Vector3(3.4,-1.0,0) ];
+      const names=["TF1","TF2","Gene_A"];
+      const cols=[CY,CY,GR];
+      pos.forEach((p,i)=>{
+        const m=new T.Mesh(new T.SphereGeometry(0.42,18,14),
+          new T.MeshStandardMaterial({color:cols[i],emissive:cols[i],emissiveIntensity:0.55,roughness:0.4}));
+        m.position.copy(p); gNet.add(m);
+        api.pick(m,{cascadeNode:{name:names[i]}});
+        L(names[i],cols[i].getStyle(),1.4,p.x,p.y+0.7,p.z);
+      });
+      // TRUE edges: TF1→TF2 , TF2→Gene_A (solid green)
+      function dirArr(a,b,col,head){
+        const d=new T.Vector3().subVectors(b,a); const len=d.length()-0.85; d.normalize();
+        const o=new T.Vector3().copy(a).add(d.clone().multiplyScalar(0.45));
+        const arr=new T.ArrowHelper(d,o,len,col,0.28,0.18); gNet.add(arr); return arr;
+      }
+      dirArr(pos[0],pos[1],GR.getHex());
+      dirArr(pos[1],pos[2],GR.getHex());
+      l("TF1→TF2 (true)","#34d399",0.4,-1.7,1.75,0);
+      l("TF2→Gene_A (true)","#34d399",0.4,1.7,0.55,0);
+
+      // SPURIOUS inferred edge TF1→Gene_A — appears when cascade high
+      // r(TF1,Gene_A) ≈ r(TF1,TF2)·r(TF2,Gene_A) under the chain (DPI bound)
+      const rChain=0.85*0.85; // ~0.72 product
+      const rSpur=+(rChain*cascade).toFixed(3);
+      const showSpur=rSpur>0.30;
+      if(showSpur){
+        const a=new T.ArrowHelper(
+          new T.Vector3().subVectors(pos[2],pos[0]).normalize(),
+          new T.Vector3().copy(pos[0]).add(new T.Vector3().subVectors(pos[2],pos[0]).normalize().multiplyScalar(0.45)),
+          new T.Vector3().subVectors(pos[2],pos[0]).length()-0.85,
+          RS.getHex(),0.30,0.20);
+        gNet.add(a);
+        // dashed-look midpoint marker
+        const mid=new T.Vector3().addVectors(pos[0],pos[2]).multiplyScalar(0.5);
+        const x=new T.Mesh(new T.SphereGeometry(0.16,10,10),new T.MeshBasicMaterial({color:RS.getHex()}));
+        x.position.copy(mid); gNet.add(x); api.pick(x,{spurious:{r:rSpur}});
+        L("SPURIOUS TF1→Gene_A","#f87171",1.15,mid.x+0.2,mid.y-0.65,0);
+        l("r ≈ "+rSpur.toFixed(2),"#f87171",0.5,mid.x+0.2,mid.y-1.15,0);
+      }
+      // DPI bound annotation
+      l("DPI: MI(TF1;A) ≤ min(MI(TF1;TF2), MI(TF2;A))","#8a99ad",0.42,0,-2.4,0);
+
+      sceneSnap={ mode, tau, context:ctxOpen, edge:focusIdx, cascade:+cascade.toFixed(3),
+        spuriousR:rSpur, spuriousEdge:showSpur?1:0, edgesKept:nKept, edgesDropped:fp,
+        focusTier:EDGES[focusIdx].tier, focusStrength:EDGES[focusIdx].strength };
+
+      return {
+        badge:"Indirect edge · spurious r = "+rSpur.toFixed(2)+(showSpur?" · FALSE POSITIVE":" · pruned"),
+        formula:"r(TF1,Gene_A) ≈ r(TF1,TF2)·r(TF2,Gene_A) — no direct edge exists",
+        insight:"The true network is the chain TF1→TF2→Gene_A; there is no direct TF1→Gene_A edge. But all three co-vary, so naive correlation infers a SPURIOUS TF1→Gene_A (red). Drive the cascade slider up and the false positive appears. ARACNE's Data Processing Inequality prunes it; perturbing TF2 (blocking the path) kills the apparent TF1→Gene_A effect — proving it was indirect.",
+        state:"Cascade strength "+(cascade*100).toFixed(0)+"% → spurious r ≈ "+rSpur.toFixed(2)+". "+(showSpur?"False-positive edge present — DPI / perturbation of TF2 removes it.":"Below 0.30: edge correctly absent."),
+        metrics:{ edgesKept:showSpur?"+1 false":"0 false", edgesDropped:showSpur?"1 spurious":"0", focusTier:"indirect", claimStrength:"r="+rSpur.toFixed(2) },
+        focus:{center:[0,0.2,0],radius:12}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE: context — cell-type / condition specificity
+    //   FOXA2→CLDN4 ACTIVE in hepatocyte (open) · INACTIVE in neuron (closed)
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="context"){
+      const isHep=(ctxOpen===1);
+      const d=isHep?CTX.hep:CTX.neu;
+      const active=d.open && d.foxa2>1.0;
+      const edgeCol=active?GR:RS;
+
+      // TF (FOXA2) and target (CLDN4)
+      const tf=new T.Mesh(new T.SphereGeometry(0.30+0.18*SAT(d.foxa2/3.1,0,1),20,16),
+        new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:isHep?0.7:0.25,roughness:0.4,
+          transparent:!isHep,opacity:isHep?1:0.55}));
+      tf.position.set(-2.4,0.6,0); gNet.add(tf);
+      api.pick(tf,{ctxNode:{gene:"FOXA2",expr:d.foxa2}});
+      const tg=new T.Mesh(new T.SphereGeometry(0.28+0.18*SAT(d.cldn4/3.1,0,1),20,16),
+        new T.MeshStandardMaterial({color:edgeCol,emissive:edgeCol,emissiveIntensity:0.5,roughness:0.4}));
+      tg.position.set(2.4,0.6,0); gNet.add(tg);
+      api.pick(tg,{ctxNode:{gene:"CLDN4",expr:d.cldn4}});
+      L("FOXA2 "+d.foxa2.toFixed(1),"#4dd7ff",1.25,-2.4,1.55,0);
+      L("CLDN4 "+d.cldn4.toFixed(1),edgeCol.getStyle(),1.25,2.4,1.55,0);
+
+      // promoter / chromatin plate under target (OPEN vs CLOSED)
+      const chrom=new T.Mesh(new T.BoxGeometry(2.6,0.18,1.4),
+        new T.MeshStandardMaterial({color:(d.open?GR:RS).getHex(),
+          emissive:(d.open?GR:RS).clone().multiplyScalar(0.4).getHex(),
+          emissiveIntensity:0.4,roughness:0.5,transparent:true,opacity:d.open?0.85:0.45}));
+      chrom.position.set(2.4,-1.4,0); gNet.add(chrom);
+      l(d.open?"CLDN4 promoter: OPEN (ATAC peak)":"CLDN4 promoter: CLOSED","#cfe6ff",0.46,2.4,-1.95,0);
+
+      // edge arrow — solid if active, broken/red if inactive
+      if(active){
+        const arr=new T.ArrowHelper(new T.Vector3(1,0,0),new T.Vector3(-1.8,0.6,0),3.0,GR.getHex(),0.34,0.22);
+        gNet.add(arr);
+        L("EDGE ACTIVE","#34d399",1.3,0,1.45,0);
+      }else{
+        const x=new T.Mesh(new T.SphereGeometry(0.18,10,10),new T.MeshBasicMaterial({color:RS.getHex()}));
+        x.position.set(0,0.6,0); gNet.add(x);
+        L("EDGE INACTIVE","#f87171",1.3,0,1.45,0);
+      }
+      l(isHep?"hepatocyte":"neuron","#a0b4c8",0.6,0,-2.7,0);
+
+      sceneSnap={ mode, tau, context:ctxOpen, edge:focusIdx, cascade:0,
+        edgeActive:active?1:0, foxa2Expr:d.foxa2, cldn4Expr:d.cldn4, promoterOpen:d.open?1:0,
+        edgesKept:nKept, edgesDropped:fp, focusTier:EDGES[focusIdx].tier, focusStrength:EDGES[focusIdx].strength };
+
+      return {
+        badge:"Context · "+(isHep?"hepatocyte":"neuron")+" · FOXA2→CLDN4 "+(active?"ACTIVE":"INACTIVE"),
+        formula:"C: E → 2^(cell_types × conditions) — same edge, different context",
+        insight:"The FOXA2→CLDN4 edge is not universal: C(edge) is a context set. In hepatocytes FOXA2 is high (2.8), the CLDN4 promoter is open and FOXA2-bound, so the edge is ACTIVE. In neurons FOXA2 is near-absent (0.3) and the promoter is CLOSED, so the edge is INACTIVE — even though CLDN4 itself is still expressed (1.2) under different TFs. A GRN inferred in one cell type does not transfer.",
+        state:(isHep?"Hepatocyte":"Neuron")+": FOXA2="+d.foxa2.toFixed(1)+", CLDN4="+d.cldn4.toFixed(1)+", promoter "+(d.open?"OPEN":"CLOSED")+" → edge "+(active?"ACTIVE":"INACTIVE")+".",
+        metrics:{ edgesKept:active?"1 active":"0 active", edgesDropped:active?"0":"1 inactive", focusTier:"context", claimStrength:active?"active here":"inactive here" },
+        focus:{center:[0,-0.3,0],radius:12}
+      };
+    }
+
+    return {badge:"F01",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f01",
+    kind:"grn-evidence-hierarchy",
+    eyebrow:"Block F · GRN Inference",
+    title:"F01 · What a gene regulatory network claims",
+    subtitle:"A GRN edge is not a correlation. Four views on the worked example: the 5-tier evidence ladder, the four claims per edge, the indirect-edge trap, and cell-type context.",
+    selectedLabel:"Element",
+    selectedHint:"Click a TF, target, claim pillar, or edge.",
+    modes:[
+      {value:"hierarchy", label:"Evidence hierarchy (5-tier ladder)"},
+      {value:"claims",    label:"Four claims (dir / mech / causal / context)"},
+      {value:"cascade",   label:"Indirect edge (TF1→TF2→Gene_A trap)"},
+      {value:"context",   label:"Cell-type context (hepatocyte vs neuron)"}
+    ],
+    params:[
+      {key:"tau",     label:"evidence threshold τ (tier 1–5)",min:1,max:5,step:1,value:1,
+       fmt:v=>"tier "+Math.round(v),modes:["hierarchy"]},
+      {key:"edge",    label:"focus edge (0–3)",min:0,max:3,step:1,value:0,
+       fmt:v=>["FOXA2→CLDN4","GATA1→HBB","TP53→CDKN1A","HNF4A→ALB"][Math.round(v)],modes:["hierarchy","claims"]},
+      {key:"cascade", label:"cascade strength (spurious r)",min:0,max:1,step:0.05,value:0.8,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["cascade"]},
+      {key:"context", label:"cell type (0 neuron · 1 hepatocyte)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===1?"hepatocyte":"neuron",modes:["context"]}
+    ],
+    metrics:[
+      {key:"edgesKept",    label:"Edges surviving τ",accent:"cyan"},
+      {key:"edgesDropped", label:"Edges dropped / spurious",accent:"rose"},
+      {key:"focusTier",    label:"Focus evidence tier",accent:"violet"},
+      {key:"claimStrength",label:"Claim strength",accent:"amber"}
+    ],
+    layers:[
+      {group:"network", label:"TF→target edges"},
+      {group:"ladder",  label:"Evidence ladder"},
+      {group:"claims",  label:"Claim pillars"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"Correlation only (τ=1)",
+      on:api=>{api.setParam("tau",1);}
+    },
+    secondary:{
+      label:"Perturbation only (τ=5)",
+      on:api=>{api.setParam("tau",5);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF / structure · <span style="color:#34d399">green</span>=claim met / active · <span style="color:#fbbf24">amber</span>=threshold / context · <span style="color:#a78bfa">violet</span>=perturbation (tier 5) · <span style="color:#f87171">red</span>=missing claim / spurious.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="hierarchy") api.frame([0,0.4,-0.8],13);
+      else if(s.mode==="claims") api.frame([0,-0.6,0.6],12);
+      else api.frame([0,0.1,0],12);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="hierarchy") api.frame([0,0.4,-0.8],13);
+      else if(s.mode==="claims") api.frame([0,-0.6,0.6],12);
+      else api.frame([0,0.1,0],12);
+    },
+    onSelect(api,d){
+      if(d.edge)        api.setSelected(d.edge.id+" · tier "+d.edge.tier+" · "+d.edge.strength+" · "+d.edge.evid+(d.kept?"":" · DROPPED"));
+      if(d.claim)       api.setSelected("claim: "+d.claim.name+" → "+(d.claim.ok?"MET":"unmet")+" for "+d.claim.edge);
+      if(d.spurious)    api.setSelected("SPURIOUS TF1→Gene_A · r ≈ "+d.spurious.r.toFixed(2)+" (indirect)");
+      if(d.cascadeNode) api.setSelected("node "+d.cascadeNode.name+" (cascade)");
+      if(d.ctxNode)     api.setSelected(d.ctxNode.gene+" · expr "+d.ctxNode.expr.toFixed(1)+" log-norm");
+    },
+    build,
+    snapshot(s){
+      const tau=Math.round(s.tau);
+      const ctxOpen=Math.round(s.context);
+      const fi=Math.round(s.edge);
+      const casc=Math.max(0,Math.min(1,s.cascade));
+      let kept=0; EDGES.forEach(e=>{ if(e.tier>=tau) kept++; });
+      const rSpur=+( (0.85*0.85)*casc ).toFixed(3);
+      const fe=EDGES[fi];
+      const hep=(ctxOpen===1);
+      const cd=hep?CTX.hep:CTX.neu;
+      const ctxActive=(cd.open && cd.foxa2>1.0)?1:0;
+      return {
+        mode:s.mode,
+        tau:tau,
+        focusEdge:fi,
+        cascade:+casc.toFixed(3),
+        context:ctxOpen,
+        edgesKept:kept,
+        edgesDropped:EDGES.length-kept,
+        focusTier:fe.tier,
+        focusStrength:fe.strength,
+        focusClaimsMet:fe.dir+fe.mech+fe.caus+1,
+        spuriousR:rSpur,
+        spuriousEdge:rSpur>0.30?1:0,
+        contextEdgeActive:ctxActive,
+        correlationIsNotGRN:(tau>1)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

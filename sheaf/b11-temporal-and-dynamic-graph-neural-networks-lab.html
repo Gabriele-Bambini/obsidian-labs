@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B11 · Temporal and dynamic graph neural networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of Math.sin; no rng, no clock) ─────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS: the lesson's Section-5 worked example ─────────────────────────
+  // Tiny regulatory system: TF A, targets B & C, cell-state marker D.
+  // Timed event stream (time, kind, value):
+  //   t0 A active 0.20 · t1 edge A->B 0.60 · t2 B rises 0.85
+  //   t3 edge B->C 0.55 · t4 marker D rises 0.90
+  const NODES=["A","B","C","D"];                 // A=TF, B/C=targets, D=cell-state marker
+  const NCOL ={A:"amber",B:"cyan",C:"cyan",D:"violet"};
+  // node ring positions in XZ
+  const NPOS={A:[-3.4,0,2.0],B:[-0.6,0,-2.4],C:[2.4,0,-1.0],D:[3.6,0,2.2]};
+  // ordered events
+  const EVENTS=[
+    {t:0,kind:"act", node:"A",            val:0.20, txt:"A active"},
+    {t:1,kind:"edge",src:"A",dst:"B",     val:0.60, txt:"edge A→B"},
+    {t:2,kind:"rise",node:"B",            val:0.85, txt:"B rises"},
+    {t:3,kind:"edge",src:"B",dst:"C",     val:0.55, txt:"edge B→C"},
+    {t:4,kind:"rise",node:"D",            val:0.90, txt:"D rises"}
+  ];
+  const QUERY_DEFAULT=2;   // "using events up to t, predict after t"
+
+  // ── memory simulation over the event stream ──────────────────────────────
+  // horizon h in (0,1]: per-step retention. memory decays by factor h each tick
+  // BEFORE the current event is applied (the m_v(t-) state). msg = val*m_src(t-).
+  // Returns per-time memories and the message magnitudes.
+  function simulate(horizon, cutoff){
+    const m={A:0,B:0,C:0,D:0};
+    const trace=[];                 // one row per event up to cutoff
+    let msgAB=0, msgBC=0;
+    for(let i=0;i<EVENTS.length;i++){
+      const e=EVENTS[i];
+      if(e.t>cutoff) break;
+      // decay all memories to model m_v(t-) (forgetting old evidence)
+      if(i>0){ for(const k of NODES) m[k]*=horizon; }
+      const pre={A:m.A,B:m.B,C:m.C,D:m.D};
+      if(e.kind==="act"||e.kind==="rise"){
+        m[e.node]=Math.max(m[e.node],0)+e.val;     // observation writes memory
+      }else if(e.kind==="edge"){
+        const msg=e.val*pre[e.src];                // msg = w * m_src(t-)
+        m[e.dst]=m[e.dst]+msg;
+        if(e.src==="A"&&e.dst==="B") msgAB=msg;
+        if(e.src==="B"&&e.dst==="C") msgBC=msg;
+      }
+      trace.push({t:e.t,kind:e.kind,txt:e.txt,pre,post:{A:m.A,B:m.B,C:m.C,D:m.D}});
+    }
+    return {m:{A:m.A,B:m.B,C:m.C,D:m.D},msgAB,msgBC,trace};
+  }
+
+  // leakage score: how much FUTURE evidence (events after query) would bleed
+  // into a representation at the query time if the leak-guard is lowered.
+  // guard=1 -> no leak; guard=0 -> all future events visible.
+  function leakage(guard, query){
+    let future=0, used=0;
+    for(const e of EVENTS){ if(e.t>query){ future+=e.val; } }
+    used=(1-guard)*future;
+    return {future:+future.toFixed(3), risk:+used.toFixed(3)};
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const horizon=Math.max(0.05,Math.min(1,s.horizon));
+    const query=Math.round(Math.max(0,Math.min(4,s.query)));
+    const bins=Math.round(Math.max(1,Math.min(5,s.bins)));
+    const guard=Math.max(0,Math.min(1,s.guard));
+
+    const gGraph =api.group("graph");
+    const gTime  =api.group("timeline");
+    const gMem   =api.group("memory");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");
+    const AM=new T.Color("#fbbf24");
+    const VI=new T.Color("#a78bfa");
+    const GR=new T.Color("#34d399");
+    const RO=new T.Color("#fb7185");
+    const SL=new T.Color("#54667c");
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: event — TGN memory clock over the timed event stream
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="event"){
+      const sim=simulate(horizon,query);
+
+      // draw the 4 nodes; size ∝ current memory, dim if not yet observed
+      NODES.forEach(id=>{
+        const p=NPOS[id];
+        const mem=sim.m[id];
+        const seen=mem>1e-6;
+        const baseCol=new T.Color(api.col(NCOL[id]));
+        const col=seen?baseCol.clone():new T.Color("#1c2c44");
+        const r=0.30+0.55*Math.min(1,mem);
+        const sph=new T.Mesh(new T.SphereGeometry(r,24,18),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(seen?0.6:0.15),emissiveIntensity:seen?0.7:0.2,roughness:0.4}));
+        sph.position.set(p[0],0,p[2]);
+        gGraph.add(sph);
+        api.pick(sph,{node:{id,mem:+mem.toFixed(3),seen}});
+        lbl(id,seen?baseCol.getStyle():"#5a6b82",1.5,p[0],r+0.55,p[2]);
+        lbl("m="+mem.toFixed(2),seen?"#9fb4cc":"#46566c",1.05,p[0],-0.7,p[2]);
+      });
+
+      // draw edges that have appeared up to query, with message magnitude
+      EVENTS.forEach(e=>{
+        if(e.kind!=="edge"||e.t>query) return;
+        const pa=NPOS[e.src], pb=NPOS[e.dst];
+        const msg=(e.src==="A"&&e.dst==="B")?sim.msgAB:(e.src==="B"&&e.dst==="C")?sim.msgBC:0;
+        const a=new T.Vector3(pa[0],0,pa[2]), b=new T.Vector3(pb[0],0,pb[2]);
+        api.arrow(a,b,{color:"green",width:0.05,head:0.30,group:"graph"});
+        const mid=a.clone().add(b).multiplyScalar(0.5);
+        lbl("w="+e.val.toFixed(2),"#7fe7c0",1.1,mid.x,0.5,mid.z);
+        lbl("msg="+msg.toFixed(3),"#34d399",1.1,mid.x,1.05,mid.z);
+      });
+
+      // timeline ruler t=0..4 with the query cursor
+      const tx0=-4.6, tdx=2.3, ty=-3.4;
+      gTime.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(tx0,ty,4),new T.Vector3(tx0+4*tdx,ty,4)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      EVENTS.forEach(e=>{
+        const x=tx0+e.t*tdx;
+        const past=e.t<=query;
+        const future=e.t>query;
+        const c=future?"#3a4a5e":(e.t===query?"#fbbf24":"#4dd7ff");
+        const tick=new T.Mesh(new T.SphereGeometry(0.16,12,10),new T.MeshStandardMaterial({color:new T.Color(c),emissive:new T.Color(c),emissiveIntensity:0.7,roughness:0.3}));
+        tick.position.set(x,ty,4);
+        gTime.add(tick);
+        api.pick(tick,{event:{t:e.t,txt:e.txt,val:e.val,future}});
+        lbl("t"+e.t,future?"#5a6b82":(e.t===query?"#fbbf24":"#9fb4cc"),1.05,x,ty+0.5,4);
+        slbl(e.txt,future?"#46566c":"#8a99ad",0.34,x,ty-0.45,4);
+      });
+      // query cursor plane (the t- / t+ boundary)
+      const qx=tx0+query*tdx+tdx*0.5;
+      const wall=new T.Mesh(new T.PlaneGeometry(0.04,3.2),new T.MeshBasicMaterial({color:0xfbbf24,transparent:true,opacity:0.55,side:T.DoubleSide}));
+      wall.position.set(qx,ty+1.0,4);
+      gTime.add(wall);
+      lbl("query t="+query,"#fbbf24",1.2,qx,ty+2.0,4);
+      lbl("t−  allowed","#7fe7c0",1.0,qx-1.3,ty+1.5,4);
+      lbl("t+  forbidden","#fb7185",1.0,qx+1.6,ty+1.5,4);
+
+      // memory-horizon retention bar
+      const hx=-5.4, hy0=-1.2;
+      for(let k=0;k<5;k++){
+        const ret=Math.pow(horizon,k);
+        const h=0.1+ret*2.2;
+        const bar=new T.Mesh(new T.BoxGeometry(0.32,h,0.32),api.mat(api.col("violet"),{emissive:0.3}));
+        bar.position.set(hx,hy0+h/2,4-k*0.6);
+        gMem.add(bar);
+      }
+      lbl("memory horizon "+horizon.toFixed(2),"#a78bfa",1.05,hx+0.2,hy0+2.6,4-1.2);
+
+      const mB=sim.m.B, mC=sim.m.C, mD=sim.m.D;
+      const lk=leakage(guard,query);
+      sceneSnap={mode,query,horizon:+horizon.toFixed(3),bins,guard:+guard.toFixed(3),
+        msgAB:+sim.msgAB.toFixed(3),msgBC:+sim.msgBC.toFixed(3),
+        memB:+mB.toFixed(3),memC:+mC.toFixed(3),memD:+mD.toFixed(3),leakRisk:lk.risk};
+
+      api.setMetric("msgAB",sim.msgAB.toFixed(3));
+      api.setMetric("memTarget",mB.toFixed(2));
+      api.setMetric("query","t="+query);
+      api.setMetric("leak",lk.risk.toFixed(2));
+
+      return {
+        badge:"Event stream · TGN memory · up to t="+query,
+        formula:"msg<sub>A→B</sub>(1) = 0.60·m<sub>A</sub>(1−) = 0.60·0.20 = "+sim.msgAB.toFixed(3)+" &nbsp;·&nbsp; m<sub>v</sub>(t+) = m<sub>v</sub>(t−) + msg",
+        insight:"Memory is updated event by event. The message into B depends on A's PAST memory m_A(t−), not on anything after the query wall (amber). Raise the query to feed in later events; the t+ side stays forbidden so no future leaks back. Lower the memory horizon and old events fade — early TF activity stops shaping later targets.",
+        state:"Up to t="+query+": m_B="+mB.toFixed(2)+", m_C="+mC.toFixed(2)+", m_D="+mD.toFixed(2)+". msg(A→B)="+sim.msgAB.toFixed(3)+", msg(B→C)="+sim.msgBC.toFixed(3)+". Future leak risk="+lk.risk.toFixed(2)+".",
+        metrics:{msgAB:sim.msgAB.toFixed(3),memTarget:mB.toFixed(2),query:"t="+query,leak:lk.risk.toFixed(2)},
+        focus:{center:[0,-0.5,0.5],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: snapshot — bin events into G_0..G_T (EvolveGCN / DySAT)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="snapshot"){
+      // partition the 5 time points (0..4) into `bins` bins; events in a bin
+      // become SIMULTANEOUS — show how coarse bins collapse event order.
+      const span=5;                                   // t=0..4 inclusive
+      const binOf=t=>Math.min(bins-1,Math.floor(t/span*bins));
+      const binW=4.2, binX0=-((bins-1)*binW)/2;
+
+      // count how many ordered event-pairs lose their order inside a bin
+      let collapsed=0, totalPairs=0;
+      for(let i=0;i<EVENTS.length;i++)for(let j=i+1;j<EVENTS.length;j++){
+        totalPairs++;
+        if(binOf(EVENTS[i].t)===binOf(EVENTS[j].t)) collapsed++;
+      }
+
+      for(let bi=0;bi<bins;bi++){
+        const bx=binX0+bi*binW;
+        // bin floor plate
+        const plate=new T.Mesh(new T.PlaneGeometry(3.4,3.4),new T.MeshBasicMaterial({color:0x0e2740,transparent:true,opacity:0.5,side:T.DoubleSide}));
+        plate.rotation.x=-Math.PI/2; plate.position.set(bx,-0.05,0);
+        gTime.add(plate);
+        lbl("G"+bi,"#4dd7ff",1.5,bx,0.2,2.3);
+        // which events fall in this bin
+        const inBin=EVENTS.filter(e=>binOf(e.t)===bi);
+        // place this bin's active nodes in a small triangle
+        const localPos={A:[bx-1.1,0,1.0],B:[bx+1.1,0,1.0],C:[bx+1.1,0,-1.1],D:[bx-1.1,0,-1.1]};
+        const activeNodes={};
+        inBin.forEach(e=>{ if(e.node)activeNodes[e.node]=1; if(e.src){activeNodes[e.src]=1;activeNodes[e.dst]=1;} });
+        Object.keys(activeNodes).forEach(id=>{
+          const p=localPos[id];
+          const c=new T.Color(api.col(NCOL[id]));
+          const sph=new T.Mesh(new T.SphereGeometry(0.34,20,16),new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.6),emissiveIntensity:0.65,roughness:0.4}));
+          sph.position.set(p[0],0,p[2]); gGraph.add(sph);
+          api.pick(sph,{snapNode:{id,bin:bi}});
+          lbl(id,c.getStyle(),1.1,p[0],0.6,p[2]);
+        });
+        // edges that landed in this bin (now simultaneous)
+        inBin.forEach(e=>{
+          if(e.kind!=="edge")return;
+          const pa=localPos[e.src],pb=localPos[e.dst];
+          api.arrow(new T.Vector3(pa[0],0,pa[2]),new T.Vector3(pb[0],0,pb[2]),{color:"green",width:0.045,head:0.26,group:"graph"});
+        });
+        // event chips inside the bin
+        inBin.forEach((e,k)=>{ slbl("t"+e.t+" "+e.txt,(inBin.length>1?"#fb7185":"#8a99ad"),0.32,bx,-1.9-k*0.42,0); });
+        // inter-snapshot recurrent arrow (EvolveGCN: weights evolve)
+        if(bi>0){
+          api.arrow(new T.Vector3(bx-binW+1.7,1.6,0),new T.Vector3(bx-1.7,1.6,0),{color:"violet",width:0.04,head:0.24,group:"timeline"});
+        }
+      }
+      lbl("recurrent weight evolution  W_t → W_{t+1}","#a78bfa",1.15,0,1.6,2.6);
+      lbl(bins+" bins · "+collapsed+"/"+totalPairs+" ordered pairs collapsed","#fb7185",1.1,0,-3.4,0);
+
+      const orderLoss=totalPairs>0?collapsed/totalPairs:0;
+      const lk=leakage(guard,query);
+      sceneSnap={mode,query,horizon:+horizon.toFixed(3),bins,guard:+guard.toFixed(3),
+        collapsedPairs:collapsed,orderLoss:+orderLoss.toFixed(3),leakRisk:lk.risk,
+        msgAB:0,msgBC:0,memB:0,memC:0,memD:0};
+
+      api.setMetric("msgAB","—");
+      api.setMetric("memTarget",collapsed+"/"+totalPairs);
+      api.setMetric("query",bins+" bins");
+      api.setMetric("leak",orderLoss.toFixed(2));
+
+      return {
+        badge:"Snapshot sequence · "+bins+" bins · order loss "+(orderLoss*100).toFixed(0)+"%",
+        formula:"G<sub>0</sub>, G<sub>1</sub>, …, G<sub>T</sub> &nbsp;·&nbsp; bin width = span / "+bins+" &nbsp;·&nbsp; collapsed pairs = "+collapsed+"/"+totalPairs,
+        insight:"A snapshot model bins time into G_0…G_T and runs a normal GNN inside each bin, then a recurrent model (EvolveGCN evolves the weights W_t) connects bins. Coarse bins are convenient but make events SIMULTANEOUS: events sharing a bin lose their order (rose chips). With 1 bin you recover the static-graph mistake — every event is pooled together.",
+        state:bins+" bins. "+collapsed+" of "+totalPairs+" ordered event-pairs are collapsed into simultaneity ("+(orderLoss*100).toFixed(0)+"% order loss). Fewer bins → more collapse → mechanism order is lost.",
+        metrics:{msgAB:"—",memTarget:collapsed+"/"+totalPairs,query:bins+" bins",leak:orderLoss.toFixed(2)},
+        focus:{center:[0,0,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: split — time-respecting split & the leakage guard
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="split"){
+      // lay the 5 events on a horizontal time axis; color by train/val/test
+      // by the query split point: t<=query-?  train ; small val band ; test future.
+      const tx0=-5.0, tdx=2.5, ty=0;
+      const tTrain=query;            // train uses events with t <= query
+      const tVal=Math.min(4,query+1);// validation is next event
+      gTime.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(tx0,ty,0),new T.Vector3(tx0+4*tdx,ty,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+
+      EVENTS.forEach(e=>{
+        const x=tx0+e.t*tdx;
+        let band, bcol;
+        if(e.t<=tTrain){ band="train"; bcol=CY; }
+        else if(e.t<=tVal){ band="val"; bcol=AM; }
+        else { band="test"; bcol=VI; }
+        const c=bcol.clone();
+        const sph=new T.Mesh(new T.SphereGeometry(0.34,20,16),new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.35}));
+        sph.position.set(x,ty,0); gGraph.add(sph);
+        api.pick(sph,{splitNode:{t:e.t,band,txt:e.txt}});
+        lbl("t"+e.t,c.getStyle(),1.1,x,0.7,0);
+        slbl(e.txt,"#8a99ad",0.32,x,-0.6,0);
+        slbl(band,c.getStyle(),0.34,x,-1.0,0);
+      });
+
+      // leakage arcs: when guard is lowered, future (test) events feed back
+      // into the training representation — draw curved leak arrows.
+      const lk=leakage(guard,query);
+      let drawn=0;
+      EVENTS.forEach(e=>{
+        if(e.t<=query) return;                  // only future events can leak
+        const strength=(1-guard);
+        if(strength<0.05) return;
+        const xF=tx0+e.t*tdx;
+        const xT=tx0+0*tdx;                      // leaks back toward earliest train node
+        const arcH=1.4+0.5*drawn;
+        const pts=[];
+        for(let k=0;k<=16;k++){
+          const u=k/16; const x=xF+(xT-xF)*u; const y=ty+Math.sin(u*Math.PI)*arcH*strength;
+          pts.push(new T.Vector3(x,y,0));
+        }
+        gMem.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.35+0.5*strength})));
+        drawn++;
+      });
+
+      // split walls
+      const wxTrain=tx0+(tTrain+0.5)*tdx;
+      const wTrain=new T.Mesh(new T.PlaneGeometry(0.05,2.6),new T.MeshBasicMaterial({color:0x4dd7ff,transparent:true,opacity:0.5,side:T.DoubleSide}));
+      wTrain.position.set(wxTrain,ty+0.6,0); gTime.add(wTrain);
+      lbl("train | future","#4dd7ff",1.1,wxTrain,2.1,0);
+
+      lbl("leak guard "+guard.toFixed(2),guard>0.6?"#34d399":"#fb7185",1.3,0,3.2,0);
+      lbl("future leak risk "+lk.risk.toFixed(2),lk.risk>0.3?"#fb7185":"#7fe7c0",1.2,0,2.6,0);
+
+      // legend
+      slbl("train (t ≤ query)","#4dd7ff",0.4,-5.4,-2.6,0);
+      slbl("val (next)","#fbbf24",0.4,-1.5,-2.6,0);
+      slbl("test (future)","#a78bfa",0.4,1.8,-2.6,0);
+
+      sceneSnap={mode,query,horizon:+horizon.toFixed(3),bins,guard:+guard.toFixed(3),
+        futureEvidence:lk.future,leakRisk:lk.risk,timeRespecting:guard>=0.99,
+        msgAB:0,msgBC:0,memB:0,memC:0,memD:0};
+
+      api.setMetric("msgAB",guard.toFixed(2));
+      api.setMetric("memTarget",lk.future.toFixed(2));
+      api.setMetric("query","t="+query);
+      api.setMetric("leak",lk.risk.toFixed(2));
+
+      return {
+        badge:"Temporal split · guard "+guard.toFixed(2)+" · leak "+lk.risk.toFixed(2),
+        formula:"train: t ≤ "+query+" &nbsp; val: t = "+tVal+" &nbsp; test: t &gt; "+tVal+" &nbsp;·&nbsp; leak risk = (1−guard)·Σ x<sub>future</sub> = "+lk.risk.toFixed(2),
+        insight:"A temporal split is the main scientific guardrail: train on the past, test on the future. The leak guard is the discipline that future evidence (test, violet) never feeds the training representation. Lower the guard and rose arcs carry future events back to t=0 — exactly the leakage that lets D at t=4 'explain' the edge at t=1. Future evidence available past the query = "+lk.future.toFixed(2)+".",
+        state:"Split at query t="+query+". Future evidence Σx="+lk.future.toFixed(2)+". With guard="+guard.toFixed(2)+", "+(lk.risk).toFixed(2)+" of it leaks back. "+(guard>=0.99?"Time-respecting: no leak.":"Leakage active — invalid temporal claim."),
+        metrics:{msgAB:guard.toFixed(2),memTarget:lk.future.toFixed(2),query:"t="+query,leak:lk.risk.toFixed(2)},
+        focus:{center:[0,0.5,0],radius:14}
+      };
+    }
+
+    return {badge:"B11",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"b11",
+    kind:"temporal-dynamic-gnn",
+    eyebrow:"Block B · GNN Architectures",
+    title:"B11 · Temporal and dynamic graph neural networks",
+    subtitle:"A GNN with a clock. One tiny regulatory system (TF A → targets B, C; marker D) seen three ways: an event-stream memory model, a snapshot sequence, and the temporal split that stops the future leaking into the past.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, event tick, or split band.",
+    modes:[
+      {value:"event",    label:"Event stream (TGN memory clock)"},
+      {value:"snapshot", label:"Snapshot sequence (EvolveGCN / DySAT)"},
+      {value:"split",    label:"Temporal split & leak guard"}
+    ],
+    params:[
+      {key:"query",   label:"query time t (evidence ≤ t)",min:0,max:4,step:1,value:2,
+       fmt:v=>"t="+Math.round(v),modes:["event","split"]},
+      {key:"horizon", label:"memory horizon (retention/step)",min:0.05,max:1,step:0.05,value:0.7,
+       fmt:v=>v.toFixed(2),modes:["event"]},
+      {key:"bins",    label:"snapshot bins (1 = static)",min:1,max:5,step:1,value:3,
+       fmt:v=>Math.round(v).toString(),modes:["snapshot"]},
+      {key:"guard",   label:"leak guard (1 = time-respecting)",min:0,max:1,step:0.05,value:1,
+       fmt:v=>v.toFixed(2),modes:["split"]}
+    ],
+    metrics:[
+      {key:"msgAB",     label:"msg A→B / guard",accent:"green"},
+      {key:"memTarget", label:"target memory / order loss",accent:"cyan"},
+      {key:"query",     label:"query / bins",accent:"amber"},
+      {key:"leak",      label:"future leak risk",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",    label:"Nodes / edges"},
+      {group:"timeline", label:"Timeline / snapshots"},
+      {group:"memory",   label:"Memory / leak arcs"},
+      {group:"labels",   label:"Labels"}
+    ],
+    primary:{
+      label:"Time-respecting (guard 1)",
+      on:api=>{api.setParam("guard",1);}
+    },
+    secondary:{
+      label:"Leak the future (guard 0)",
+      on:api=>{api.setParam("guard",0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:13},
+    hint:'<span style="color:#fbbf24">amber</span>=TF A / query wall · <span style="color:#4dd7ff">cyan</span>=targets B,C / train · <span style="color:#a78bfa">violet</span>=marker D / test · <span style="color:#34d399">green</span>=edge message · <span style="color:#fb7185">rose</span>=leak / collapsed order.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="event") api.frame([0,-0.5,0.5],13);
+      else if(s.mode==="snapshot") api.frame([0,0,0],14);
+      else api.frame([0,0.5,0],14);
+    },
+    onSelect(api,d){
+      if(d.node)      api.setSelected("Node "+d.node.id+" · memory m="+d.node.mem+(d.node.seen?"":" · not yet observed"));
+      if(d.event)     api.setSelected("Event t="+d.event.t+" · "+d.event.txt+" · value "+d.event.val+(d.event.future?" · FUTURE (forbidden)":" · available"));
+      if(d.snapNode)  api.setSelected("Node "+d.snapNode.id+" in snapshot G"+d.snapNode.bin);
+      if(d.splitNode) api.setSelected("t="+d.splitNode.t+" · "+d.splitNode.txt+" · band: "+d.splitNode.band);
+    },
+    build,
+    snapshot(s){
+      const horizon=Math.max(0.05,Math.min(1,s.horizon));
+      const query=Math.round(Math.max(0,Math.min(4,s.query)));
+      const bins=Math.round(Math.max(1,Math.min(5,s.bins)));
+      const guard=Math.max(0,Math.min(1,s.guard));
+      const sim=simulate(horizon,query);
+      const lk=leakage(guard,query);
+      // bin order-loss
+      const span=5; const binOf=t=>Math.min(bins-1,Math.floor(t/span*bins));
+      let collapsed=0,totalPairs=0;
+      for(let i=0;i<EVENTS.length;i++)for(let j=i+1;j<EVENTS.length;j++){totalPairs++;if(binOf(EVENTS[i].t)===binOf(EVENTS[j].t))collapsed++;}
+      return {
+        mode:s.mode,
+        query,
+        horizon:+horizon.toFixed(3),
+        bins,
+        guard:+guard.toFixed(3),
+        msgAB:+sim.msgAB.toFixed(3),
+        msgBC:+sim.msgBC.toFixed(3),
+        memB:+sim.m.B.toFixed(3),
+        memC:+sim.m.C.toFixed(3),
+        memD:+sim.m.D.toFixed(3),
+        collapsedPairs:collapsed,
+        orderLoss:+(totalPairs>0?collapsed/totalPairs:0).toFixed(3),
+        futureEvidence:lk.future,
+        leakRisk:lk.risk,
+        timeRespecting:guard>=0.99
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

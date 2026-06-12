@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D05 · Biomedical knowledge graph representation learning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG / clock calls; hash of sin) ──────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  WORKED EXAMPLE (note §5): 5-entity JAK-STAT / baricitinib subgraph.
+  //  Embeddings live on a 2D complex plane (Re,Im) so TransE/DistMult/RotatE
+  //  geometry is *visible*. Coordinates are fixed (deterministic), chosen so
+  //  the relevant scoring identities hold to within the note's tolerances.
+  // ════════════════════════════════════════════════════════════════════════
+  const ENT={
+    Bari : {re: 1.00, im: 0.00, type:"drug",    sub:"DB11817"},
+    JAK1 : {re: 0.45, im: 0.78, type:"protein", sub:"P23458"},
+    JAK2 : {re: 0.40, im: 0.82, type:"protein", sub:"O60674"},
+    STAT3: {re:-0.62, im: 0.62, type:"protein", sub:"P40763"},
+    RA   : {re:-0.10, im:-0.95, type:"disease", sub:"DOID:7148"}
+  };
+  const PHI_INH = 1.05;   // rotation angle of r_inhibits (rad)
+  const PHI_PHO = 0.78;   // rotation angle of r_phospho  (rad)
+
+  // note constants (literal facts encoded)
+  const IC50_JAK1=5.9, IC50_JAK2=5.7;       // ChEMBL nM
+  const DISGENET=0.70;                        // STAT3↔RA score
+  const SYM_PPI=0.95, SYM_REG=0.08, SYM_TREAT=0.00; // symmetric fractions (note §6)
+  const ENT_COUNT=97238, TRIPLE_COUNT=5874261, REL_TYPES=107; // DRKG scale
+
+  const ORDER=["Bari","JAK1","JAK2","STAT3","RA"];
+
+  // 6 training triples + 1 held-out (note §5)
+  const TRIPLES=[
+    {h:"Bari", r:"inhibits",  t:"JAK1",  held:false},
+    {h:"Bari", r:"inhibits",  t:"JAK2",  held:false},
+    {h:"JAK1", r:"phospho",   t:"STAT3", held:false},
+    {h:"JAK2", r:"phospho",   t:"STAT3", held:false},
+    {h:"STAT3",r:"assoc",     t:"RA",    held:false},
+    {h:"Bari", r:"treats",    t:"RA",    held:false},
+    {h:"STAT3",r:"target_of", t:"Bari",  held:true }  // held-out eval triple
+  ];
+
+  // ── complex helpers ──────────────────────────────────────────────────────
+  function cmul(ar,ai,br,bi){return {re:ar*br-ai*bi, im:ar*bi+ai*br};}
+  function dist2(ar,ai,br,bi){const dr=ar-br,di=ai-bi;return Math.sqrt(dr*dr+di*di);}
+  const SCALE=3.2; // world units per embedding unit
+  function world(p){return new (window.THREE.Vector3)(p.re*SCALE, 0, p.im*SCALE);}
+
+  const GAMMA=2.4; // margin so positives land high
+
+  function relTransVec(r,EMB){
+    let sx=0,sz=0,n=0;
+    for(const tr of TRIPLES){ if(tr.r===r && !tr.held){ const h=EMB[tr.h],t=EMB[tr.t]; sx+=t.re-h.re; sz+=t.im-h.im; n++; } }
+    if(!n) return {re:-(Math.cos(PHI_INH)), im:-(Math.sin(PHI_INH))};
+    return {re:sx/n, im:sz/n};
+  }
+  function relPhase(r){
+    if(r==="inhibits")  return PHI_INH;
+    if(r==="phospho")   return PHI_PHO;
+    if(r==="assoc")     return -1.55;
+    if(r==="treats")    return -2.0;
+    if(r==="target_of") return -(PHI_INH); // inverse rotation
+    return 0;
+  }
+  function scoreTransE(h,t,r,EMB){
+    const tr=relTransVec(r,EMB);
+    return GAMMA - dist2(h.re+tr.re,h.im+tr.im,t.re,t.im);
+  }
+  function scoreDistMult(h,t){
+    const wr=0.9, wi=0.9;
+    return h.re*t.re*wr + h.im*t.im*wi; // symmetric in h,t
+  }
+  function scoreRotatE(h,t,r){
+    const th=relPhase(r);
+    const rot=cmul(h.re,h.im,Math.cos(th),Math.sin(th));
+    return GAMMA - dist2(rot.re,rot.im,t.re,t.im);
+  }
+  function scoreFor(model,h,t,r,EMB){
+    if(model==="transe")   return scoreTransE(h,t,r,EMB);
+    if(model==="distmult") return scoreDistMult(h,t);
+    return scoreRotatE(h,t,r);
+  }
+
+  // ── deterministic noisy/collapsed embedding map ──────────────────────────
+  function embed(noiseLvl,dimRaw){
+    const collapse=dimRaw>=400?0.86:(dimRaw>=200?0.96:1.0); // misconception 3: hi-dim less discriminative
+    const E={};
+    for(const n of ORDER){
+      const p=ENT[n];
+      const jx=(prand(ORDER.indexOf(n)*9+1)-0.5)*0.55*noiseLvl;
+      const jz=(prand(ORDER.indexOf(n)*9+5)-0.5)*0.55*noiseLvl;
+      E[n]={re:(p.re+jx)*collapse, im:(p.im+jz)*collapse, type:p.type, sub:p.sub};
+    }
+    return E;
+  }
+
+  // ── build ──────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;                       // transe | distmult | rotate
+    const relIdx=Math.round(s.relation);
+    const noiseLvl=s.noise;
+    const dimRaw=Math.round(s.dim);
+    const showHeld=Math.round(s.heldout);
+
+    const relNames=["inhibits","phospho","assoc","treats","target_of"];
+    const relName=relNames[Math.max(0,Math.min(4,relIdx))];
+
+    const gNodes =api.group("nodes");
+    const gRel   =api.group("relations");
+    const gScore =api.group("scores");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // drug / TransE / predicted point
+    const GR=new T.Color("#34d399");   // protein / good
+    const AM=new T.Color("#fbbf24");   // disease / residual
+    const VI=new T.Color("#a78bfa");   // evidence edge / composition / RotatE
+    const RO=new T.Color("#fb7185");   // symmetry shadow / held-out / cannot-represent
+    const typeCol={drug:CY, protein:GR, disease:AM};
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const EMB=embed(noiseLvl,dimRaw);
+
+    // ── unit circle plane (complex embedding space) + axes ─────────────────
+    {
+      const segs=72, pts=[];
+      for(let i=0;i<=segs;i++){const a=i/segs*Math.PI*2;pts.push(new T.Vector3(Math.cos(a)*SCALE,0,Math.sin(a)*SCALE));}
+      gRel.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:0x21405c,transparent:true,opacity:0.7})));
+      gRel.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-SCALE*1.25,0,0),new T.Vector3(SCALE*1.25,0,0)]),new T.LineBasicMaterial({color:0x1b3148})));
+      gRel.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0,0,-SCALE*1.25),new T.Vector3(0,0,SCALE*1.25)]),new T.LineBasicMaterial({color:0x1b3148})));
+      slbl("Re","#6b7a8d",0.4,SCALE*1.35,0.05,0);
+      slbl("Im","#6b7a8d",0.4,0,0.05,SCALE*1.35);
+    }
+
+    // ── nodes ──────────────────────────────────────────────────────────────
+    for(const n of ORDER){
+      const e=EMB[n];
+      const col=typeCol[e.type].clone();
+      const sph=new T.Mesh(new T.SphereGeometry(0.30,18,14),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.65),emissiveIntensity:0.6,roughness:0.4}));
+      sph.position.copy(world(e));
+      gNodes.add(sph);
+      api.pick(sph,{node:{id:n,type:e.type,sub:e.sub}});
+      lbl(n,typeCol[e.type].getStyle(),0.95,e.re*SCALE,0.55,e.im*SCALE);
+    }
+
+    // ── spotlight relation: head/tail + the model's predicted point ─────────
+    let spot=null;
+    for(const tr of TRIPLES){
+      if(tr.r===relName){ if(tr.held && !showHeld) continue; spot=tr; if(!tr.held) break; }
+    }
+    let predPt=null, hEmb=null, tEmb=null, sc=0;
+    if(spot){
+      hEmb=EMB[spot.h]; tEmb=EMB[spot.t];
+      if(mode==="transe"){
+        const tr=relTransVec(relName,EMB); predPt={re:hEmb.re+tr.re, im:hEmb.im+tr.im};
+      } else if(mode==="rotate"){
+        const th=relPhase(relName); predPt=cmul(hEmb.re,hEmb.im,Math.cos(th),Math.sin(th));
+      } else { predPt={re:tEmb.re,im:tEmb.im}; }
+      sc=scoreFor(mode,hEmb,tEmb,relName,EMB);
+
+      // h → t evidence edge
+      const a=world(hEmb), b=world(tEmb);
+      const eEdge=new T.Mesh(new T.CylinderGeometry(0.03,0.03,1,6),
+        new T.MeshBasicMaterial({color:spot.held?RO.getHex():VI.getHex(),transparent:true,opacity:0.9}));
+      eEdge.position.copy(a.clone().add(b).multiplyScalar(0.5));
+      eEdge.scale.set(1,Math.max(0.01,a.distanceTo(b)),1);
+      eEdge.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),b.clone().sub(a).normalize());
+      gRel.add(eEdge);
+
+      const pW=new T.Vector3(predPt.re*SCALE,0,predPt.im*SCALE);
+      if(mode==="transe"){
+        const arr=new T.ArrowHelper(pW.clone().sub(a).normalize(),a,Math.max(0.1,a.distanceTo(pW)),CY.getHex(),0.4,0.22);
+        gRel.add(arr);
+        const pred=new T.Mesh(new T.SphereGeometry(0.18,12,10),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.9,roughness:0.3}));
+        pred.position.copy(pW); gScore.add(pred); api.pick(pred,{pred:{model:"TransE",rel:relName}});
+        const rl=new T.Line(new T.BufferGeometry().setFromPoints([pW,world(tEmb)]),new T.LineDashedMaterial({color:0xfbbf24}));
+        rl.computeLineDistances(); gRel.add(rl);
+        slbl("h+r","#4dd7ff",0.4,predPt.re*SCALE,0.35,predPt.im*SCALE);
+      } else if(mode==="rotate"){
+        const a0=Math.atan2(hEmb.im,hEmb.re), th=relPhase(relName);
+        const rmag=Math.sqrt(hEmb.re*hEmb.re+hEmb.im*hEmb.im);
+        const arcPts=[]; const steps=24;
+        for(let k=0;k<=steps;k++){const aa=a0+th*(k/steps);arcPts.push(new T.Vector3(Math.cos(aa)*rmag*SCALE,0.02,Math.sin(aa)*rmag*SCALE));}
+        gRel.add(new T.Line(new T.BufferGeometry().setFromPoints(arcPts),new T.LineBasicMaterial({color:CY.getHex()})));
+        const pred=new T.Mesh(new T.SphereGeometry(0.18,12,10),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.9,roughness:0.3}));
+        pred.position.copy(pW); gScore.add(pred); api.pick(pred,{pred:{model:"RotatE",rel:relName}});
+        const rl=new T.Line(new T.BufferGeometry().setFromPoints([pW,world(tEmb)]),new T.LineDashedMaterial({color:0xfbbf24}));
+        rl.computeLineDistances(); gRel.add(rl);
+        slbl("h⊙r","#4dd7ff",0.4,predPt.re*SCALE,0.35,predPt.im*SCALE);
+      } else {
+        // DistMult: reverse arrow shows score symmetry φ(h,r,t)=φ(t,r,h)
+        const rev=new T.ArrowHelper(a.clone().sub(b).normalize(),b,Math.max(0.1,b.distanceTo(a)),RO.getHex(),0.36,0.2);
+        gRel.add(rev);
+        slbl("φ(t,r,h)=φ(h,r,t)","#fb7185",0.42,(hEmb.re+tEmb.re)*0.5*SCALE,0.7,(hEmb.im+tEmb.im)*0.5*SCALE);
+      }
+    }
+
+    // representability: DistMult forces symmetry; all spotlight relations are antisymmetric
+    const repOK = mode!=="distmult";
+
+    // ── score bars: this triple under all three models ─────────────────────
+    if(spot){
+      const models=["transe","distmult","rotate"];
+      const mLab=["TransE","DistMult","RotatE"];
+      const mCol=[CY,RO,VI];
+      const px=-SCALE*1.95;
+      models.forEach((mm,i)=>{
+        const v=scoreFor(mm,hEmb,tEmb,relName,EMB);
+        const h=Math.max(0.08, 0.45+v*0.55);
+        const active=(mm===mode);
+        const c=mCol[i].clone();
+        const bar=new T.Mesh(new T.BoxGeometry(0.55,h,0.55),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(active?0.85:0.2),emissiveIntensity:active?0.7:0.18,roughness:0.4,transparent:!active,opacity:active?1:0.45}));
+        const pz=-SCALE*0.9+i*0.95;
+        bar.position.set(px, h/2, pz);
+        gScore.add(bar);
+        api.pick(bar,{bar:{model:mLab[i],score:+v.toFixed(2),active}});
+        slbl(mLab[i]+" "+v.toFixed(2),mCol[i].getStyle(),0.34,px-1.45,0.12,pz);
+      });
+      slbl("φ(h,r,t)","#8a99ad",0.42,px,2.5,-SCALE*0.9-0.95);
+    }
+
+    // ── composition demo (held-out target_of revealed) ─────────────────────
+    let compErr=null;
+    if(showHeld){
+      const bari=EMB.Bari, stat=EMB.STAT3;
+      let composed;
+      if(mode==="rotate"){
+        const r1=cmul(bari.re,bari.im,Math.cos(PHI_INH),Math.sin(PHI_INH));
+        composed=cmul(r1.re,r1.im,Math.cos(PHI_PHO),Math.sin(PHI_PHO));
+      } else if(mode==="transe"){
+        const tr1=relTransVec("inhibits",EMB), tr2=relTransVec("phospho",EMB);
+        composed={re:bari.re+tr1.re+tr2.re, im:bari.im+tr1.im+tr2.im};
+      } else { composed={re:stat.re,im:stat.im}; } // DistMult cannot compose paths
+      compErr=dist2(composed.re,composed.im,stat.re,stat.im);
+      const cW=new T.Vector3(composed.re*SCALE,0.05,composed.im*SCALE);
+      const cm=new T.Mesh(new T.SphereGeometry(0.16,12,10),new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.95,roughness:0.25}));
+      cm.position.copy(cW); gScore.add(cm);
+      const dl=new T.Line(new T.BufferGeometry().setFromPoints([cW,world(stat)]),new T.LineDashedMaterial({color:0xa78bfa}));
+      dl.computeLineDistances(); gRel.add(dl);
+      slbl("Bari∘r₁∘r₂","#a78bfa",0.42,composed.re*SCALE,0.7,composed.im*SCALE);
+    }
+
+    // ── metrics ──────────────────────────────────────────────────────────────
+    const modelName={transe:"TransE",distmult:"DistMult",rotate:"RotatE"}[mode];
+    const heldScore=scoreFor(mode,EMB.STAT3,EMB.Bari,"target_of",EMB);
+
+    api.setMetric("activeModel",modelName);
+    api.setMetric("tripleScore",sc.toFixed(2));
+    api.setMetric("representable",repOK?"yes":"NO (sym)");
+    api.setMetric("compError",compErr==null?"—":compErr.toFixed(2));
+
+    sceneSnap={
+      mode, relation:relIdx, relName,
+      noise:+noiseLvl.toFixed(2), dim:dimRaw, heldout:showHeld,
+      tripleScore:+sc.toFixed(3),
+      heldScore:+heldScore.toFixed(3),
+      representable:repOK,
+      compError:compErr==null?null:+compErr.toFixed(3),
+      ic50JAK1:IC50_JAK1, ic50JAK2:IC50_JAK2, disgenet:DISGENET,
+      symPPI:SYM_PPI, symReg:SYM_REG, symTreat:SYM_TREAT
+    };
+
+    let badge,formula,insight,state;
+    if(mode==="transe"){
+      badge="TransE · translation · "+relName+(spot&&spot.held?" (held-out)":"");
+      formula="φ(h,r,t) = −‖ h + r − t ‖₂";
+      insight="TransE models each relation r as a translation vector. A true triple wants h + r ≈ t — the cyan h+r point should land on the tail node. Antisymmetric relations (TF→gene, drug→disease) fit well; symmetric ones cannot. The amber dashed residual is the scoring distance.";
+      state="Triple ("+(spot?spot.h:"-")+", "+relName+", "+(spot?spot.t:"-")+") scores "+sc.toFixed(2)+". Composition r_inhibits + r_phospho reaches indirect Bari→STAT3 by vector addition"+(compErr!=null?(" (error "+compErr.toFixed(2)+")"):"")+".";
+    } else if(mode==="distmult"){
+      badge="DistMult · diagonal bilinear · "+relName;
+      formula="φ(h,r,t) = Σᵢ hᵢ·rᵢ·tᵢ  (= φ(t,r,h))";
+      insight="DistMult scores with a diagonal bilinear form that is inherently SYMMETRIC: swapping head and tail gives the identical score (red reverse arrow). Ideal for PPI 'physically binds' (sym-frac ≈ 0.95) — but it CANNOT represent the antisymmetric regulatory / treats relations here, so 'representable' reads NO.";
+      state="φ(h,r,t)="+sc.toFixed(2)+" equals φ(t,r,h) by construction. For sym-frac "+SYM_PPI.toFixed(2)+" relations this is correct; for sym-frac "+SYM_REG.toFixed(2)+" it is structurally wrong.";
+    } else {
+      badge="RotatE · complex rotation · "+relName+(showHeld?" + composition":"");
+      formula="φ(h,r,t) = −‖ h ⊙ r − t ‖,  |rᵢ|=1";
+      insight="RotatE rotates h by relation angle θ on the unit circle (cyan arc) to predict t. Because rotations compose (θ₁+θ₂) and invert (−θ), RotatE captures all four patterns — symmetry, antisymmetry, inversion, composition. Reveal the held-out triple to watch Bari∘r_inhibits∘r_phospho rotate onto STAT3.";
+      state="θ(inhibits)="+PHI_INH.toFixed(2)+", θ(phospho)="+PHI_PHO.toFixed(2)+". Triple scores "+sc.toFixed(2)+(compErr!=null?("; 2-hop composition error to STAT3 = "+compErr.toFixed(2)):"")+".";
+    }
+
+    return {
+      badge, formula, insight, state,
+      metrics:{
+        activeModel:modelName,
+        tripleScore:sc.toFixed(2),
+        representable:repOK?"yes":"NO (sym)",
+        compError:compErr==null?"—":compErr.toFixed(2)
+      },
+      focus:{center:[-1.5,1.2,0],radius:13}
+    };
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d05",
+    kind:"kge-geometry",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D05 · Biomedical KG representation learning",
+    subtitle:"One 5-entity JAK-STAT / baricitinib subgraph, three KGE geometries. Watch how TransE translation, DistMult symmetry, and RotatE rotation score the same biomedical triples — and which relations each can (or cannot) represent.",
+    selectedLabel:"Entity / score",
+    selectedHint:"Click a node, score bar, or predicted point.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"transe",   label:"TransE (translation · h+r≈t)"},
+      {value:"distmult", label:"DistMult (symmetric bilinear)"},
+      {value:"rotate",   label:"RotatE (complex rotation · composition)"}
+    ],
+    params:[
+      {key:"relation",label:"spotlight relation",min:0,max:4,step:1,value:0,
+       fmt:v=>["inhibits","phospho","assoc","treats","target_of"][Math.round(v)]},
+      {key:"heldout", label:"reveal held-out + composition",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)?"shown":"hidden"},
+      {key:"noise",   label:"embedding noise (training quality)",min:0,max:1,step:0.05,value:0.0,
+       fmt:v=>v.toFixed(2)},
+      {key:"dim",     label:"embedding dim (64→512)",min:64,max:512,step:64,value:256,
+       fmt:v=>Math.round(v).toString(),modes:["transe","rotate"]}
+    ],
+    metrics:[
+      {key:"activeModel",  label:"Active model",     accent:"cyan"},
+      {key:"tripleScore",  label:"Triple score φ",   accent:"violet"},
+      {key:"representable",label:"Representable?",    accent:"green"},
+      {key:"compError",    label:"2-hop comp. error",accent:"amber"}
+    ],
+    layers:[
+      {group:"nodes",    label:"Entities"},
+      {group:"relations",label:"Relation ops / circle"},
+      {group:"scores",   label:"Score bars / predictions"},
+      {group:"labels",   label:"Labels"}
+    ],
+    primary:{
+      label:"Reveal held-out triple",
+      on:api=>{api.setParam("heldout",1);}
+    },
+    secondary:{
+      label:"Spotlight target_of",
+      on:api=>{api.setParam("relation",4);api.setParam("heldout",1);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=drug / predicted h+r,h⊙r · <span style="color:#34d399">green</span>=protein · <span style="color:#fbbf24">amber</span>=disease / residual · <span style="color:#a78bfa">violet</span>=evidence edge / composition · <span style="color:#fb7185">rose</span>=symmetry shadow / held-out.',
+    onParam(api){ api.frame([-1.5,1.2,0],13); },
+    onMode(api){ api.frame([-1.5,1.2,0],13); },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node.id+" · "+d.node.type+" · "+d.node.sub);
+      if(d.bar)  api.setSelected(d.bar.model+" · φ="+d.bar.score+(d.bar.active?" · ACTIVE":""));
+      if(d.pred) api.setSelected(d.pred.model+" predicted tail for r="+d.pred.rel);
+    },
+    build,
+    snapshot(s){
+      const relNames=["inhibits","phospho","assoc","treats","target_of"];
+      const relName=relNames[Math.max(0,Math.min(4,Math.round(s.relation)))];
+      const heldShown=Math.round(s.heldout);
+      const EMB=embed(+s.noise, Math.round(s.dim));
+      const heldScore=scoreFor(s.mode,EMB.STAT3,EMB.Bari,"target_of",EMB);
+      const repOK = s.mode!=="distmult";
+      return {
+        mode:s.mode,
+        relation:Math.round(s.relation),
+        relName,
+        heldout:heldShown,
+        noise:+(+s.noise).toFixed(2),
+        dim:Math.round(s.dim),
+        heldScore:+heldScore.toFixed(3),
+        representable:repOK,
+        symPPI:SYM_PPI, symReg:SYM_REG, symTreat:SYM_TREAT,
+        ic50JAK1:IC50_JAK1, ic50JAK2:IC50_JAK2, disgenet:DISGENET,
+        drkgEntities:ENT_COUNT, drkgTriples:TRIPLE_COUNT, drkgRelations:REL_TYPES,
+        ...sceneSnap
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

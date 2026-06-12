@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G08 · Sheaf hypergraphs and higher-order biology</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no RNG, no clock) ────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  WORKED EXAMPLE — note §5 erythroid regulatory complex {GATA1,TAL1,LMO2,KLF1}
+  //  hyperedge stalk d_e = 2 (expression, ATAC). Scaled-identity restriction
+  //  maps. Energy = Σ over C(4,2)=6 pairs of ||R_i x_i − R_j x_j||².
+  // ════════════════════════════════════════════════════════════════════════
+  const GENES=["GATA1","TAL1","LMO2","KLF1"];               // g0..g3
+  const X_FULL=[[3.2,1.8],[2.8,1.6],[2.1,1.4],[4.5,2.2]];   // node features (expr, ATAC)
+  const X_KO  =[[3.2,1.8],[2.8,1.6],[0.05,0.10],[4.5,2.2]]; // LMO2 knocked out
+  const R0=[0.9,0.8,0.6,1.0];                               // restriction-map scales
+  // the 6 unordered pairs of {0,1,2,3}
+  const PAIRS=[[0,1],[0,2],[0,3],[1,2],[1,3],[2,3]];
+
+  // projection of a node into the d_e=2 hyperedge stalk
+  function proj(x,scale){return [scale*x[0],scale*x[1]];}
+  // squared distance in the stalk
+  function pe(a,b){const dx=a[0]-b[0],dy=a[1]-b[1];return dx*dx+dy*dy;}
+
+  // per-pair energies for a given feature set + restriction scales
+  function pairEnergies(X,R){
+    return PAIRS.map(([i,j])=>{
+      return pe(proj(X[i],R[i]),proj(X[j],R[j]));
+    });
+  }
+  // total hyperedge energy
+  function totalE(X,R){return pairEnergies(X,R).reduce((s,v)=>s+v,0);}
+
+  // STAR approximation: only pairs touching hub (node 3 = KLF1, the target/reference).
+  // Keeps k-1=3 terms instead of C(4,2)=6.
+  const HUB=3;
+  function starEnergies(X,R){
+    return PAIRS.map(([i,j],k)=>(i===HUB||j===HUB)?pe(proj(X[i],R[i]),proj(X[j],R[j])):0);
+  }
+
+  let sceneSnap={};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const ko        = Math.round(s.knockout);    // 0 full · 1 LMO2 KO
+    const rLMO2      = s.rLMO2;                    // LMO2 restriction-map scale (note: 0.6)
+    const stalkRot   = s.stalkRot;                // shared-stalk frame rotation (deg) — visual consistency probe
+    const showAll    = Math.round(s.showStar);    // 0 all 6 pairs · 1 star (hub) only
+
+    const R=[R0[0],R0[1],ko? Math.min(rLMO2,0.18):rLMO2, R0[3]];
+    const X=ko? X_KO : X_FULL;
+
+    const gNodes =api.group("nodes");
+    const gHyper =api.group("hyper");
+    const gStalk =api.group("stalk");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+    // per-gene color: TFs cyan/green/amber, target violet
+    const GCOL=[CY,GR,AM,VI];
+
+    // node ring positions (4 genes on a square in the y=0 plane)
+    const RING=3.4;
+    const nodePos=GENES.map((g,i)=>{
+      const ang=(i/4)*Math.PI*2 + Math.PI/4;
+      return new T.Vector3(Math.cos(ang)*RING,0,Math.sin(ang)*RING);
+    });
+
+    // energies for current state
+    const peNow=pairEnergies(X,R);
+    const eNow=peNow.reduce((a,b)=>a+b,0);
+    const peStar=starEnergies(X,R);
+    const eStar=peStar.reduce((a,b)=>a+b,0);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: hyperedge — single joint constraint, shared stalk, 6 pairwise springs
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="hyperedge"){
+      // hyperedge node (centroid) — the shared stalk F(e)=R^2 lives here
+      const cen=new T.Vector3(0,1.6,0);
+      const heMesh=new T.Mesh(new T.SphereGeometry(0.55,24,18),
+        new T.MeshStandardMaterial({color:RO,emissive:RO,emissiveIntensity:0.55,roughness:0.3}));
+      heMesh.position.copy(cen); gHyper.add(heMesh);
+      api.pick(heMesh,{hyper:{members:4,stalk:2,energy:+eNow.toFixed(3)}});
+      lbl("hyperedge e · F(e)=ℝ²","#fb7185",1.45,0,2.55,0);
+
+      // shared-stalk frame gizmo (2 basis vectors of F(e)=ℝ²), rotatable by stalkRot
+      const th=stalkRot*Math.PI/180;
+      [[Math.cos(th),Math.sin(th),"#4dd7ff"],[-Math.sin(th),Math.cos(th),"#a78bfa"]].forEach(([dx,dz,bc])=>{
+        const a=cen.clone(), b=cen.clone().add(new T.Vector3(dx*0.95,0,dz*0.95));
+        const axis=new T.Mesh(new T.CylinderGeometry(0.03,0.03,a.distanceTo(b),8,1,true),
+          new T.MeshStandardMaterial({color:bc,emissive:bc,emissiveIntensity:0.5}));
+        axis.position.copy(a.clone().add(b).multiplyScalar(0.5));
+        axis.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),b.clone().sub(a).normalize());
+        gStalk.add(axis);
+      });
+      if(stalkRot>0) slbl("frame θ="+stalkRot.toFixed(0)+"°","#8a99ad",0.34,0,2.0,0);
+
+      // gene nodes + restriction-map arrows into the shared stalk
+      GENES.forEach((g,i)=>{
+        const p=nodePos[i];
+        const active=!(ko && i===2);
+        const c=new T.Color(GCOL[i]);
+        const node=new T.Mesh(new T.SphereGeometry(active?0.34:0.20,20,14),
+          new T.MeshStandardMaterial({color:active?c:new T.Color("#27384f"),
+            emissive:active?c.clone().multiplyScalar(0.6):new T.Color("#16243a"),
+            emissiveIntensity:active?0.6:0.25,roughness:0.4}));
+        node.position.copy(p); gNodes.add(node);
+        api.pick(node,{gene:{name:g,scale:+R[i].toFixed(2),proj:proj(X[i],R[i]).map(v=>+v.toFixed(2)),ko:(ko&&i===2)}});
+        lbl(g,GCOL[i],1.25,p.x,0.62,p.z);
+        slbl("R="+R[i].toFixed(2),GCOL[i],0.34,p.x,0.20,p.z);
+
+        // restriction map arrow node -> hyperedge stalk
+        const aw=new T.Mesh(new T.CylinderGeometry(0.035,0.035,p.distanceTo(cen),10,1,true),
+          new T.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:0.3,transparent:true,opacity:active?0.9:0.3}));
+        const mid=p.clone().add(cen).multiplyScalar(0.5); aw.position.copy(mid);
+        const dir=cen.clone().sub(p).normalize();
+        aw.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+        gHyper.add(aw);
+      });
+
+      // 6 pairwise consistency "springs" — thickness/heat ∝ pairwise energy
+      const maxPE=Math.max(...peNow,0.5);
+      PAIRS.forEach(([i,j],k)=>{
+        if(showAll===1 && !(i===HUB||j===HUB)) return; // star: skip non-hub pairs
+        const e=peNow[k];
+        const t=Math.min(1,e/maxPE);
+        const col=new T.Color().setRGB(0.30+0.65*t, 0.62-0.45*t, 0.78-0.55*t); // cool->hot
+        const pa=nodePos[i], pb=nodePos[j];
+        const w=0.02+0.06*t;
+        const sp=new T.Mesh(new T.CylinderGeometry(w,w,pa.distanceTo(pb),8,1,true),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.4,roughness:0.5,transparent:true,opacity:0.85}));
+        sp.position.copy(pa.clone().add(pb).multiplyScalar(0.5));
+        sp.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),pb.clone().sub(pa).normalize());
+        gNodes.add(sp);
+        api.pick(sp,{pair:{a:GENES[i],b:GENES[j],energy:+e.toFixed(3)}});
+      });
+
+      const shownE=showAll===1?eStar:eNow;
+      const nPairs=showAll===1?3:6;
+      lbl(showAll===1?"star: "+nPairs+" hub pairs":"all C(4,2)="+nPairs+" pairs","#8a99ad",1.05,0,-0.55,RING+0.7);
+      lbl("E_hyp = "+shownE.toFixed(1),"#fb7185",1.5,0,-1.6,0);
+
+      api.setMetric("energy",shownE.toFixed(2));
+      api.setMetric("topPair",topPairLabel(peNow,showAll));
+      api.setMetric("koDelta", ko? "+"+(eNow-totalE(X_FULL,R0)).toFixed(1) : "—");
+      api.setMetric("pairs", nPairs+" / 6");
+
+      sceneSnap={mode,knockout:ko,star:showAll,rLMO2:+R[2].toFixed(3),
+        energyHyper:+shownE.toFixed(3),energyFull:+totalE(X_FULL,R0).toFixed(3),
+        nPairs,topPairEnergy:+Math.max(...peNow).toFixed(3)};
+
+      return {
+        badge:"Hyperedge · "+(showAll===1?"star":"all pairs")+(ko?" · LMO2 KO":" · full complex"),
+        formula:"E_hyp = Σ_{(i,j)∈C(e,2)} ‖R_i x_i − R_j x_j‖²",
+        insight:"One hyperedge e={GATA1,TAL1,LMO2,KLF1} carries a single shared stalk F(e)=ℝ². Each member projects in through its restriction map R_i·I (thin spokes to the red hub). The six springs are the C(4,2) pairwise consistency terms; hot springs are high-energy disagreements. The joint constraint is satisfied only when all four projections coincide.",
+        state:"E_hyp = "+shownE.toFixed(2)+" over "+nPairs+" pairs. Hottest pair: "+topPairLabel(peNow,showAll)+". "+(ko?"LMO2 absent → its three springs flare.":"Full complex: LMO2 springs are the warm ones (low restriction-map magnitude)."),
+        metrics:{energy:shownE.toFixed(2),topPair:topPairLabel(peNow,showAll),koDelta:ko?"+"+(eNow-totalE(X_FULL,R0)).toFixed(1):"—",pairs:nPairs+" / 6"},
+        focus:{center:[0,0.6,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: pairwise — clique-expansion: 6 INDEPENDENT edges, no shared stalk
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="pairwise"){
+      // The SAME 6 pairs, but drawn as independent edges — no central hub.
+      // On knockout, a pairwise model only "sees" change in LMO2-adjacent edges.
+      const fullPE=pairEnergies(X_FULL,R0);
+      // which pairs change under the current (KO) state vs full?
+      GENES.forEach((g,i)=>{
+        const p=nodePos[i];
+        const active=!(ko && i===2);
+        const c=new T.Color(GCOL[i]);
+        const node=new T.Mesh(new T.SphereGeometry(active?0.34:0.20,20,14),
+          new T.MeshStandardMaterial({color:active?c:new T.Color("#27384f"),
+            emissive:active?c.clone().multiplyScalar(0.6):new T.Color("#16243a"),
+            emissiveIntensity:active?0.6:0.25,roughness:0.4}));
+        node.position.copy(p); gNodes.add(node);
+        api.pick(node,{gene:{name:g,scale:+R[i].toFixed(2),ko:(ko&&i===2)}});
+        lbl(g,GCOL[i],1.25,p.x,0.62,p.z);
+      });
+
+      const maxPE=Math.max(...peNow,0.5);
+      let changed=0;
+      PAIRS.forEach(([i,j],k)=>{
+        const e=peNow[k];
+        const wasE=fullPE[k];
+        const moved=Math.abs(e-wasE)>0.05;
+        if(moved) changed++;
+        const t=Math.min(1,e/maxPE);
+        // independent edges: green when unchanged by KO, rose when this edge moved
+        const col=moved? new T.Color(RO) : new T.Color(GR).lerp(new T.Color(SL),0.35);
+        const pa=nodePos[i], pb=nodePos[j];
+        const w=0.025+0.05*t;
+        const sp=new T.Mesh(new T.CylinderGeometry(w,w,pa.distanceTo(pb),8,1,true),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:moved?0.6:0.25,roughness:0.5,transparent:true,opacity:moved?0.95:0.6}));
+        sp.position.copy(pa.clone().add(pb).multiplyScalar(0.5));
+        sp.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),pb.clone().sub(pa).normalize());
+        gNodes.add(sp);
+        api.pick(sp,{pair:{a:GENES[i],b:GENES[j],energy:+e.toFixed(3),moved}});
+      });
+
+      lbl("6 independent edges — no shared stalk","#8a99ad",1.1,0,-0.55,RING+0.7);
+      lbl(ko? changed+" of 6 edges react to KO" : "full complex","#fb7185",1.25,0,1.9,0);
+
+      const eIndep=eNow;
+      api.setMetric("energy",eIndep.toFixed(2));
+      api.setMetric("topPair",topPairLabel(peNow,0));
+      api.setMetric("koDelta", ko? changed+"/6 edges" : "—");
+      api.setMetric("pairs","6 indep");
+
+      sceneSnap={mode,knockout:ko,star:0,rLMO2:+R[2].toFixed(3),
+        energyPairwise:+eIndep.toFixed(3),edgesChanged:changed,energyFull:+totalE(X_FULL,R0).toFixed(3),
+        nPairs:6,topPairEnergy:+Math.max(...peNow).toFixed(3)};
+
+      return {
+        badge:"Pairwise (clique) · "+(ko?"LMO2 KO → "+changed+"/6 react":"full complex"),
+        formula:"E_pair = Σ_e ‖R_i x_i − R_j x_j‖²   (6 independent edges)",
+        insight:"Clique expansion replaces the one hyperedge with six independent pairwise edges, each with its own restriction maps — no shared stalk. On LMO2 knockout only the edges touching LMO2 turn red and move; the four LMO2-free edges (rose vs green) stay frozen. The model cannot tell a 3/4 sub-complex from the full complex, because the joint four-way constraint was never encoded.",
+        state:ko? changed+" of 6 edges change on LMO2 KO; the rest are blind to the missing member."
+                 : "Full complex: all six edges carry their pairwise energy independently.",
+        metrics:{energy:eIndep.toFixed(2),topPair:topPairLabel(peNow,0),koDelta:ko?changed+"/6 edges":"—",pairs:"6 indep"},
+        focus:{center:[0,0.4,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: knockout — energy bars: full vs LMO2-KO, hyperedge vs pairwise-touch
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="knockout"){
+      // Bars compare the SIX pairwise energies, full (cyan) vs KO (rose).
+      const peFull=pairEnergies(X_FULL,R0);
+      const peKO  =pairEnergies(X_KO, [R0[0],R0[1],Math.min(rLMO2,0.18),R0[3]]);
+      const eFull=peFull.reduce((a,b)=>a+b,0);
+      const eKO=peKO.reduce((a,b)=>a+b,0);
+
+      const bx=-4.4, bw=1.15, gap=1.5;
+      const yS=0.36;
+      // baseline
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(bx-0.6,0,0),new T.Vector3(bx+6*gap,0,0)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+
+      PAIRS.forEach(([i,j],k)=>{
+        const x=bx+k*gap;
+        const hF=0.05+peFull[k]*yS;
+        const hK=0.05+peKO[k]*yS;
+        // full bar (cyan, behind)
+        const bF=new T.Mesh(new T.BoxGeometry(bw,hF,0.9),
+          new T.MeshStandardMaterial({color:0x4dd7ff,emissive:0x113040,emissiveIntensity:0.4,roughness:0.4,transparent:true,opacity:0.55}));
+        bF.position.set(x,hF/2,-0.7); gBars.add(bF);
+        // KO bar (rose, front)
+        const grew=peKO[k]>peFull[k]+0.05;
+        const bK=new T.Mesh(new T.BoxGeometry(bw,hK,0.9),
+          new T.MeshStandardMaterial({color:grew?0xfb7185:0x34d399,emissive:grew?0x4a1525:0x10261d,emissiveIntensity:0.6,roughness:0.4}));
+        bK.position.set(x,hK/2,0.55); gBars.add(bK);
+        api.pick(bK,{bar:{pair:GENES[i]+"–"+GENES[j],full:+peFull[k].toFixed(2),ko:+peKO[k].toFixed(2)}});
+        slbl(GENES[i].slice(0,2)+"·"+GENES[j].slice(0,2),"#8a99ad",0.30,x,-0.42,0);
+      });
+
+      // totals as tall markers on the right
+      const tx=bx+6*gap+0.8;
+      const hTF=0.05+eFull*yS*0.5, hTK=0.05+eKO*yS*0.5;
+      const tF=new T.Mesh(new T.BoxGeometry(0.7,hTF,0.7),new T.MeshStandardMaterial({color:0x4dd7ff,emissive:0x113040,emissiveIntensity:0.4,transparent:true,opacity:0.6}));
+      tF.position.set(tx,hTF/2,-0.4); gBars.add(tF);
+      const tK=new T.Mesh(new T.BoxGeometry(0.7,hTK,0.7),new T.MeshStandardMaterial({color:0xfb7185,emissive:0x4a1525,emissiveIntensity:0.6}));
+      tK.position.set(tx,hTK/2,0.5); gBars.add(tK);
+      lbl("ΣE","#cfe0f0",1.0,tx,hTK+0.5,0);
+
+      lbl("E_full="+eFull.toFixed(1)+"  →  E_KO="+eKO.toFixed(1),"#fb7185",1.35,0,hTK+1.4,0);
+      lbl("per-pair energy: full (cyan) vs LMO2-KO (rose)","#8a99ad",1.05,0,-1.15,0);
+
+      const ratio=eKO/eFull;
+      api.setMetric("energy",eKO.toFixed(2));
+      api.setMetric("topPair","×"+ratio.toFixed(2));
+      api.setMetric("koDelta","+"+(eKO-eFull).toFixed(1));
+      api.setMetric("pairs","6 / 6");
+
+      sceneSnap={mode,knockout:1,star:0,rLMO2:+Math.min(rLMO2,0.18).toFixed(3),
+        energyFull:+eFull.toFixed(3),energyKO:+eKO.toFixed(3),koRatio:+ratio.toFixed(3),
+        nPairs:6,topPairEnergy:+Math.max(...peKO).toFixed(3)};
+
+      return {
+        badge:"Knockout sensitivity · E ×"+ratio.toFixed(2),
+        formula:"ΔE_hyp = E_hyp(x_LMO2≈0) − E_hyp(x_full)",
+        insight:"Knocking out LMO2 (x_LMO2 → [0.05,0.10]) makes its three springs (GATA1–LMO2, TAL1–LMO2, LMO2–KLF1) flare from rose. The total hyperedge energy jumps from "+eFull.toFixed(1)+" to "+eKO.toFixed(1)+" (×"+ratio.toFixed(2)+") — a clear partial-assembly alarm. A pairwise model only registers the two or three LMO2-adjacent edges, so its total barely moves: hyperedge sheaves are strictly more sensitive to missing complex members.",
+        state:"Full E="+eFull.toFixed(2)+" → KO E="+eKO.toFixed(2)+" (×"+ratio.toFixed(2)+"). Rose bars are the LMO2-touching pairs that flare; cyan = baseline full-complex energy.",
+        metrics:{energy:eKO.toFixed(2),topPair:"×"+ratio.toFixed(2),koDelta:"+"+(eKO-eFull).toFixed(1),pairs:"6 / 6"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    return {badge:"G08",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // hottest pair label helper
+  function topPairLabel(peArr,star){
+    let best=-1,bi=0;
+    PAIRS.forEach(([i,j],k)=>{
+      if(star===1 && !(i===HUB||j===HUB)) return;
+      if(peArr[k]>best){best=peArr[k];bi=k;}
+    });
+    const[i,j]=PAIRS[bi];
+    return GENES[i].slice(0,4)+"–"+GENES[j].slice(0,4);
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g08",
+    kind:"sheaf-hypergraph",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G08 · Sheaf hypergraphs and higher-order biology",
+    subtitle:"The erythroid complex {GATA1, TAL1, LMO2, KLF1} as one hyperedge. Three views: the shared-stalk hyperedge, its lossy pairwise clique expansion, and the knockout-sensitivity that distinguishes them.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, a consistency spring, or a bar.",
+    modes:[
+      {value:"hyperedge", label:"Hyperedge (shared stalk · 6 springs)"},
+      {value:"pairwise",  label:"Pairwise clique (6 independent edges)"},
+      {value:"knockout",  label:"Knockout sensitivity (full vs LMO2-KO)"}
+    ],
+    params:[
+      {key:"knockout", label:"LMO2 state (0=present 1=knockout)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"present":"knockout",modes:["hyperedge","pairwise"]},
+      {key:"rLMO2",    label:"R(LMO2→e) restriction scale",min:0.2,max:1.0,step:0.05,value:0.6,
+       fmt:v=>v.toFixed(2)},
+      {key:"showStar", label:"hyperedge pairs (0=all C(4,2) 1=star hub)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"all 6":"star 3",modes:["hyperedge"]},
+      {key:"stalkRot", label:"shared-stalk frame θ (deg)",min:0,max:90,step:5,value:0,
+       fmt:v=>v.toFixed(0)+"°",modes:["hyperedge"]}
+    ],
+    metrics:[
+      {key:"energy",  label:"Hyperedge energy E_hyp",accent:"rose"},
+      {key:"topPair", label:"Hottest pair / ratio",accent:"amber"},
+      {key:"koDelta", label:"Knockout ΔE",accent:"violet"},
+      {key:"pairs",   label:"Pairs summed",accent:"cyan"}
+    ],
+    layers:[
+      {group:"nodes", label:"Genes / springs"},
+      {group:"hyper", label:"Hyperedge stalk"},
+      {group:"bars",  label:"Energy bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Knock out LMO2",
+      on:api=>{api.setParam("knockout",1);}
+    },
+    secondary:{
+      label:"Restore complex",
+      on:api=>{api.setParam("knockout",0);api.setParam("rLMO2",0.6);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=GATA1 · <span style="color:#34d399">green</span>=TAL1 · <span style="color:#fbbf24">amber</span>=LMO2 · <span style="color:#a78bfa">violet</span>=KLF1 (target) · <span style="color:#fb7185">red</span>=hyperedge stalk / high-energy spring. Springs heat with pairwise consistency energy ‖R_i x_i − R_j x_j‖².',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="knockout") api.frame([0,2,0],13);
+      else api.frame([0,0.5,0],11);
+    },
+    onSelect(api,d){
+      if(d.gene)  api.setSelected(d.gene.name+" · R="+d.gene.scale+(d.gene.ko?" · KNOCKED OUT":(d.gene.proj?" · proj=["+d.gene.proj.join(", ")+"]":"")));
+      if(d.pair)  api.setSelected(d.pair.a+"–"+d.pair.b+" · energy "+d.pair.energy+(d.pair.moved?" · moved by KO":""));
+      if(d.hyper) api.setSelected("hyperedge e · "+d.hyper.members+" members · stalk ℝ"+d.hyper.stalk+" · E="+d.hyper.energy);
+      if(d.bar)   api.setSelected(d.bar.pair+" · full "+d.bar.full+" → KO "+d.bar.ko);
+    },
+    build,
+    snapshot(s){
+      const ko=Math.round(s.knockout);
+      const rL=ko? Math.min(s.rLMO2,0.18) : s.rLMO2;
+      const X=ko? X_KO : X_FULL;
+      const R=[R0[0],R0[1],rL,R0[3]];
+      const peNow=pairEnergies(X,R);
+      const eNow=peNow.reduce((a,b)=>a+b,0);
+      const eFull=totalE(X_FULL,R0);
+      const star=Math.round(s.showStar);
+      const shownE=(s.mode==="hyperedge"&&star===1)?starEnergies(X,R).reduce((a,b)=>a+b,0):eNow;
+      return {
+        mode:s.mode,
+        knockout:ko,
+        star:star,
+        rLMO2:+rL.toFixed(3),
+        energyHyper:+eNow.toFixed(3),
+        energyShown:+shownE.toFixed(3),
+        energyFull:+eFull.toFixed(3),
+        koRatio:+(eNow/eFull).toFixed(3),
+        nPairs:(s.mode==="hyperedge"&&star===1)?3:6,
+        topPairEnergy:+Math.max(...peNow).toFixed(3),
+        koDoublesEnergy:(eNow/eFull)>1.6
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

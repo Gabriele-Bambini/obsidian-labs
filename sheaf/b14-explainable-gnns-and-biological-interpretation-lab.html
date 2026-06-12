@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B14 · Explainable GNNs and biological interpretation</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; fully reproducible) ──────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+  // ── the worked example (Section 5 of B14) ────────────────────────────────
+  // prediction: TF regulates GeneA in cell state S — score 0.91
+  const PRED_FULL=0.91;
+  // edges with explainer mask weights + evidence type + biological-support tier.
+  //   support tier: 3=held-out perturbation (strong) 2=motif+accessibility
+  //                 1=cell-state context  0=co-expression / no independent evidence
+  // src/dst index into NODES below.
+  const NODES=[
+    {id:"TF",      pos:[-3.4, 1.7, 0.0], col:"cyan",  role:"transcription factor"},
+    {id:"peak1",   pos:[-1.0, 2.5, 1.6], col:"violet",role:"enhancer peak"},
+    {id:"motif1",  pos:[-3.0, 3.4, 1.8], col:"amber", role:"TF motif evidence"},
+    {id:"perturbTF",pos:[ 1.4,-2.2,-1.2],col:"green", role:"perturb-seq node"},
+    {id:"stateS",  pos:[-1.6,-2.4, 1.7], col:"cyan",  role:"cell-state context"},
+    {id:"GeneB",   pos:[ 2.8, 1.0, 2.0], col:"amber", role:"co-expressed gene"},
+    {id:"GeneA",   pos:[ 1.8, 0.2,-0.4], col:"rose",  role:"target gene (readout)"}
+  ];
+  const NIDX={};NODES.forEach((n,i)=>NIDX[n.id]=i);
+  // edges: {src,dst,w(mask),ev(label),tier(bio support 0..3)}
+  const EDGES=[
+    {src:"TF",       dst:"peak1", w:0.82, ev:"motif",       tier:2},
+    {src:"peak1",    dst:"GeneA", w:0.78, ev:"enhancer",    tier:2},
+    {src:"perturbTF",dst:"GeneA", w:0.74, ev:"perturbation",tier:3},
+    {src:"stateS",   dst:"GeneA", w:0.56, ev:"cell-state",  tier:1},
+    {src:"GeneB",    dst:"GeneA", w:0.14, ev:"co-expression",tier:0},
+    {src:"TF",       dst:"GeneA", w:0.45, ev:"candidate",   tier:1},
+    {src:"motif1",   dst:"TF",    w:0.61, ev:"motif-score", tier:2}
+  ];
+
+  let sceneSnap={};
+
+  // ── deterministic model: predicted score given a kept-edge subset ─────────
+  // The trained model's score is dominated by the high-mask evidence path.
+  // Each edge contributes its mask weight scaled by a faithfulness coupling;
+  // dropping high-mask edges collapses the score toward a floor (0.30).
+  const EDGE_PULL={ // how much each edge's removal hurts the prediction
+    "TF>peak1":0.21,"peak1>GeneA":0.20,"perturbTF>GeneA":0.19,
+    "stateS>GeneA":0.10,"GeneB>GeneA":0.03,"TF>GeneA":0.07,"motif1>TF":0.05
+  };
+  const key=e=>e.src+">"+e.dst;
+  function scoreWithKept(keptSet){
+    // base full score minus the pull of every dropped edge (clamped to floor)
+    let s=PRED_FULL, floor=0.30, dropped=0;
+    EDGES.forEach(e=>{ if(!keptSet.has(key(e))){ s-=EDGE_PULL[key(e)]||0; dropped++; } });
+    return Math.max(floor,Math.min(PRED_FULL,s));
+  }
+
+  // ── method profiles (the lesson's 5 named XAI families, Section 4) ───────
+  // stability = top-evidence reproducibility across seeds (higher=more stable)
+  // bias      = tendency to highlight degree / database shortcuts (lower=better)
+  const METHODS=[
+    {key:"GNNExplainer", obj:"edge+feature mask",          stability:0.62, bias:0.30, kind:"mask"},
+    {key:"PGExplainer",  obj:"parameterized edge probs",   stability:0.71, bias:0.42, kind:"mask"},
+    {key:"GraphMask",    obj:"per-layer message gates",    stability:0.78, bias:0.22, kind:"gate"},
+    {key:"SubgraphX",    obj:"MCTS + Shapley subgraph",    stability:0.66, bias:0.20, kind:"subgraph"},
+    {key:"GraphLIME",    obj:"local feature attribution",  stability:0.49, bias:0.34, kind:"feature"}
+  ];
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const tau=clamp(s.tau,0,1);                 // mask threshold (keep edges w>=tau)
+    const methodIdx=Math.round(clamp(s.method,0,4));
+    const seeds=Math.round(clamp(s.seeds,1,5));
+    const lambda=clamp(s.lambda,0,1);           // sparsity penalty strength
+
+    const gGraph =api.group("graph");
+    const gMask  =api.group("mask");
+    const gValid =api.group("valid");
+    const gLabels=api.group("labels");
+
+    const colName={cyan:"#4dd7ff",rose:"#fb7185",amber:"#fbbf24",violet:"#a78bfa",green:"#34d399",slate:"#54667c"};
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const method=METHODS[methodIdx];
+    // edges that survive the mask threshold (and, for sparse modes, lambda raises the bar)
+    const effTau=clamp(tau+lambda*0.18,0,1);
+    function kept(e){return e.w>=effTau;}
+    const keptSet=new Set(EDGES.filter(kept).map(key));
+
+    // place all nodes (shared across modes)
+    function drawNodes(highlightFn){
+      NODES.forEach(n=>{
+        const hl=highlightFn?highlightFn(n):1;
+        const c=new T.Color(colName[n.col]);
+        const dim=hl<0.5;
+        const node=new T.Mesh(
+          new T.SphereGeometry(dim?0.26:0.36,20,16),
+          new T.MeshStandardMaterial({color:dim?new T.Color("#1e2d45"):c,emissive:dim?new T.Color("#101c2e"):c.clone().multiplyScalar(0.6),emissiveIntensity:dim?0.25:0.7,roughness:0.4})
+        );
+        node.position.set(n.pos[0],n.pos[1],n.pos[2]);
+        gGraph.add(node);
+        api.pick(node,{node:{id:n.id,role:n.role}});
+        lbl(n.id,dim?"#5b6b80":colName[n.col],1.0,n.pos[0],n.pos[1]+0.55,n.pos[2]);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: mask — GNNExplainer-style edge mask over the worked example
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="mask"){
+      drawNodes(n=>{
+        // node is "in explanation" if it touches a kept edge
+        const touched=EDGES.some(e=>kept(e)&&(e.src===n.id||e.dst===n.id));
+        return touched?1:0.3;
+      });
+      let keptCount=0;
+      EDGES.forEach(e=>{
+        const a=NODES[NIDX[e.src]].pos, b=NODES[NIDX[e.dst]].pos;
+        const on=kept(e);
+        if(on)keptCount++;
+        const w=on?(0.03+e.w*0.10):0.02;
+        const c=on?api.ramp(e.w,colName.slate,colName.cyan):new T.Color("#16263a");
+        const hex=on?("#"+c.getHexString()):"#16263a";
+        const ar=api.arrow([a[0],a[1],a[2]],[b[0],b[1],b[2]],{color:hex,width:w,head:on?0.20:0.12,group:"mask"});
+        if(on) lbl(e.w.toFixed(2),"#9fe0ff",0.9,(a[0]+b[0])/2,(a[1]+b[1])/2+0.28,(a[2]+b[2])/2);
+      });
+      // highlight the readout node
+      const ga=NODES[NIDX.GeneA].pos;
+      const halo=api.halo([ga[0],ga[1],ga[2]],{color:"rose",r:1.0,group:"mask"});
+      lbl("ŷ = "+PRED_FULL.toFixed(2),"#fb7185",1.3,ga[0],ga[1]-0.9,ga[2]);
+
+      api.setMetric("kept",keptCount+" / "+EDGES.length);
+      api.setMetric("score",scoreWithKept(keptSet).toFixed(2));
+      api.setMetric("method",method.key);
+      api.setMetric("sparsity",(1-keptCount/EDGES.length).toFixed(2));
+
+      const sc=scoreWithKept(keptSet);
+      sceneSnap={mode,method:methodIdx,tau:+effTau.toFixed(3),lambda:+lambda.toFixed(3),seeds,
+        keptEdges:keptCount,maskedScore:+sc.toFixed(3),sparsity:+(1-keptCount/EDGES.length).toFixed(3),faithfulnessDrop:null};
+
+      return {
+        badge:"Mask · "+method.key+" · keep w≥"+effTau.toFixed(2)+" · "+keptCount+" edges",
+        formula:"maximize agreement(ŷ_full, ŷ_masked) − λ·size(M)",
+        insight:"The explainer assigns each edge a mask weight. Raise the threshold τ (or sparsity λ) and only the strongest evidence survives: motif (TF→peak1 0.82), enhancer (peak1→GeneA 0.78), perturbation (perturbTF→GeneA 0.74). The co-expression edge GeneB→GeneA (0.14) drops first. The mask is the object you validate — not the answer.",
+        state:"Kept "+keptCount+" of "+EDGES.length+" edges at τ="+effTau.toFixed(2)+". Masked-graph score ≈ "+sc.toFixed(2)+". Method: "+method.key+" ("+method.obj+").",
+        metrics:{kept:keptCount+" / "+EDGES.length,score:sc.toFixed(2),method:method.key,sparsity:(1-keptCount/EDGES.length).toFixed(2)},
+        focus:{center:[-0.4,0.4,0.6],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: faithfulness — deletion test (remove top-mask edges, watch score)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="faithfulness"){
+      // sort edges by mask weight desc; "top-k" = those above τ are DELETED
+      const sorted=EDGES.slice().sort((p,q)=>q.w-p.w);
+      const deletedSet=new Set(sorted.filter(e=>e.w>=effTau).map(key));
+      const keptAfterDelete=new Set(EDGES.filter(e=>!deletedSet.has(key(e))).map(key));
+      // also the low-weight-only deletion (sparsity control)
+      const lowDeleted=new Set([key(EDGES.find(e=>e.ev==="co-expression"))]);
+      const keptAfterLow=new Set(EDGES.filter(e=>!lowDeleted.has(key(e))).map(key));
+
+      drawNodes(n=>1);
+      let nDel=0;
+      EDGES.forEach(e=>{
+        const a=NODES[NIDX[e.src]].pos, b=NODES[NIDX[e.dst]].pos;
+        const del=deletedSet.has(key(e));
+        if(del)nDel++;
+        const hex=del?"#fb7185":"#1f3650";
+        api.arrow([a[0],a[1],a[2]],[b[0],b[1],b[2]],{color:hex,width:del?0.07:0.03,head:del?0.20:0.10,opacity:del?0.95:0.5,group:"valid"});
+        if(del) lbl("✕ "+e.w.toFixed(2),"#fda4b0",0.95,(a[0]+b[0])/2,(a[1]+b[1])/2+0.30,(a[2]+b[2])/2);
+      });
+
+      const scoreTop=scoreWithKept(keptAfterDelete);   // after removing TOP edges
+      const scoreLow=scoreWithKept(keptAfterLow);       // after removing only co-expr
+      const dropTop=PRED_FULL-scoreTop;
+      const dropLow=PRED_FULL-scoreLow;
+
+      // bar trio: full · −top · −low  (3-blue + brown style)
+      const bars=[
+        {h:PRED_FULL,c:"#4dd7ff",lab:"full"},
+        {h:scoreTop, c:"#fb7185",lab:"−top"},
+        {h:scoreLow, c:"#34d399",lab:"−low"}
+      ];
+      bars.forEach((bar,i)=>{
+        const x=2.6+i*1.3, H=0.1+bar.h*3.6;
+        const m=new T.Mesh(new T.BoxGeometry(0.9,H,0.9),new T.MeshStandardMaterial({color:new T.Color(bar.c),emissive:new T.Color(bar.c).multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+        m.position.set(x,-2.4+H/2,2.2);
+        gValid.add(m);
+        lbl(bar.h.toFixed(2),bar.c,1.2,x,-2.3+H+0.4,2.2);
+        lbl(bar.lab,"#9fb4cc",0.85,x,-2.7,2.2);
+      });
+
+      api.setMetric("kept",(EDGES.length-nDel)+" / "+EDGES.length);
+      api.setMetric("score",scoreTop.toFixed(2));
+      api.setMetric("method","deletion");
+      api.setMetric("sparsity","drop "+dropTop.toFixed(2));
+
+      sceneSnap={mode,method:methodIdx,tau:+effTau.toFixed(3),lambda:+lambda.toFixed(3),seeds,
+        keptEdges:EDGES.length-nDel,maskedScore:+scoreTop.toFixed(3),sparsity:+(nDel/EDGES.length).toFixed(3),
+        faithfulnessDrop:+dropTop.toFixed(3),lowDrop:+dropLow.toFixed(3)};
+
+      return {
+        badge:"Faithfulness · deletion · drop="+dropTop.toFixed(2),
+        formula:"drop = ŷ_full − ŷ_(remove top mask edges)",
+        insight:"Faithfulness asks whether the highlighted edges actually drove the model. Remove the top-mask edges: the score falls from "+PRED_FULL.toFixed(2)+" to "+scoreTop.toFixed(2)+" (drop "+dropTop.toFixed(2)+") — large, so the explanation is faithful. Remove only the low-weight co-expression edge and the score barely moves ("+scoreLow.toFixed(2)+", drop "+dropLow.toFixed(2)+") — confirming sparsity. Faithful to the MODEL, not yet to biology.",
+        state:"Deleted "+nDel+" top edges → score "+scoreTop.toFixed(2)+" (drop "+dropTop.toFixed(2)+"). Low-edge-only deletion → "+scoreLow.toFixed(2)+" (drop "+dropLow.toFixed(2)+").",
+        metrics:{kept:(EDGES.length-nDel)+" / "+EDGES.length,score:scoreTop.toFixed(2),method:"deletion",sparsity:"drop "+dropTop.toFixed(2)},
+        focus:{center:[1.0,-0.3,1.2],radius:12.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: stability — same explainer across N seeds (top-evidence agreement)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="stability"){
+      drawNodes(n=>1);
+      // For each seed, the top-3 edges may shuffle. A stable method keeps the
+      // motif/enhancer/perturbation triple; an unstable one swaps in co-expr/degree.
+      const baseTop=["TF>peak1","peak1>GeneA","perturbTF>GeneA"];
+      const stab=method.stability;
+      // per-edge agreement frequency across seeds (deterministic from method+seed)
+      const agree={};
+      EDGES.forEach(e=>{agree[key(e)]=0;});
+      for(let sd=0;sd<seeds;sd++){
+        // jitter mask weights by a seed/method-dependent deterministic noise
+        const jittered=EDGES.map(e=>{
+          const noise=(prand(sd*13+methodIdx*7+e.w*100)-0.5)*(1-stab)*2.2;
+          return {k:key(e),w:e.w+noise};
+        }).sort((p,q)=>q.w-p.w);
+        const top3=jittered.slice(0,3).map(o=>o.k);
+        top3.forEach(k=>{agree[k]++;});
+      }
+      // draw edges, thickness/colour = agreement frequency
+      let stableHits=0;
+      EDGES.forEach(e=>{
+        const a=NODES[NIDX[e.src]].pos, b=NODES[NIDX[e.dst]].pos;
+        const f=agree[key(e)]/seeds;                  // 0..1 fraction of seeds it was top-3
+        const inBase=baseTop.indexOf(key(e))>=0;
+        if(inBase&&f>=0.8)stableHits++;
+        const hex=f>0?("#"+api.ramp(f,colName.slate,inBase?colName.green:colName.amber).getHexString()):"#16263a";
+        api.arrow([a[0],a[1],a[2]],[b[0],b[1],b[2]],{color:hex,width:0.02+f*0.08,head:0.10+f*0.12,opacity:0.4+f*0.55,group:"valid"});
+        if(f>0) lbl(Math.round(f*seeds)+"/"+seeds,f>=0.6?"#7fe7c0":"#fde68a",0.9,(a[0]+b[0])/2,(a[1]+b[1])/2+0.3,(a[2]+b[2])/2);
+      });
+
+      const stabScore=stableHits/3;                   // fraction of the canonical triple that's stable
+      api.setMetric("kept",stableHits+" / 3 stable");
+      api.setMetric("score",stabScore.toFixed(2));
+      api.setMetric("method",method.key);
+      api.setMetric("sparsity",method.stability.toFixed(2));
+
+      sceneSnap={mode,method:methodIdx,tau:+effTau.toFixed(3),lambda:+lambda.toFixed(3),seeds,
+        keptEdges:stableHits,maskedScore:+stabScore.toFixed(3),sparsity:+method.stability.toFixed(3),
+        faithfulnessDrop:null,stableTriple:+stabScore.toFixed(3)};
+
+      return {
+        badge:"Stability · "+method.key+" · "+seeds+" seeds · "+stableHits+"/3 stable",
+        formula:"stability = |∩ top-k(seed_i)| / k   across retrains",
+        insight:"Train and explain "+seeds+" times. A stable explanation keeps the same canonical triple — motif, enhancer, perturbation — every run (green, high fraction). An unstable method ("+method.key+", stability "+method.stability.toFixed(2)+") swaps in co-expression or degree shortcuts on some seeds (amber). Stability does not prove truth, but instability is a warning: a lead that changes every retrain is weak biology.",
+        state:seeds+" seeds · canonical triple stable in "+stableHits+"/3. Method stability score "+method.stability.toFixed(2)+". Increase seeds to stress-test reproducibility.",
+        metrics:{kept:stableHits+" / 3 stable",score:stabScore.toFixed(2),method:method.key,sparsity:method.stability.toFixed(2)},
+        focus:{center:[-0.4,0.4,0.6],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: validation — faithfulness vs plausibility vs causality (bio audit)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="validation"){
+      // colour every kept edge by its biological-support TIER, not its mask weight.
+      // tier 3 perturbation = causal-grade (green), tier 2 motif+access (cyan),
+      // tier 1 cell-state (violet), tier 0 co-expression (rose = weak / shortcut).
+      const tierCol=["#fb7185","#a78bfa","#4dd7ff","#34d399"];
+      const tierName=["co-expression (weak)","cell-state context","motif / accessibility","held-out perturbation (causal)"];
+      drawNodes(n=>{
+        const touched=EDGES.some(e=>kept(e)&&(e.src===n.id||e.dst===n.id));
+        return touched?1:0.3;
+      });
+      let causalEdges=0, weakEdges=0;
+      EDGES.forEach(e=>{
+        if(!kept(e))return;
+        const a=NODES[NIDX[e.src]].pos, b=NODES[NIDX[e.dst]].pos;
+        const hex=tierCol[e.tier];
+        if(e.tier>=3)causalEdges++;
+        if(e.tier===0)weakEdges++;
+        api.arrow([a[0],a[1],a[2]],[b[0],b[1],b[2]],{color:hex,width:0.04+e.tier*0.02,head:0.18,group:"valid"});
+        lbl(tierName[e.tier].split(" ")[0],hex,0.9,(a[0]+b[0])/2,(a[1]+b[1])/2+0.30,(a[2]+b[2])/2);
+      });
+
+      // three-tier evidence ladder bars (faithful / plausible / causal)
+      const keptN=EDGES.filter(kept).length;
+      const faithDrop=PRED_FULL-scoreWithKept(new Set(EDGES.filter(e=>!kept(e)).map(key)));
+      const ladder=[
+        {h:Math.min(1,faithDrop/0.57),c:"#4dd7ff",lab:"faithful"},
+        {h:keptN>0?clamp((keptN-weakEdges)/keptN,0,1):0,c:"#a78bfa",lab:"plausible"},
+        {h:keptN>0?causalEdges/Math.max(1,keptN):0,c:"#34d399",lab:"causal"}
+      ];
+      ladder.forEach((bar,i)=>{
+        const x=2.6+i*1.3, H=0.1+bar.h*3.4;
+        const m=new T.Mesh(new T.BoxGeometry(0.9,H,0.9),new T.MeshStandardMaterial({color:new T.Color(bar.c),emissive:new T.Color(bar.c).multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+        m.position.set(x,-2.4+H/2,2.2);
+        gValid.add(m);
+        lbl(bar.h.toFixed(2),bar.c,1.15,x,-2.3+H+0.4,2.2);
+        lbl(bar.lab,"#9fb4cc",0.8,x,-2.75,2.2);
+      });
+
+      api.setMetric("kept",keptN+" / "+EDGES.length);
+      api.setMetric("score",causalEdges+" causal");
+      api.setMetric("method","bio-audit");
+      api.setMetric("sparsity",weakEdges+" weak");
+
+      sceneSnap={mode,method:methodIdx,tau:+effTau.toFixed(3),lambda:+lambda.toFixed(3),seeds,
+        keptEdges:keptN,maskedScore:+ladder[0].h.toFixed(3),sparsity:+(weakEdges).toFixed(3),
+        faithfulnessDrop:+faithDrop.toFixed(3),causalEdges,weakEdges};
+
+      return {
+        badge:"Validation · "+causalEdges+" causal-grade · "+weakEdges+" weak edge(s)",
+        formula:"faithful ⊂ plausible ⊄ causal   (3 different claims)",
+        insight:"Re-colour the SAME mask by biological-support tier. perturbTF→GeneA is held-out perturbation (green, causal-grade). TF→peak1 and peak1→GeneA have motif + accessibility (cyan). GeneB→GeneA is bare co-expression (rose) — faithful to the model yet a likely shortcut. Faithfulness, plausibility and causality are three different claims: a faithful mask can still rest on a database artifact.",
+        state:"Kept "+keptN+" edges: "+causalEdges+" causal-grade, "+weakEdges+" weak. Ladder = faithful "+ladder[0].h.toFixed(2)+" / plausible "+ladder[1].h.toFixed(2)+" / causal "+ladder[2].h.toFixed(2)+".",
+        metrics:{kept:keptN+" / "+EDGES.length,score:causalEdges+" causal",method:"bio-audit",sparsity:weakEdges+" weak"},
+        focus:{center:[1.0,-0.3,1.2],radius:12.5}
+      };
+    }
+
+    return {badge:"B14",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────
+  MathLab.create({
+    id:"b14",
+    kind:"explainable-gnn-biology",
+    eyebrow:"Block B · GNN Architectures",
+    title:"B14 · Explainable GNNs and biological interpretation",
+    subtitle:"A tiny GRN prediction — TF regulates GeneA in cell state S, ŷ=0.91. Inspect the edge mask, then validate it: faithfulness (deletion), stability (across seeds), and the biological-support audit.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node or edge.",
+    modes:[
+      {value:"mask",         label:"Mask (GNNExplainer edge weights)"},
+      {value:"faithfulness", label:"Faithfulness (deletion test)"},
+      {value:"stability",    label:"Stability (across seeds)"},
+      {value:"validation",   label:"Validation (biological support)"}
+    ],
+    params:[
+      {key:"tau",    label:"mask threshold τ (keep w ≥ τ)",min:0,max:0.85,step:0.01,value:0.20,
+       fmt:v=>v.toFixed(2)},
+      {key:"lambda", label:"sparsity penalty λ",min:0,max:1,step:0.05,value:0.0,
+       fmt:v=>v.toFixed(2),modes:["mask","faithfulness","validation"]},
+      {key:"method", label:"explainer family",min:0,max:4,step:1,value:0,
+       fmt:v=>["GNNExplainer","PGExplainer","GraphMask","SubgraphX","GraphLIME"][Math.round(v)],modes:["mask","stability"]},
+      {key:"seeds",  label:"retrain seeds",min:1,max:5,step:1,value:5,
+       fmt:v=>Math.round(v)+" seeds",modes:["stability"]}
+    ],
+    metrics:[
+      {key:"kept",    label:"Kept edges",accent:"cyan"},
+      {key:"score",   label:"Masked score / result",accent:"rose"},
+      {key:"method",  label:"Explainer / test",accent:"violet"},
+      {key:"sparsity",label:"Sparsity / drop / stab",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph", label:"GRN nodes"},
+      {group:"mask",  label:"Edge mask"},
+      {group:"valid", label:"Validation"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Sparse mask (τ=0.7)",
+      on:api=>{api.setParam("tau",0.70);}
+    },
+    secondary:{
+      label:"Full graph (τ=0)",
+      on:api=>{api.setParam("tau",0.0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:12.5},
+    hint:'<span style="color:#34d399">green</span>=perturbation/causal · <span style="color:#4dd7ff">cyan</span>=motif/accessibility · <span style="color:#a78bfa">violet</span>=cell-state · <span style="color:#fb7185">rose</span>=co-expression (weak) · <span style="color:#fbbf24">amber</span>=unstable/shortcut.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="faithfulness"||s.mode==="validation") api.frame([1.0,-0.3,1.2],12.5);
+      else api.frame([-0.4,0.4,0.6],12);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected("Node "+d.node.id+" · "+d.node.role);
+    },
+    build,
+    snapshot(s){
+      const tau=clamp(s.tau,0,1);
+      const lambda=clamp(s.lambda,0,1);
+      const effTau=clamp(tau+lambda*0.18,0,1);
+      const methodIdx=Math.round(clamp(s.method,0,4));
+      const seeds=Math.round(clamp(s.seeds,1,5));
+      const keptN=EDGES.filter(e=>e.w>=effTau).length;
+      const keptSet=new Set(EDGES.filter(e=>e.w>=effTau).map(key));
+      const maskedScore=scoreWithKept(keptSet);
+      const droppedSet=new Set(EDGES.filter(e=>e.w<effTau).map(key));
+      const faithDrop=PRED_FULL-scoreWithKept(new Set(EDGES.filter(e=>e.w>=effTau).map(key)));
+      const causalEdges=EDGES.filter(e=>e.w>=effTau&&e.tier>=3).length;
+      const weakEdges=EDGES.filter(e=>e.w>=effTau&&e.tier===0).length;
+      return {
+        mode:s.mode,
+        method:methodIdx,
+        methodName:METHODS[methodIdx].key,
+        tau:+effTau.toFixed(3),
+        lambda:+lambda.toFixed(3),
+        seeds,
+        keptEdges:keptN,
+        maskedScore:+maskedScore.toFixed(3),
+        fullScore:PRED_FULL,
+        faithfulnessDrop:+faithDrop.toFixed(3),
+        sparsity:+(1-keptN/EDGES.length).toFixed(3),
+        causalEdges,
+        weakEdges,
+        methodStability:+METHODS[methodIdx].stability.toFixed(3),
+        faithfulButNotCausal:(weakEdges>0)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

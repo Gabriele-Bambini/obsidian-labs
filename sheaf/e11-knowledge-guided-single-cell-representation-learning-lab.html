@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E11 · Knowledge-guided single-cell representation learning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic helpers only (no rng, no clock) ───────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // WORKED EXAMPLE (note §5): 4 genes, 2 pathways, 4 cells.
+  // genes: NOTCH1, HES1, DLL1, MYC   (HES1 is the shared / contested target)
+  // ════════════════════════════════════════════════════════════════════════
+  const GENES=["NOTCH1","HES1","DLL1","MYC"];          // index 0..3
+  const GCOL =["cyan","cyan","cyan","amber"];          // NOTCH program cyan, MYC amber
+  // expression rows  [NOTCH1, HES1, DLL1, MYC]
+  const CELLS={
+    A:{x:[3.2,2.8,3.1,0.5], note:"NOTCH active"},
+    B:{x:[3.0,2.6,2.9,0.4], note:"NOTCH active"},
+    C:{x:[0.1,2.1,0.2,4.8], note:"MYC active"},
+    D:{x:[0.2,0.1,0.1,0.3], note:"both inactive"}
+  };
+  const CELLKEYS=["A","B","C","D"];
+  // pathway membership  M_pathway (4 genes x 2 pathways)  P1=NOTCH P2=MYC
+  // NOTCH1[1,0] HES1[1,1] DLL1[1,0] MYC[0,1]
+  const MPATH=[[1,0],[1,1],[1,0],[0,1]];
+  // TF→target mask M_prior (rows=TF, cols=target). Only HES1 (col1) has 2 allowed TFs.
+  //          NOTCH1 HES1 DLL1 MYC
+  // NOTCH1 [   0,   1,   1,   0 ]   NOTCH1 → HES1, DLL1
+  // MYC    [   0,   1,   0,   0 ]   MYC    → HES1
+  const MPRIOR=[
+    [0,1,1,0], // NOTCH1 row
+    [0,0,0,0], // HES1 row (target only)
+    [0,0,0,0], // DLL1 row
+    [0,1,0,0]  // MYC row
+  ];
+  const BETA=0.6;          // softmax temperature that reproduces note's 0.83/0.17
+
+  // masked-GAT attention for target HES1 over its two allowed TF sources {NOTCH1, MYC}
+  // returns [alphaNOTCH1, alphaMYC]  (softmax over BETA*expr of the two sources)
+  function hes1Attention(cellKey){
+    const x=CELLS[cellKey].x; const n=x[0], m=x[3];
+    const eN=Math.exp(BETA*n), eM=Math.exp(BETA*m); const s=eN+eM;
+    return [eN/s, eM/s];
+  }
+  // pathway activity z = mean over genes in pathway of the (attention-aware) value of HES1.
+  // For non-HES1 genes use raw expression; HES1 contributes weighted by its attention
+  // to that pathway's TF, so it is shared but context-routed (the lesson's key point).
+  function pathwayScores(cellKey){
+    const x=CELLS[cellKey].x; const a=hes1Attention(cellKey); // [aN,aM]
+    const hesN=x[1]*(0.5+a[0]*0.5);  // HES1 routed to NOTCH share
+    const hesM=x[1]*(0.5+a[1]*0.5);  // HES1 routed to MYC share
+    const zP1=(x[0]+hesN+x[2])/3;
+    const zP2=(hesM+x[3])/2;
+    return [zP1,zP2];
+  }
+
+  // ── soft-mask (KL) objective: how lambda blends learned vs prior attention ──
+  // alpha_prior = uniform over allowed edges = [0.5,0.5].
+  // alpha_learned(lambda) = (1-w)*learned + w*prior, w = lambda/(lambda+1).
+  function blendedAttention(cellKey,lambda){
+    const a=hes1Attention(cellKey); const pr=[0.5,0.5];
+    const w=lambda/(lambda+1);
+    return [a[0]*(1-w)+pr[0]*w, a[1]*(1-w)+pr[1]*w];
+  }
+  // KL(learned || prior) for the 2-edge distribution
+  function klToPrior(cellKey,lambda){
+    const a=blendedAttention(cellKey,lambda); const pr=[0.5,0.5];
+    let kl=0; for(let i=0;i<2;i++){ if(a[i]>1e-9) kl+=a[i]*Math.log(a[i]/pr[i]); }
+    return kl;
+  }
+
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const cellIdx=Math.round(s.cell);          // 0..3 → A,B,C,D
+    const cellKey=CELLKEYS[Math.max(0,Math.min(3,cellIdx))];
+    const lambda=s.lambda;                      // soft-mask strength
+    const maskOn=Math.round(s.maskOn);          // 0=blind 1=masked (mode "mask"/"context")
+    const exprScale=s.exprScale;                // visual gain on expression bars
+
+    const gGraph=api.group("graph");
+    const gAttn =api.group("attn");
+    const gLatent=api.group("latent");
+    const gLabels=api.group("labels");
+
+    function lbl(t,c,sz,x,y,z){const sp=api.bigLabel(t,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(t,c,sz,x,y,z){const sp=api.label(t,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY="#4dd7ff", AM="#fbbf24", VI="#a78bfa", GR="#34d399", SL="#54667c", RS="#fb7185";
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 · MASK — the knowledge-guided attention mask (the prior graph)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="mask"){
+      // place 4 gene nodes; show only ALLOWED TF→target edges when maskOn
+      const pos=[[-3.2,0.0,0.0],[0.0,0.0,2.2],[3.2,0.0,0.0],[0.0,0.0,-2.2]]; // NOTCH1,HES1,DLL1,MYC
+      const x=CELLS[cellKey].x;
+      for(let g=0;g<4;g++){
+        const r=0.32+x[g]*0.06*exprScale;
+        api.node(pos[g],{r:r,color:GCOL[g],label:GENES[g],group:"graph",
+          pick:{gene:GENES[g],expr:x[g],pathways:MPATH[g]}});
+      }
+      // draw candidate edges. allowed (mask=1) bright; forbidden grey only if blind
+      const allowedEdges=4; // NOTCH1→HES1, NOTCH1→DLL1, MYC→HES1
+      const totalCand=12;   // 4 genes, directed, no self
+      for(let t=0;t<4;t++){
+        for(let g=0;g<4;g++){
+          if(t===g) continue;
+          const allowed=MPRIOR[t][g]===1;
+          if(allowed){
+            api.arrow(pos[t],pos[g],{color:GR,width:0.05,head:0.26,group:"graph"});
+          } else if(maskOn===0){
+            // edge-blind: every pair is a candidate attention path (the WRONG model)
+            api.edge(pos[t],pos[g],{color:"#283a50",width:0.02,opacity:0.5,group:"graph"});
+          }
+        }
+      }
+      // highlight HES1 (the contested target)
+      api.halo(pos[1],{r:1.5,color:VI,opacity:0.5,group:"graph"});
+      lbl("M_prior: TF → target","#a78bfa",1.3,0,2.6,2.2);
+      lbl(maskOn?"masked (only JASPAR edges)":"edge-blind (all pairs)",
+          maskOn?GR:RS,1.15,0,-1.2,-3.4);
+      slbl("HES1 = shared target (2 TFs)","#a78bfa",0.4,0,-0.7,2.2);
+
+      const sparsity=maskOn?(1-allowedEdges/totalCand):0;
+      sceneSnap={mode,cell:cellKey,maskOn,allowedEdges,forbiddenEdges:maskOn?(totalCand-allowedEdges):0,
+        sparsity:+sparsity.toFixed(3),aHES1_NOTCH1:null,aHES1_MYC:null,zNOTCH:null,zMYC:null,kl:null};
+
+      api.setMetric("aHES1",maskOn?"masked":"blind");
+      api.setMetric("zNOTCH","—");
+      api.setMetric("zMYC","—");
+      api.setMetric("kl",(maskOn?(totalCand-allowedEdges):0)+" cut");
+
+      return {
+        badge:"Knowledge mask · "+(maskOn?"masked":"edge-blind")+" · cell "+cellKey,
+        formula:"α(i,j)=softmax_j( e(i,j) + mask(i,j) ),  mask=−∞ if M_prior(i,j)=0",
+        insight:"The prior graph from JASPAR fixes WHICH connections exist. Green arrows are allowed TF→target edges (NOTCH1→HES1, NOTCH1→DLL1, MYC→HES1). With the mask ON the model can only attend along these "+allowedEdges+" edges; with it OFF (edge-blind) HES1 could spuriously attend to DLL1 because they co-vary via NOTCH. HES1 (violet halo) is the shared target reachable from two TFs.",
+        state:"Mask "+(maskOn?"ON":"OFF")+": "+allowedEdges+" allowed of "+totalCand+" candidate edges. Cell "+cellKey+" ("+CELLS[cellKey].note+"). Node size ∝ expression.",
+        metrics:{aHES1:maskOn?"masked":"blind",zNOTCH:"—",zMYC:"—",kl:(maskOn?(totalCand-allowedEdges):0)+" cut"},
+        focus:{center:[0,0.4,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 · CONTEXT — learned attention on HES1 flips per cell
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="context"){
+      const x=CELLS[cellKey].x;
+      const a = maskOn? hes1Attention(cellKey) : [0.5,0.5]; // blind→uniform
+      const pHES=[0,0.0,0], pN=[-3.4,0,0], pM=[3.4,0,0];
+      api.node(pN,{r:0.30+x[0]*0.08*exprScale,color:CY,label:"NOTCH1",group:"attn",
+        pick:{gene:"NOTCH1",expr:x[0]}});
+      api.node(pM,{r:0.30+x[3]*0.08*exprScale,color:AM,label:"MYC",group:"attn",
+        pick:{gene:"MYC",expr:x[3]}});
+      api.node(pHES,{r:0.40,color:VI,label:"HES1",group:"attn",
+        pick:{gene:"HES1",expr:x[1],attnNOTCH1:a[0],attnMYC:a[1]}});
+      // attention arrows: width ∝ alpha → context-dependent regulator
+      api.arrow(pN,pHES,{color:CY,width:0.04+a[0]*0.22,head:0.18+a[0]*0.22,group:"attn",
+        label:"α="+a[0].toFixed(2),labelColor:CY});
+      api.arrow(pM,pHES,{color:AM,width:0.04+a[1]*0.22,head:0.18+a[1]*0.22,group:"attn",
+        label:"α="+a[1].toFixed(2),labelColor:AM});
+      // dominant-regulator marker above HES1
+      const dom=a[0]>=a[1]?["NOTCH1",CY]:["MYC",AM];
+      lbl("driver: "+dom[0],dom[1],1.4,0,2.0,0);
+      lbl("attention on HES1","#a78bfa",1.15,0,-1.7,0);
+      slbl(maskOn?"masked GAT":"edge-blind","#8a99ad",0.4,0,-2.3,0);
+
+      const [zN,zM]=pathwayScores(cellKey);
+      sceneSnap={mode,cell:cellKey,maskOn,allowedEdges:2,forbiddenEdges:maskOn?10:0,sparsity:maskOn?0.833:0,
+        aHES1_NOTCH1:+a[0].toFixed(3),aHES1_MYC:+a[1].toFixed(3),zNOTCH:+zN.toFixed(3),zMYC:+zM.toFixed(3),kl:null};
+
+      api.setMetric("aHES1",a[0].toFixed(2)+"/"+a[1].toFixed(2));
+      api.setMetric("zNOTCH",zN.toFixed(2));
+      api.setMetric("zMYC",zM.toFixed(2));
+      api.setMetric("kl","ctx");
+
+      return {
+        badge:"Context attention · cell "+cellKey+" · driver "+dom[0],
+        formula:"α(HES1,NOTCH1)="+a[0].toFixed(2)+",  α(HES1,MYC)="+a[1].toFixed(2)+"   (Σ=1)",
+        insight:"Same allowed edges, different cell → different regulator. In NOTCH-active cells (A,B) HES1 attends mostly to NOTCH1 ("+hes1Attention("A")[0].toFixed(2)+"); in the MYC-active cell C it flips to MYC ("+hes1Attention("C")[1].toFixed(2)+"). The mask says HES1 CAN be regulated by both; the learned attention says WHICH one drives it in THIS cell context. That cell-context routing is the core advantage of knowledge-guided attention.",
+        state:"Cell "+cellKey+" ("+CELLS[cellKey].note+"): α(NOTCH1)="+a[0].toFixed(2)+", α(MYC)="+a[1].toFixed(2)+". Arrow width ∝ attention. Pathway z: NOTCH "+zN.toFixed(2)+", MYC "+zM.toFixed(2)+".",
+        metrics:{aHES1:a[0].toFixed(2)+"/"+a[1].toFixed(2),zNOTCH:zN.toFixed(2),zMYC:zM.toFixed(2),kl:"ctx"},
+        focus:{center:[0,0.2,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 · LATENT — pathway-activity latent space for all 4 cells
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="latent"){
+      // 2D latent plane: x = z_NOTCH, y(height) = z_MYC. Plot the 4 cells.
+      const xS=1.5, yS=1.5, xOff=-3.0, yOff=0.0;
+      // axes
+      gLatent.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(xOff,yOff,0),new T.Vector3(xOff+4.2*xS,yOff,0)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+      gLatent.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(xOff,yOff,0),new T.Vector3(xOff,yOff+4.0*yS,0)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+      lbl("z_NOTCH →","#4dd7ff",1.1,xOff+3.0*xS,yOff-0.6,0);
+      lbl("z_MYC ↑","#fbbf24",1.1,xOff-0.8,yOff+3.6*yS,0);
+
+      let zSel=[0,0];
+      for(let c=0;c<4;c++){
+        const k=CELLKEYS[c];
+        const sc=pathwayScores(k); const zN=sc[0], zM=sc[1];
+        const px=xOff+zN*xS, py=yOff+zM*yS;
+        const isSel=(c===cellIdx);
+        const dotCol=zN>=zM?CY:AM;
+        api.node([px,py,0.1],{r:isSel?0.34:0.24,color:dotCol,
+          haloScale:isSel?3.0:2.0,label:"cell "+k,group:"latent",
+          pick:{cell:k,zNOTCH:zN,zMYC:zM}});
+        if(isSel){zSel=[zN,zM]; api.halo([px,py,0],{r:1.2,color:VI,opacity:0.45,group:"latent"});}
+      }
+      // diagonal y=x separator (NOTCH vs MYC dominance)
+      gLatent.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(xOff,yOff,0),new T.Vector3(xOff+3.6*xS,yOff+3.6*yS,0)]),
+        new T.LineBasicMaterial({color:0x44557a})));
+      lbl("pathway activity latent space","#a78bfa",1.2,xOff+2.2*xS,yOff+3.9*yS,0);
+
+      sceneSnap={mode,cell:cellKey,maskOn:1,allowedEdges:2,forbiddenEdges:0,sparsity:0,
+        aHES1_NOTCH1:+hes1Attention(cellKey)[0].toFixed(3),aHES1_MYC:+hes1Attention(cellKey)[1].toFixed(3),
+        zNOTCH:+zSel[0].toFixed(3),zMYC:+zSel[1].toFixed(3),kl:null};
+
+      api.setMetric("aHES1",hes1Attention(cellKey)[0].toFixed(2)+"/"+hes1Attention(cellKey)[1].toFixed(2));
+      api.setMetric("zNOTCH",zSel[0].toFixed(2));
+      api.setMetric("zMYC",zSel[1].toFixed(2));
+      api.setMetric("kl","K=2");
+
+      return {
+        badge:"Pathway latent · cell "+cellKey+" · z=("+zSel[0].toFixed(1)+","+zSel[1].toFixed(1)+")",
+        formula:"z_k(cell) = mean_{g∈P_k} h'(g),   z = [z_NOTCH, z_MYC]",
+        insight:"Instead of arbitrary latent dimensions, each axis IS a pathway activity score (PLIER / CellBound style). Cells A,B land high on z_NOTCH (cyan), cell C lands high on z_MYC (amber), cell D sits near the origin. The latent space is interpretable BY CONSTRUCTION: position directly reads off which biological program is active. The shared gene HES1 is routed into both axes via its context attention.",
+        state:"Cell "+cellKey+": z_NOTCH="+zSel[0].toFixed(2)+", z_MYC="+zSel[1].toFixed(2)+". K=2 pathway dims. Selected cell has violet halo.",
+        metrics:{aHES1:hes1Attention(cellKey)[0].toFixed(2)+"/"+hes1Attention(cellKey)[1].toFixed(2),
+                 zNOTCH:zSel[0].toFixed(2),zMYC:zSel[1].toFixed(2),kl:"K=2"},
+        focus:{center:[0,2.4,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 4 · SOFT — hard mask vs soft KL regularization (λ sweep)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="soft"){
+      // L_total = L_task + λ·KL(α_learned || α_prior)
+      // two bars (learned attention) sliding toward uniform prior as λ grows
+      const a=blendedAttention(cellKey,lambda);
+      const kl=klToPrior(cellKey,lambda);
+      const aLearned=hes1Attention(cellKey);
+      const xPos=[-1.8,1.8]; const cols=[CY,AM]; const labs=["α NOTCH1","α MYC"];
+      a.forEach((al,i)=>{
+        const h=0.1+al*4.2;
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.5),
+          new T.MeshStandardMaterial({color:new T.Color(cols[i]),
+            emissive:new T.Color(cols[i]).multiplyScalar(0.5),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(xPos[i],h/2,0);
+        gGraph.add(bar);
+        api.pick(bar,{barAlpha:al,which:labs[i]});
+        lbl(al.toFixed(2),cols[i],1.5,xPos[i],h+0.5,0);
+        slbl(labs[i],cols[i],0.4,xPos[i],-0.4,0);
+      });
+      // prior reference line at 0.5
+      const pref=0.1+0.5*4.2;
+      gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-3.2,pref,0),new T.Vector3(3.2,pref,0)]),
+        new T.LineBasicMaterial({color:0x6b7a8d})));
+      lbl("α_prior = 0.50","#8a99ad",1.0,3.0,pref+0.3,0);
+      // regime label
+      const regime = lambda<0.15?["λ→0  data-driven",RS] : lambda>6?["λ→∞  hard prior",GR] : ["soft blend",VI];
+      lbl(regime[0],regime[1],1.3,0,5.4,0);
+      lbl("KL(α‖prior) = "+kl.toFixed(3),"#a78bfa",1.15,0,-1.3,0);
+
+      sceneSnap={mode,cell:cellKey,maskOn:1,allowedEdges:2,forbiddenEdges:0,sparsity:0,
+        aHES1_NOTCH1:+a[0].toFixed(3),aHES1_MYC:+a[1].toFixed(3),
+        zNOTCH:null,zMYC:null,kl:+kl.toFixed(4),lambda:+lambda.toFixed(2)};
+
+      api.setMetric("aHES1",a[0].toFixed(2)+"/"+a[1].toFixed(2));
+      api.setMetric("zNOTCH","—");
+      api.setMetric("zMYC","—");
+      api.setMetric("kl",kl.toFixed(3));
+
+      return {
+        badge:"Soft mask · λ="+lambda.toFixed(2)+" · KL="+kl.toFixed(3),
+        formula:"L_total = L_task + λ·KL(α_learned ‖ α_prior)",
+        insight:"Hard masking sets forbidden edges to −∞ (no learning outside the prior). Soft regularization instead PENALIZES deviation from the prior by λ. As λ grows the learned attention ("+aLearned[0].toFixed(2)+"/"+aLearned[1].toFixed(2)+" for cell "+cellKey+") is pulled toward the uniform prior (0.50/0.50) and KL→0. At λ→0 the model is pure data-driven; at λ→∞ it is frozen to the prior. Soft constraints keep flexibility when the database is incomplete.",
+        state:"λ="+lambda.toFixed(2)+" → α=("+a[0].toFixed(2)+", "+a[1].toFixed(2)+"), KL="+kl.toFixed(3)+". Dashed line = prior 0.50. Cell "+cellKey+".",
+        metrics:{aHES1:a[0].toFixed(2)+"/"+a[1].toFixed(2),zNOTCH:"—",zMYC:"—",kl:kl.toFixed(3)},
+        focus:{center:[0,2.4,0],radius:12}
+      };
+    }
+
+    return {badge:"E11",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e11",
+    kind:"knowledge-guided-scrna",
+    eyebrow:"Block E · Single-Cell and Multi-Omics",
+    title:"E11 · Knowledge-guided single-cell representation learning",
+    subtitle:"A tiny worked example — 4 genes (NOTCH1, HES1, DLL1, MYC), 2 pathways, 4 cells — shows how a biological prior shapes the latent space: a JASPAR mask, context-dependent attention, pathway-activity dimensions, and the hard-vs-soft constraint trade-off.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene node, cell, or bar.",
+    modes:[
+      {value:"mask",    label:"Knowledge mask (JASPAR TF→target)"},
+      {value:"context", label:"Context attention (HES1 driver flips)"},
+      {value:"latent",  label:"Pathway-activity latent space"},
+      {value:"soft",    label:"Hard mask vs soft KL (λ)"}
+    ],
+    params:[
+      {key:"cell",     label:"cell (0=A 1=B 2=C 3=D)",min:0,max:3,step:1,value:0,
+       fmt:v=>["A (NOTCH)","B (NOTCH)","C (MYC)","D (off)"][Math.round(v)]},
+      {key:"maskOn",   label:"mask (0=edge-blind 1=masked)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"edge-blind":"masked",modes:["mask","context"]},
+      {key:"lambda",   label:"λ  KL-regularization strength",min:0,max:10,step:0.1,value:0.6,
+       fmt:v=>v.toFixed(1),modes:["soft"]},
+      {key:"exprScale",label:"expression → node size gain",min:0.4,max:1.6,step:0.1,value:1.0,
+       fmt:v=>v.toFixed(1)+"×",modes:["mask","context"]}
+    ],
+    metrics:[
+      {key:"aHES1",  label:"α(HES1) NOTCH1/MYC",accent:"violet"},
+      {key:"zNOTCH", label:"z_NOTCH activity",  accent:"cyan"},
+      {key:"zMYC",   label:"z_MYC activity",    accent:"amber"},
+      {key:"kl",     label:"prior penalty / cut",accent:"green"}
+    ],
+    layers:[
+      {group:"graph",  label:"Gene graph / bars"},
+      {group:"attn",   label:"Attention arrows"},
+      {group:"latent", label:"Latent space"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"NOTCH cell (A)",
+      on:api=>{api.setParam("cell",0);}
+    },
+    secondary:{
+      label:"MYC cell (C)",
+      on:api=>{api.setParam("cell",2);}
+    },
+    defaultCam:{theta:-0.4,phi:0.62,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=NOTCH program · <span style="color:#fbbf24">amber</span>=MYC program · <span style="color:#a78bfa">violet</span>=HES1 (shared) / prior · <span style="color:#34d399">green</span>=allowed edge · <span style="color:#fb7185">rose</span>=edge-blind / λ→0.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="latent") api.frame([0,2.4,0],12);
+      else if(s.mode==="soft") api.frame([0,2.4,0],12);
+      else api.frame([0,0.3,0],11);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="latent") api.frame([0,2.4,0],12);
+      else if(s.mode==="soft") api.frame([0,2.4,0],12);
+      else api.frame([0,0.3,0],11);
+    },
+    onSelect(api,d){
+      if(d.gene) api.setSelected(d.gene+" · expr "+d.expr.toFixed(1)+
+        (d.attnNOTCH1!=null?" · α: NOTCH1 "+d.attnNOTCH1.toFixed(2)+" / MYC "+d.attnMYC.toFixed(2):""));
+      if(d.cell) api.setSelected("cell "+d.cell+" · z_NOTCH "+d.zNOTCH.toFixed(2)+" · z_MYC "+d.zMYC.toFixed(2));
+      if(d.barAlpha!=null) api.setSelected(d.which+" = "+d.barAlpha.toFixed(3));
+    },
+    build,
+    snapshot(s){
+      const cellIdx=Math.round(s.cell);
+      const k=CELLKEYS[Math.max(0,Math.min(3,cellIdx))];
+      const a=hes1Attention(k);
+      const sc=pathwayScores(k); const zN=sc[0], zM=sc[1];
+      const lambda=s.lambda;
+      const ab=blendedAttention(k,lambda);
+      const kl=klToPrior(k,lambda);
+      const driver=a[0]>=a[1]?"NOTCH1":"MYC";
+      return {
+        mode:s.mode,
+        cell:k,
+        maskOn:Math.round(s.maskOn),
+        lambda:+lambda.toFixed(2),
+        aHES1_NOTCH1:+a[0].toFixed(3),
+        aHES1_MYC:+a[1].toFixed(3),
+        aBlended_NOTCH1:+ab[0].toFixed(3),
+        aBlended_MYC:+ab[1].toFixed(3),
+        zNOTCH:+zN.toFixed(3),
+        zMYC:+zM.toFixed(3),
+        kl:+kl.toFixed(4),
+        driver:driver,
+        ...sceneSnap
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

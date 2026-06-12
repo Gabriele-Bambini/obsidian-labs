@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J03 · Calibration and uncertainty for graph predictions</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── J03 FACTS (note Section 5: K562 Perturb-seq, 2000 pos / 8000 neg) ─────
+  // Reliability bins BEFORE temperature scaling (conf-bin, count, accuracy):
+  const BINS=[
+    {lo:0.50,hi:0.70,conf:0.60,n:360,acc:0.51},
+    {lo:0.70,hi:0.80,conf:0.75,n:280,acc:0.58},
+    {lo:0.80,hi:0.90,conf:0.85,n:340,acc:0.63},
+    {lo:0.90,hi:1.00,conf:0.95,n:520,acc:0.71}
+  ];
+  const N_TEST=BINS.reduce((s,b)=>s+b.n,0);          // 1500
+  const ECE_BEFORE=0.187, ECE_AFTER=0.048;           // note §5
+  const T_OPT=1.72, AUROC=0.82;                       // note §5 (AUROC unchanged)
+  // MC-dropout edges (mean prob, epistemic var) — note §5
+  const MC_EDGES=[
+    {src:"GATA1", dst:"KLF1",     mean:0.89, ep:0.003, studied:true},
+    {src:"GATA1", dst:"HBB",      mean:0.91, ep:0.004, studied:true},
+    {src:"ZNF274",dst:"HIST1H1E", mean:0.61, ep:0.098, studied:false},
+    {src:"ZNF274",dst:"RPS6",     mean:0.57, ep:0.112, studied:false}
+  ];
+  // Conformal example — softmax over [no-edge, activation, repression], note §5
+  const CONF_SOFT=[0.40,0.35,0.25], CONF_CLASSES=["no edge","activation","repression"];
+  const Q_HAT=0.45, ALPHA_REF=0.10;
+
+  // ── temperature-scaling model (deterministic) ───────────────────────────
+  // Recover a per-bin logit gap that softmax→T squashes. We map the bin's mean
+  // confidence p through an inverse-temperature on the binary-logit, monotone in T.
+  function tempConf(p,T){
+    // binary logit of p, divide by T, back to prob (clamped)
+    const eps=1e-4, pc=Math.max(eps,Math.min(1-eps,p));
+    const z=Math.log(pc/(1-pc));
+    const zt=z/T;
+    const out=1/(1+Math.exp(-zt));
+    return Math.max(0.5,Math.min(0.999,out)); // confidence ≥ 0.5 (top class)
+  }
+  // ECE for current temperature: bins keep their accuracy, confidence rescales.
+  function eceAt(T){
+    let e=0;
+    for(const b of BINS){ e+=(b.n/N_TEST)*Math.abs(b.acc-tempConf(b.conf,T)); }
+    return e;
+  }
+
+  // ── conformal: prediction set at significance alpha ──────────────────────
+  // q_hat grows as alpha shrinks (more coverage demanded ⇒ larger set).
+  function qHat(alpha){
+    // anchored so alpha=0.10 → 0.45 (note), monotone decreasing in alpha
+    return Math.max(0.05,Math.min(0.98, 0.45 + (0.10-alpha)*1.9));
+  }
+  function predSet(soft,alpha){
+    const q=qHat(alpha), set=[];
+    soft.forEach((p,i)=>{ if((1-p)<=q) set.push(i); });
+    return {set,q};
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const temp=s.temp, alpha=s.alpha, tfIdx=Math.round(s.tf), nSamp=Math.round(s.nsamp);
+
+    const gScene =api.group("scene");
+    const gAxes  =api.group("axes");
+    const gMark  =api.group("markers");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // calibrated / confident
+    const RO=new T.Color("#fb7185");   // overconfident / uncertain
+    const AM=new T.Color("#fbbf24");    // confidence / scores
+    const VI=new T.Color("#a78bfa");    // gap / prediction set
+    const GR=new T.Color("#34d399");    // accuracy / in-set
+    const SL=new T.Color("#54667c");
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: reliability — reliability diagram + temperature scaling
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="reliability"){
+      const sc=5.2, x0=-2.6, y0=-2.6;            // unit square in 3D plane
+      // diagonal (perfect calibration)
+      gAxes.add(new T.Line(new T.BufferGeometry().setFromPoints([
+        new T.Vector3(x0,y0,0),new T.Vector3(x0+sc,y0+sc,0)]),
+        new T.LineBasicMaterial({color:0x6b7a8d,transparent:true,opacity:0.7})));
+      // axes
+      gAxes.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,y0,0),new T.Vector3(x0+sc,y0,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gAxes.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,y0,0),new T.Vector3(x0,y0+sc,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      addLbl("conf","#8a99ad",1.0,x0+sc*0.5,y0-0.55,0);
+      addLbl("acc","#8a99ad",1.0,x0-0.7,y0+sc*0.5,0);
+      addSlbl("perfect calibration","#6b7a8d",0.34,x0+sc*0.62,y0+sc*0.7,0);
+
+      let maxBinGap=0, biggestBin=BINS[0];
+      BINS.forEach((b,i)=>{
+        const conf=tempConf(b.conf,temp);           // confidence shifts with T
+        const acc=b.acc;                              // accuracy fixed
+        const px=x0+conf*sc, py=y0+acc*sc;
+        const gap=Math.abs(acc-conf);
+        if(gap>maxBinGap){maxBinGap=gap;biggestBin=b;}
+        const sizeR=0.13+Math.sqrt(b.n/N_TEST)*0.42;  // bubble area ∝ bin mass
+        const below=conf>acc;                         // below diagonal = overconfident
+        const col=below?RO.clone():CY.clone();
+        const bub=new T.Mesh(new T.SphereGeometry(sizeR,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:below?0.72:0.6,roughness:0.35}));
+        bub.position.set(px,py,0.05);
+        gScene.add(bub);
+        api.pick(bub,{bin:{lo:b.lo,hi:b.hi,conf:+conf.toFixed(2),acc,n:b.n,gap:+gap.toFixed(2),over:below}});
+        // drop line to the diagonal (the gap)
+        const diagY=py, diagX=px;                      // segment to diagonal point (acc,acc)→horizontal
+        const gp=[new T.Vector3(px,py,0.04),new T.Vector3(x0+acc*sc,py,0.04)];
+        gScene.add(new T.Line(new T.BufferGeometry().setFromPoints(gp),new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.6})));
+        addSlbl(b.lo.toFixed(1)+"-"+b.hi.toFixed(1),col.getStyle(),0.30,px,py+sizeR+0.3,0);
+      });
+
+      const ece=eceAt(temp);
+      // temperature dial bar at right
+      const tBarH=Math.min(4.2,(temp/3.0)*4.2);
+      const tb=new T.Mesh(new T.BoxGeometry(0.5,tBarH,0.5),new T.MeshStandardMaterial({color:AM,emissive:AM,emissiveIntensity:0.5,roughness:0.4}));
+      tb.position.set(x0+sc+1.1,y0+tBarH/2,0); gMark.add(tb);
+      addLbl("T="+temp.toFixed(2),"#fbbf24",1.1,x0+sc+1.1,y0+tBarH+0.45,0);
+
+      const calibrated=Math.abs(temp-T_OPT)<0.06;
+      sceneSnap={mode,temp:+temp.toFixed(2),ece:+ece.toFixed(3),auroc:AUROC,maxBinGap:+maxBinGap.toFixed(3),overconfident:ece>0.10,atOptimalT:calibrated};
+
+      return {
+        badge:"Reliability · T="+temp.toFixed(2)+(calibrated?" (optimal)":"")+" · ECE "+ece.toFixed(3),
+        formula:"ECE = Σ_m (|B_m|/n)·|acc(B_m) − conf(B_m)|   ·   p = softmax(z / T)",
+        insight:"Bubbles are confidence bins (area ∝ bin mass). Below the dashed diagonal = overconfident (rose): the 0.9–1.0 bin holds "+BINS[3].n+" edges but is only "+(BINS[3].acc*100).toFixed(0)+"% correct. Raising T softens logits, sliding bubbles left toward the diagonal. AUROC stays "+AUROC.toFixed(2)+" — only the probabilities move.",
+        state:"T="+temp.toFixed(2)+" → ECE "+ece.toFixed(3)+". At T=1.00 ECE="+ECE_BEFORE.toFixed(3)+" (raw, overconfident); the note's optimal T="+T_OPT+" gives ECE≈"+ECE_AFTER.toFixed(3)+". Worst bin: "+biggestBin.lo.toFixed(1)+"-"+biggestBin.hi.toFixed(1)+".",
+        metrics:{ece:ece.toFixed(3),auroc:AUROC.toFixed(2),temperature:temp.toFixed(2),coverage:"—"},
+        focus:{center:[x0+sc*0.5,y0+sc*0.5,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: mcdropout — epistemic uncertainty per TF→target edge
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="mcdropout"){
+      // central encoder, four edges fanned out; bubble cloud = MC samples
+      const enc=new T.Mesh(new T.SphereGeometry(0.7,24,18),new T.MeshStandardMaterial({color:CY,emissive:CY,emissiveIntensity:0.5,roughness:0.3}));
+      gScene.add(enc); addLbl("GNN θ","#4dd7ff",1.2,0,1.1,0);
+
+      const xPos=[-4.2,-1.4,1.4,4.2];
+      // sample count scales how many sampled dots we draw (visual MC passes)
+      const drawN=Math.max(6,Math.min(40,nSamp));
+      let selMean=0, selEp=0;
+      MC_EDGES.forEach((e,i)=>{
+        const x=xPos[i], baseY=2.2;
+        const studiedCol=e.studied?GR.clone():RO.clone();
+        // edge line encoder→target node
+        const tgt=new T.Vector3(x,baseY+1.0,0);
+        gScene.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0,0,0),tgt]),
+          new T.LineBasicMaterial({color:studiedCol.getHex(),transparent:true,opacity:0.5})));
+        // target node
+        const tn=new T.Mesh(new T.SphereGeometry(0.34,16,12),new T.MeshStandardMaterial({color:studiedCol,emissive:studiedCol,emissiveIntensity:0.6,roughness:0.4}));
+        tn.position.copy(tgt); gScene.add(tn);
+        api.pick(tn,{edge:{src:e.src,dst:e.dst,mean:e.mean,ep:e.ep,studied:e.studied}});
+        // MC sample cloud: spread ∝ epistemic std around the mean height
+        const std=Math.sqrt(e.ep);
+        const cloudY=baseY-0.4;
+        for(let k=0;k<drawN;k++){
+          const jitter=(prand(i*100+k*7+3)-0.5);
+          const dy=jitter*std*9.0;                    // visual amplification of variance
+          const dx=(prand(i*200+k*5+9)-0.5)*0.55;
+          const dot=new T.Mesh(new T.SphereGeometry(0.07,8,8),new T.MeshStandardMaterial({color:studiedCol,emissive:studiedCol,emissiveIntensity:0.7,roughness:0.4,transparent:true,opacity:0.75}));
+          dot.position.set(x+dx, cloudY+dy, 0.2+(prand(i*300+k)-0.5)*0.4);
+          gScene.add(dot);
+        }
+        // mean marker
+        const mm=new T.Mesh(new T.SphereGeometry(0.16,12,12),new T.MeshStandardMaterial({color:AM,emissive:AM,emissiveIntensity:0.9,roughness:0.2}));
+        mm.position.set(x,cloudY,0.35); gMark.add(mm);
+        addLbl(e.src,studiedCol.getStyle(),0.95,x,baseY+1.55,0);
+        addSlbl("→"+e.dst,"#8a99ad",0.34,x,baseY+1.2,0);
+        addLbl("μ="+e.mean.toFixed(2),"#fde68a",0.92,x,cloudY-1.0,0);
+        addSlbl("var="+e.ep.toFixed(3),studiedCol.getStyle(),0.34,x,cloudY-1.45,0);
+        if(i===tfIdx){selMean=e.mean;selEp=e.ep;}
+      });
+      const sel=MC_EDGES[tfIdx];
+      // halo on selected edge target
+      const halo=new T.Mesh(new T.RingGeometry(0.5,0.62,28),new T.MeshBasicMaterial({color:VI.getHex(),side:T.DoubleSide,transparent:true,opacity:0.8}));
+      halo.position.set(xPos[tfIdx],3.2,0.0); gMark.add(halo);
+
+      addLbl("low epistemic var → trust","#34d399",1.0,-2.8,-1.6,0);
+      addLbl("high var → validate first","#fb7185",1.0,2.8,-1.6,0);
+
+      sceneSnap={mode,tf:tfIdx,selEpistemic:+sel.ep.toFixed(3),selMean:+sel.mean.toFixed(2),nSamples:drawN,studied:sel.studied,epRatio:+(MC_EDGES[3].ep/MC_EDGES[0].ep).toFixed(1)};
+
+      return {
+        badge:"MC Dropout · "+sel.src+"→"+sel.dst+" · var "+sel.ep.toFixed(3),
+        formula:"p̂ = (1/T)Σ_t f_{θ_t}(G)   ·   var̂ = (1/T)Σ_t (f_{θ_t}(G) − p̂)²",
+        insight:"Dropout stays ON at test time; each pass samples a different sub-network. Well-studied GATA1 edges cluster tightly (var≈0.003–0.004, green): low epistemic uncertainty. Understudied ZNF274 edges scatter widely (var≈0.098–0.112, rose) — the model has seen few examples, so it should be validated with caution even though the point prob looks plausible.",
+        state:"Selected "+sel.src+"→"+sel.dst+": μ="+sel.mean.toFixed(2)+", epistemic var="+sel.ep.toFixed(3)+" ("+(sel.studied?"well-studied, trust":"understudied, flag")+"). ZNF274 var is ≈"+(MC_EDGES[3].ep/MC_EDGES[0].ep).toFixed(0)+"× GATA1's. "+drawN+" MC passes drawn.",
+        metrics:{ece:"—",auroc:AUROC.toFixed(2),epistemicVar:sel.ep.toFixed(3),coverage:"μ="+sel.mean.toFixed(2)},
+        focus:{center:[0,1.0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: conformal — prediction sets with 1−α coverage guarantee
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="conformal"){
+      const {set,q}=predSet(CONF_SOFT,alpha);
+      const xPos=[-3.4,0,3.4];
+      // q_hat threshold plane (score axis) — bars are nonconformity scores 1-p
+      const sc=4.4, y0=-2.0;
+      gAxes.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5,y0,0),new T.Vector3(5,y0,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      // threshold line at q_hat
+      const qy=y0+q*sc;
+      gAxes.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5,qy,0),new T.Vector3(5,qy,0)]),new T.LineBasicMaterial({color:VI.getHex()})));
+      addLbl("q̂="+q.toFixed(2),"#a78bfa",1.1,4.4,qy+0.35,0);
+      addSlbl("score = 1 − p  ·  in-set if ≤ q̂","#8a99ad",0.34,0,y0-0.55,0);
+
+      let inSet=0;
+      CONF_SOFT.forEach((p,i)=>{
+        const score=1-p;
+        const x=xPos[i];
+        const h=score*sc;
+        const inside=score<=q;
+        if(inside) inSet++;
+        const col=inside?GR.clone():SL.clone();
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,Math.max(0.08,h),1.3),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:inside?0.7:0.18,roughness:0.4,transparent:!inside,opacity:inside?1.0:0.5}));
+        bar.position.set(x,y0+h/2,0); gScene.add(bar);
+        api.pick(bar,{cls:{name:CONF_CLASSES[i],prob:p,score:+score.toFixed(2),inSet:inside}});
+        addLbl(CONF_CLASSES[i],col.getStyle(),0.92,x,y0+h+0.95,0);
+        addSlbl("p="+p.toFixed(2),"#fde68a",0.36,x,y0+h+0.5,0);
+        addSlbl("s="+score.toFixed(2),col.getStyle(),0.34,x,y0-0.95,0);
+      });
+
+      const setTxt=set.length?("{"+set.map(i=>CONF_CLASSES[i]).join(", ")+"}"):"∅ (abstain)";
+      const coverage=1-alpha;
+      sceneSnap={mode,alpha:+alpha.toFixed(2),qHat:+q.toFixed(2),setSize:inSet,coverage:+coverage.toFixed(2),abstain:inSet===0};
+
+      return {
+        badge:"Conformal · α="+alpha.toFixed(2)+" · |C(x)|="+inSet+(inSet===0?" (abstain)":""),
+        formula:"s_i = 1 − f_{y_i}(x_i)   ·   q̂ = ⌈(1−α)(n+1)⌉/n quantile   ·   C(x)={y : 1−f_y(x) ≤ q̂}",
+        insight:"Each class becomes the prediction set only if its nonconformity score s=1−p is at or below the threshold q̂. Lowering α demands more coverage, raising q̂ (the violet line rises) and admitting more classes. At the note's α=0.10, q̂="+Q_HAT.toFixed(2)+" and ALL three scores (0.60/0.65/0.75) exceed it → empty set: the model honestly abstains rather than forcing a guess.",
+        state:"α="+alpha.toFixed(2)+" → coverage "+(coverage*100).toFixed(0)+"%, q̂="+q.toFixed(2)+". Prediction set "+setTxt+" (size "+inSet+"). Softmax was ["+CONF_SOFT.join(", ")+"].",
+        metrics:{ece:"—",auroc:AUROC.toFixed(2),temperature:"—",coverage:(coverage*100).toFixed(0)+"%"},
+        focus:{center:[0,0.2,0],radius:11}
+      };
+    }
+
+    return {badge:"J03",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"j03",
+    kind:"calibration-uncertainty",
+    eyebrow:"Block J · Advanced GNN Theory",
+    title:"J03 · Calibration and uncertainty for graph predictions",
+    subtitle:"A K562 Perturb-seq edge classifier (2000 pos / 8000 neg). Three honesty tools: temperature-scaled reliability, MC-dropout epistemic uncertainty, and conformal prediction sets.",
+    selectedLabel:"Element",
+    selectedHint:"Click a bin bubble, an edge node, or a class bar.",
+    modes:[
+      {value:"reliability",label:"Reliability & temperature scaling"},
+      {value:"mcdropout",  label:"MC Dropout (epistemic uncertainty)"},
+      {value:"conformal",  label:"Conformal prediction sets"}
+    ],
+    params:[
+      {key:"temp", label:"temperature T (softmax z/T)",min:0.5,max:3.0,step:0.01,value:1.00,
+       fmt:v=>v.toFixed(2),modes:["reliability"]},
+      {key:"alpha",label:"significance α (coverage 1−α)",min:0.02,max:0.40,step:0.01,value:0.10,
+       fmt:v=>v.toFixed(2),modes:["conformal"]},
+      {key:"tf",   label:"selected edge (0–3)",min:0,max:3,step:1,value:2,
+       fmt:v=>["GATA1→KLF1","GATA1→HBB","ZNF274→HIST1H1E","ZNF274→RPS6"][Math.round(v)],modes:["mcdropout"]},
+      {key:"nsamp",label:"MC dropout passes",min:6,max:40,step:1,value:24,
+       fmt:v=>Math.round(v).toString(),modes:["mcdropout"]}
+    ],
+    metrics:[
+      {key:"ece",        label:"ECE (calibration error)",accent:"rose"},
+      {key:"auroc",      label:"AUROC (ranking)",accent:"cyan"},
+      {key:"temperature",label:"Temperature / var",accent:"amber"},
+      {key:"coverage",   label:"Coverage / mean",accent:"violet"}
+    ],
+    layers:[
+      {group:"scene",  label:"Bubbles / clouds / bars"},
+      {group:"axes",   label:"Axes & thresholds"},
+      {group:"markers",label:"Markers & dials"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Set optimal T = 1.72",
+      on:api=>{ if(api.state.mode==="reliability") api.setParam("temp",1.72); }
+    },
+    secondary:{
+      label:"Raw model T = 1.00",
+      on:api=>{ if(api.state.mode==="reliability") api.setParam("temp",1.00); }
+    },
+    defaultCam:{theta:-0.35,phi:0.5,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=calibrated/confident · <span style="color:#fb7185">rose</span>=overconfident/uncertain · <span style="color:#34d399">green</span>=accurate/in-set · <span style="color:#fbbf24">amber</span>=confidence/score · <span style="color:#a78bfa">violet</span>=gap / q̂ threshold.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="reliability") api.frame([0,0,0],11);
+      else if(s.mode==="mcdropout") api.frame([0,1,0],12);
+      else api.frame([0,0.2,0],11);
+    },
+    onSelect(api,d){
+      if(d.bin) api.setSelected("bin "+d.bin.lo.toFixed(1)+"-"+d.bin.hi.toFixed(1)+" · conf "+d.bin.conf.toFixed(2)+" · acc "+d.bin.acc.toFixed(2)+" · "+(d.bin.over?"OVERCONFIDENT":"under")+" gap "+d.bin.gap.toFixed(2)+" · n="+d.bin.n);
+      if(d.edge) api.setSelected(d.edge.src+"→"+d.edge.dst+" · μ "+d.edge.mean.toFixed(2)+" · epistemic var "+d.edge.ep.toFixed(3)+" · "+(d.edge.studied?"well-studied":"UNDERSTUDIED"));
+      if(d.cls) api.setSelected("class "+d.cls.name+" · p "+d.cls.prob.toFixed(2)+" · score "+d.cls.score.toFixed(2)+" · "+(d.cls.inSet?"IN prediction set":"excluded"));
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const out={mode,temperature:+s.temp.toFixed(2),alpha:+s.alpha.toFixed(2),tf:Math.round(s.tf),nSamples:Math.round(s.nsamp),auroc:AUROC};
+      if(mode==="reliability"){
+        out.ece=+eceAt(s.temp).toFixed(3);
+        out.overconfident=out.ece>0.10;
+        out.atOptimalT=Math.abs(s.temp-T_OPT)<0.06;
+      } else if(mode==="mcdropout"){
+        const e=MC_EDGES[Math.round(s.tf)];
+        out.selEpistemic=+e.ep.toFixed(3);
+        out.selMean=+e.mean.toFixed(2);
+        out.understudied=!e.studied;
+      } else if(mode==="conformal"){
+        const r=predSet(CONF_SOFT,s.alpha);
+        out.qHat=+r.q.toFixed(2);
+        out.setSize=r.set.length;
+        out.coverage=+(1-s.alpha).toFixed(2);
+        out.abstain=r.set.length===0;
+      }
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

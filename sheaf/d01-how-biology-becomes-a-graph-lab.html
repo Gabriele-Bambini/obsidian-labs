@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D01 · How biology becomes a graph</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no rng, no clock) ───────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── lesson facts (note §5: one 10x scRNA-seq organoid dataset) ───────────
+  //   1,200 cells · 18,000 genes → three qualitatively different graphs.
+  const F={
+    cells:1200, genesTotal:18000,
+    // Construction 1 — cell-cell kNN graph
+    kDefault:15, pcaDim:50,
+    // Construction 2 — gene co-expression graph
+    hvg:2000, rhoCoexp:0.6, coexpEdges:12000,
+    // Construction 3 — TF→gene regulatory graph (GRN)
+    targets:1800, tfs:200, rhoGrn:0.3
+  };
+
+  let sceneSnap={};
+
+  // ── deterministic edge-count models (track the note's numbers) ───────────
+  // Cell graph: mutual kNN over 1,200 cells. Anchor: k=15 → ~9,000 edges (note).
+  function cellEdges(k){
+    const kk=Math.max(5,Math.min(40,k));
+    const retain=0.80;                          // mkNN reciprocity fraction
+    return Math.round(F.cells*kk*0.5*retain);   // k=15 → 1200*15*0.5*0.8 = 7200..9000 band
+  }
+  // Co-expression: |rho|>tau pairs among HVG. Anchor: tau=0.6 → ~12,000 edges (note).
+  function coexpEdges(tau){
+    const t=Math.max(0.3,Math.min(0.9,tau));
+    const e=F.coexpEdges*Math.exp(-6.4*(t-F.rhoCoexp));  // steep decay anchored at 0.6
+    return Math.round(e);
+  }
+  // GRN edges: motif-gated AND |rho|>tau, directed. Anchor: tau=0.3 → base.
+  function grnEdges(tau){
+    const t=Math.max(0.1,Math.min(0.6,tau));
+    const corrKeep=Math.exp(-3.2*(t-F.rhoGrn));          // 1.0 at tau=0.3
+    const base=900;
+    return Math.round(base*corrKeep);
+  }
+  function meanDeg(edges,nodes,directed){return (directed?1:2)*edges/nodes;}
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const k=Math.round(s.k);
+    const tauCoexp=s.tauCoexp;
+    const tauGrn=s.tauGrn;
+    const signed=Math.round(s.signed);   // 0 unsigned, 1 signed
+
+    const gGraph =api.group("graph");
+    const gAxis  =api.group("axis");
+    const gLabels=api.group("labels");
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185";
+    const cCY=new T.Color(CY), cGR=new T.Color(GR), cAM=new T.Color(AM), cVI=new T.Color(VI);
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: cell — cell-cell kNN graph (Construction 1)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="cell"){
+      const N=42;                       // visualised sample of the 1,200 cells
+      const pos=[];
+      const clusterCol=[cCY,cGR,cAM];   // three latent cell-states
+      const clusterName=["LGR5+ stem","EPCAM+ epi","immune"];
+      const clusterCtr=[[-2.6,1.6],[2.7,1.4],[-0.2,-2.6]];
+      const cidOf=[];
+      for(let i=0;i<N;i++){
+        const cid=Math.floor(prand(i*3+1)*3);
+        cidOf.push(cid);
+        const cx=clusterCtr[cid][0]+(prand(i*7+2)-0.5)*2.6;
+        const cz=clusterCtr[cid][1]+(prand(i*11+5)-0.5)*2.6;
+        pos.push(new T.Vector3(cx,0,cz));
+      }
+      for(let i=0;i<N;i++){
+        const c=clusterCol[cidOf[i]];
+        const m=new T.Mesh(new T.SphereGeometry(0.17,16,12),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.copy(pos[i]);
+        gGraph.add(m);
+        api.pick(m,{cell:{id:i,state:clusterName[cidOf[i]]}});
+      }
+      const kEff=Math.max(2,Math.min(N-1,k));
+      for(let i=0;i<N;i++){
+        const d=[];
+        for(let j=0;j<N;j++) if(j!==i) d.push([j,pos[i].distanceTo(pos[j])]);
+        d.sort((a,b)=>a[1]-b[1]);
+        for(let q=0;q<kEff && q<d.length;q++){
+          const j=d[q][0];
+          if(j<i){
+            const w=1/Math.max(0.25,d[q][1]);          // edge weight 1/dist
+            const op=0.18+Math.min(0.55,w*0.7);
+            gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([pos[i],pos[j]]),
+              new T.LineBasicMaterial({color:0x2a4a63,transparent:true,opacity:op})));
+          }
+        }
+      }
+      clusterCtr.forEach((c,ci)=>lbl(clusterName[ci],clusterCol[ci].getStyle(),1.15,c[0],0.05,c[1]-1.75));
+      lbl("PCA space (50-D → 2-D)","#8a99ad",1.1,0,0.0,4.4);
+
+      const E=cellEdges(k);
+      const deg=meanDeg(E,F.cells,false);
+      sceneSnap={mode,k,tauCoexp,tauGrn,signed,
+        graphNodes:F.cells,graphEdges:E,meanDegree:+deg.toFixed(2),directed:0,signedGraph:0,grnEdges:0};
+
+      return {
+        badge:"Cell graph · mkNN k="+k+" · "+F.cells+" cells",
+        formula:"d(i,j)=‖z_i−z_j‖₂ ,  A_ij=1/d  if  j∈kNN(i)∧i∈kNN(j)",
+        insight:"Construction 1. Each of the "+F.cells+" cells is a node placed by its "+F.pcaDim+"-D PCA embedding; mutual-kNN (k="+k+") edges join cells nearby in expression space. Claim: proximity in expression ⇒ shared cell-state. GNN task: cluster into cell types (Leiden / classification). It cannot answer gene-regulation questions.",
+        state:"k="+k+" → |E|≈"+E.toLocaleString()+" mutual-kNN edges, mean degree "+deg.toFixed(1)+". Higher k = denser, smoother neighbourhoods; too high over-connects and washes out cluster structure.",
+        metrics:{graphType:"Cell kNN", graphEdges:E.toLocaleString(), meanDegree:deg.toFixed(1), graphStructure:"undirected · unsigned"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: coexp — gene co-expression graph (Construction 2)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="coexp"){
+      const names=["TP53","MDM2","LGR5","ASCL2","AXIN2","APC","CTNNB1","RPL7"];
+      const rho=[
+        [0,1, 0.74],   // TP53–MDM2 stress response (+)
+        [2,3, 0.81],   // LGR5–ASCL2 stem module (+)
+        [2,4, 0.66],   // LGR5–AXIN2 (+)
+        [3,4, 0.69],   // ASCL2–AXIN2 (+)
+        [5,6, 0.58],   // APC–CTNNB1 WNT (just under 0.6)
+        [4,6, 0.63],   // AXIN2–CTNNB1 WNT (+)
+        [0,5,-0.42],   // TP53–APC anti-corr (−)
+        [1,7, 0.31],   // MDM2–RPL7 weak (+)
+        [6,7,-0.36]    // CTNNB1–RPL7 (−)
+      ];
+      const M=names.length;
+      const R=3.2;
+      const pos=[];
+      for(let i=0;i<M;i++){const ang=i/M*Math.PI*2 - Math.PI/2;pos.push(new T.Vector3(Math.cos(ang)*R,0,Math.sin(ang)*R));}
+      for(let i=0;i<M;i++){
+        const m=new T.Mesh(new T.SphereGeometry(0.26,18,14),
+          new T.MeshStandardMaterial({color:cCY,emissive:cCY.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.4}));
+        m.position.copy(pos[i]);gGraph.add(m);
+        api.pick(m,{gene:{name:names[i]}});
+        lbl(names[i],"#cfe0f0",0.95,pos[i].x*1.28,0.0,pos[i].z*1.28);
+      }
+      rho.forEach(arr=>{
+        const i=arr[0],j=arr[1],r=arr[2];
+        if(Math.abs(r)>tauCoexp){
+          let colHex;
+          if(signed===1) colHex = r>=0 ? GR : RO;   // signed: + co-activation, − anti-corr
+          else colHex = "#3a6f8c";                   // unsigned: magnitude only
+          const w=0.05+Math.min(0.10,(Math.abs(r)-0.3)*0.18);
+          const pa=pos[i],pb=pos[j];
+          const len=pa.distanceTo(pb);
+          const geo=new T.CylinderGeometry(w,w,len,10,1,true);
+          const mm=new T.Mesh(geo,new T.MeshStandardMaterial({color:colHex,emissive:new T.Color(colHex).multiplyScalar(0.25),roughness:0.5,transparent:true,opacity:0.92}));
+          mm.position.copy(pa).add(pb).multiplyScalar(0.5);
+          const up=new T.Vector3(0,1,0),dir=pb.clone().sub(pa).normalize(),q=new T.Quaternion().setFromUnitVectors(up,dir);
+          mm.quaternion.copy(q);
+          gGraph.add(mm);
+        }
+      });
+      lbl("highly-variable genes (HVG)","#8a99ad",1.05,0,0.0,-R-1.6);
+
+      const E=coexpEdges(tauCoexp);
+      const deg=meanDeg(E,F.hvg,false);
+      sceneSnap={mode,k,tauCoexp:+tauCoexp.toFixed(2),tauGrn,signed,
+        graphNodes:F.hvg,graphEdges:E,meanDegree:+deg.toFixed(2),directed:0,signedGraph:signed,grnEdges:0};
+
+      return {
+        badge:"Gene co-expr · |ρ|>"+tauCoexp.toFixed(2)+" · "+(signed===1?"signed":"unsigned"),
+        formula:"ρ(i,j)=cov(x_i,x_j)/(σ_i σ_j) ;  edge if |ρ|>τ , w="+(signed===1?"ρ":"|ρ|"),
+        insight:"Construction 2. Nodes are the "+F.hvg+" HVGs; an undirected edge joins genes whose Pearson correlation exceeds τ across the "+F.cells+" cells. Claim: correlated expression ⇒ co-regulation / shared module. "+(signed===1?"Signed weights split co-activation (green) from anti-correlation (rose).":"Unsigned weights keep magnitude only — activation and repression are merged.")+" APC–CTNNB1 (ρ=0.58) drops out at τ=0.6 but appears at τ=0.5 — a threshold, not biology.",
+        state:"τ="+tauCoexp.toFixed(2)+" → |E|≈"+E.toLocaleString()+", mean degree "+deg.toFixed(1)+". Lower τ floods the graph (less specific); raise it and real WNT links vanish. Sign mode = "+(signed===1?"keeps repression":"erases repression")+".",
+        metrics:{graphType:"Gene co-expr", graphEdges:E.toLocaleString(), meanDegree:deg.toFixed(1), graphStructure:(signed===1?"undirected · signed":"undirected · unsigned")},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: grn — TF→gene regulatory graph (Construction 3)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="grn"){
+      const tfNames=["MYC","TP53","GATA1","CTCF"];
+      const tgNames=["CDKN1A","HBA1","BAX"];
+      const tfPos=tfNames.map((n,i)=>new T.Vector3(-3.0+i*2.0,0,-2.4));
+      const tgPos=tgNames.map((n,i)=>new T.Vector3(-2.0+i*2.0,0,2.4));
+      // [tfIdx, tgIdx, |rho|, sign(+1 act / -1 rep), motifOK]
+      const E=[
+        [0,2, 0.41,  1, true],   // MYC → BAX (act, E-box)
+        [1,0, 0.52,  1, true],   // TP53 → CDKN1A (act, p53 RE)
+        [2,1, 0.46,  1, true],   // GATA1 → HBA1 (act, GATA motif)
+        [1,2, 0.38, -1, true],   // TP53 → BAX (repressor demo, signed)
+        [3,0, 0.22,  1, true],   // CTCF → CDKN1A (boundary) low rho — drops above tau 0.22
+        [0,1, 0.29,  1, false]   // MYC → HBA1 no motif → excluded regardless of rho
+      ];
+      tfNames.forEach((n,i)=>{
+        const m=new T.Mesh(new T.SphereGeometry(0.30,18,14),
+          new T.MeshStandardMaterial({color:cVI,emissive:cVI.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.copy(tfPos[i]);gGraph.add(m);
+        api.pick(m,{tf:{name:n}});
+        lbl(n,"#d8caff",1.0,tfPos[i].x,0.0,tfPos[i].z-0.95);
+      });
+      tgNames.forEach((n,i)=>{
+        const m=new T.Mesh(new T.SphereGeometry(0.26,18,14),
+          new T.MeshStandardMaterial({color:cCY,emissive:cCY.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.4}));
+        m.position.copy(tgPos[i]);gGraph.add(m);
+        api.pick(m,{target:{name:n}});
+        lbl(n,"#cfe0f0",0.95,tgPos[i].x,0.0,tgPos[i].z+0.95);
+      });
+      E.forEach(arr=>{
+        const ti=arr[0],gi=arr[1],r=arr[2],sg=arr[3],motif=arr[4];
+        if(motif && r>tauGrn){
+          let colHex;
+          if(signed===1) colHex = sg>0 ? GR : RO;
+          else colHex = AM;
+          api.arrow(tfPos[ti],tgPos[gi],{color:colHex,head:0.24,width:0.05,group:"graph"});
+        }
+      });
+      lbl("transcription factors (JASPAR)","#b9a7f5",1.05,0,0.0,-3.8);
+      lbl("target genes","#8a99ad",1.0,0,0.0,3.8);
+
+      const Ec=grnEdges(tauGrn);
+      const nodes=F.targets+F.tfs;
+      const deg=meanDeg(Ec,nodes,true);
+      sceneSnap={mode,k,tauCoexp,tauGrn:+tauGrn.toFixed(2),signed,
+        graphNodes:nodes,graphEdges:Ec,meanDegree:+deg.toFixed(3),directed:1,signedGraph:signed,grnEdges:Ec};
+
+      return {
+        badge:"GRN · TF→gene · motif ∧ |ρ|>"+tauGrn.toFixed(2)+" · "+(signed===1?"signed":"unsigned"),
+        formula:"edge(TF_i→g_j) if JASPAR(i,j)>0 ∧ |ρ|>τ ;  sign=DoRothEA(TF_i)∈{+1,−1}",
+        insight:"Construction 3 — the strongest claim: TF_i directly controls g_j's transcription. Edges are DIRECTED (TF→target) and require BOTH a JASPAR motif in the promoter AND |ρ|>τ. "+(signed===1?"DoRothEA signs split activators (green) from repressors (rose).":"Unsigned mode hides whether a TF activates or represses — wrong for a regulatory network.")+" MYC→HBA1 is excluded (no motif) even though ρ would pass; CTCF→CDKN1A drops once τ>0.22.",
+        state:"τ="+tauGrn.toFixed(2)+", motif-gated → |E|≈"+Ec.toLocaleString()+" directed edges over "+nodes.toLocaleString()+" nodes ("+F.tfs+" TFs + "+F.targets+" targets), mean out-degree "+deg.toFixed(2)+". Direction + sign make this irreversible: TP53→CDKN1A, not the reverse.",
+        metrics:{graphType:"TF→gene GRN", graphEdges:Ec.toLocaleString(), meanDegree:deg.toFixed(2), graphStructure:(signed===1?"directed · signed":"directed · unsigned")},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    return {badge:"D01",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d01",
+    kind:"biology-to-graph",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D01 · How biology becomes a graph",
+    subtitle:"One 10x scRNA-seq dataset (1,200 cells · 18,000 genes) → three different graphs. Each construction encodes a different scientific claim, and the GNN faithfully exploits whichever you chose.",
+    selectedLabel:"Element",
+    selectedHint:"Click a cell, gene, TF, or target.",
+    modes:[
+      {value:"cell",  label:"Cell graph (cell-cell kNN)"},
+      {value:"coexp", label:"Gene graph (co-expression)"},
+      {value:"grn",   label:"Regulatory graph (TF→gene GRN)"}
+    ],
+    params:[
+      {key:"k",        label:"kNN neighbours (cell graph)",min:5,max:40,step:1,value:15,
+       fmt:v=>"k="+Math.round(v),modes:["cell"]},
+      {key:"tauCoexp", label:"co-expression |ρ| threshold",min:0.3,max:0.9,step:0.02,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["coexp"]},
+      {key:"tauGrn",   label:"GRN |ρ| threshold (motif-gated)",min:0.1,max:0.6,step:0.02,value:0.3,
+       fmt:v=>v.toFixed(2),modes:["grn"]},
+      {key:"signed",   label:"edge sign (0=unsigned 1=signed)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===1?"signed":"unsigned",modes:["coexp","grn"]}
+    ],
+    metrics:[
+      {key:"graphType",     label:"Graph type",  accent:"cyan"},
+      {key:"graphEdges",    label:"Edges |E|",   accent:"amber"},
+      {key:"meanDegree",    label:"Mean degree", accent:"green"},
+      {key:"graphStructure",label:"Structure",   accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"Graph (nodes + edges)"},
+      {group:"axis",   label:"Guides"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Sparse threshold",
+      on:api=>{const m=api.state.mode; if(m==="cell")api.setParam("k",8); else if(m==="coexp")api.setParam("tauCoexp",0.8); else api.setParam("tauGrn",0.5);}
+    },
+    secondary:{
+      label:"Dense threshold",
+      on:api=>{const m=api.state.mode; if(m==="cell")api.setParam("k",35); else if(m==="coexp")api.setParam("tauCoexp",0.4); else api.setParam("tauGrn",0.15);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=cell / target gene · <span style="color:#a78bfa">violet</span>=transcription factor · <span style="color:#34d399">green</span>=activation (+) · <span style="color:#fb7185">rose</span>=repression (−) · <span style="color:#fbbf24">amber</span>=directed (unsigned).',
+    onParam(api){ api.frame([0,0,0], api.state.mode==="cell"?12:11); },
+    onMode(api){ api.frame([0,0,0], api.state.mode==="cell"?12:11); },
+    onSelect(api,d){
+      if(d.cell)   api.setSelected("Cell "+d.cell.id+" · state "+d.cell.state+" · node in PCA space");
+      if(d.gene)   api.setSelected("Gene "+d.gene.name+" · HVG node · undirected co-expression");
+      if(d.tf)     api.setSelected("TF "+d.tf.name+" · source of directed regulatory edges");
+      if(d.target) api.setSelected("Target "+d.target.name+" · regulated gene (edge sink)");
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const k=Math.round(s.k);
+      const tauCoexp=+s.tauCoexp;
+      const tauGrn=+s.tauGrn;
+      const signed=Math.round(s.signed);
+      let nodes,edges,directed,sgned;
+      if(mode==="cell"){ nodes=F.cells; edges=cellEdges(k); directed=0; sgned=0; }
+      else if(mode==="coexp"){ nodes=F.hvg; edges=coexpEdges(tauCoexp); directed=0; sgned=signed; }
+      else { nodes=F.targets+F.tfs; edges=grnEdges(tauGrn); directed=1; sgned=signed; }
+      const deg=(directed?1:2)*edges/nodes;
+      return {
+        mode,
+        k,
+        tauCoexp:+tauCoexp.toFixed(2),
+        tauGrn:+tauGrn.toFixed(2),
+        signed,
+        graphNodes:nodes,
+        graphEdges:edges,
+        meanDegree:+deg.toFixed(3),
+        directed,
+        signedGraph:sgned,
+        encodesDirection:directed===1,
+        encodesSign:sgned===1
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

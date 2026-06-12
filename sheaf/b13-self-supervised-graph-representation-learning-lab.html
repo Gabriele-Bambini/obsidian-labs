@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B13 · Self-supervised graph representation learning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of Math.sin; no wall-clock seeds) ──
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the note's Section-5 worked example (tiny GRN-like graph)
+  // ════════════════════════════════════════════════════════════════════════
+  // nodes & features [motif, expression]
+  const NODES=[
+    {id:"TF",    x:-3.4, z:-2.2, motif:1.0, expr:0.7, kind:"tf"},
+    {id:"G1",    x:-1.0, z:-3.0, motif:0.2, expr:0.6, kind:"gene"},
+    {id:"G2",    x: 1.2, z:-1.4, motif:0.1, expr:0.8, kind:"gene"},
+    {id:"G3",    x:-2.4, z: 1.6, motif:0.0, expr:0.4, kind:"gene"},
+    {id:"state", x: 2.0, z: 2.2, motif:0.0, expr:0.9, kind:"state"}
+  ];
+  // edges with evidence tier: hi = motif/accessibility candidate, lo = co-expression / similarity
+  const EDGES=[
+    {a:"TF",   b:"G1", tier:"hi"},   // TF→G1 high-confidence regulatory candidate
+    {a:"TF",   b:"G2", tier:"hi"},   // TF→G2 high-confidence regulatory candidate
+    {a:"G1",   b:"G3", tier:"lo"},   // G1-G3 low-confidence similarity edge
+    {a:"state",b:"G2", tier:"hi"}    // state-G2 high-confidence context edge
+  ];
+  // canonical contrastive numbers (note §5)
+  const Z_TF_V1=[0.80,0.60];
+  const Z_TF_V2=[0.75,0.66];
+  const Z_G3_V2=[-0.20,0.98];
+  // masked-reconstruction canonical numbers (note §5): mask expr on G1
+  const G1_TRUE=0.60, G1_PRED=0.58;
+
+  const idx=Object.fromEntries(NODES.map((n,i)=>[n.id,i]));
+  const cosine=(a,b)=>{const d=a[0]*b[0]+a[1]*b[1];const na=Math.hypot(a[0],a[1]),nb=Math.hypot(b[0],b[1]);return d/(na*nb||1);};
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // MODELS (deterministic, driven by the lesson's controls)
+  // ════════════════════════════════════════════════════════════════════════
+  // Contrastive InfoNCE for the TF positive pair vs G3 negative, at temperature tau.
+  // If "unsafe" augmentation is on, a high-confidence TF edge is dropped so the two
+  // TF views drift apart (lower positive similarity) → a false invariance is learned.
+  function contrastive(tau,unsafe){
+    const simPos=cosine(Z_TF_V1,Z_TF_V2);        // 0.996 at baseline
+    const simNeg=cosine(Z_TF_V1,Z_G3_V2);        // 0.428
+    // unsafe edge drop corrupts view 2's TF embedding → still pulled together by loss
+    const simPosEff=unsafe?(simPos-0.12):simPos; // model is still forced to agree
+    const t=Math.max(0.05,tau);
+    const posScore=Math.exp(simPosEff/t);
+    const negScore=Math.exp(simNeg/t);
+    const pPos=posScore/(posScore+negScore);
+    const loss=-Math.log(Math.max(1e-9,pPos));
+    return {simPos:simPosEff, simNeg, posScore, negScore, pPos, loss};
+  }
+
+  // Masked autoencoding: mask a fraction of expression channels, reconstruct from
+  // neighbours. Reconstruction error grows with mask rate (less context).
+  function masked(maskRate){
+    const baseSE=(G1_PRED-G1_TRUE)*(G1_PRED-G1_TRUE);     // 0.0004
+    const recErr=baseSE + 0.018*maskRate + 0.060*maskRate*maskRate;
+    const contextLeft=Math.max(0,1-0.9*maskRate);          // fraction of usable context
+    return {baseSE, recErr, contextLeft};
+  }
+
+  // Bootstrap (BGRL, no negatives): predict another augmented view; risk is COLLAPSE.
+  function bootstrap(drop){
+    const collapse=Math.min(0.98, 0.10 + 0.85*drop*drop);  // high drop → collapse
+    const diversity=1-collapse;
+    return {collapse, diversity};
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const tau=s.tau;
+    const drop=s.drop;          // edge-drop probability (augmentation strength)
+    const mask=s.mask;          // feature-mask rate
+    const unsafe=Math.round(s.unsafe)===1; // 0 = safe (preserve hi-conf), 1 = unsafe
+
+    const gGraph =api.group("graph");
+    const gView  =api.group("views");
+    const gLoss  =api.group("loss");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // gene / view-1 / encoder
+    const GR=new T.Color("#34d399");   // safe / positive / preserved
+    const AM=new T.Color("#fbbf24");   // TF node / negative / hazard
+    const VI=new T.Color("#a78bfa");   // reconstruction / collapse
+    const RO=new T.Color("#fb7185");   // dropped / unsafe
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const P=id=>{const n=NODES[idx[id]];return new T.Vector3(n.x,0,n.z);};
+    const nodeCol=k=>k==="tf"?AM:(k==="state"?VI:CY);
+
+    // decide which edges are dropped by augmentation, per current mode
+    function edgeDropped(e,i){
+      if(mode==="contrastive"){
+        if(e.tier==="lo") return drop>0.25;            // safe: low-confidence edge dropped
+        return unsafe && drop>0.4;                     // hi-conf only dropped under unsafe audit
+      }
+      if(mode==="bootstrap"){
+        return prand(i*9+3)<drop;                      // stochastic edge drop
+      }
+      return false;                                    // masked mode keeps structure
+    }
+
+    function drawGraph(maskedSet){
+      EDGES.forEach((e,i)=>{
+        const pa=P(e.a), pb=P(e.b);
+        const dropped=edgeDropped(e,i);
+        const isHi=e.tier==="hi";
+        const pts=[pa.clone(),pb.clone()];
+        let added;
+        if(dropped){
+          const ln=new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineDashedMaterial({color:RO.getHex(),dashSize:0.22,gapSize:0.16,transparent:true,opacity:0.95}));
+          ln.computeLineDistances(); gGraph.add(ln); added=ln;
+          const mid=pa.clone().add(pb).multiplyScalar(0.5);
+          const xm=new T.Mesh(new T.SphereGeometry(0.12,10,8),new T.MeshStandardMaterial({color:RO,emissive:RO,emissiveIntensity:0.7,roughness:0.4}));
+          xm.position.copy(mid); gGraph.add(xm);
+        }else{
+          const colHex=isHi?GR.getHex():0x35506a;
+          const ln=new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:colHex,transparent:true,opacity:isHi?0.85:0.7}));
+          gGraph.add(ln); added=ln;
+        }
+        api.pick(added,{edge:{a:e.a,b:e.b,tier:e.tier,dropped}});
+      });
+
+      NODES.forEach((n)=>{
+        const isMasked=maskedSet&&maskedSet.has(n.id);
+        const base=nodeCol(n.kind);
+        const col=isMasked?new T.Color("#21304a"):base.clone();
+        const emi=isMasked?new T.Color("#16273c"):base.clone().multiplyScalar(0.7);
+        const r=0.30+0.06*n.expr;
+        const sph=new T.Mesh(new T.SphereGeometry(isMasked?0.24:r,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:emi,emissiveIntensity:isMasked?0.25:0.6,roughness:0.4}));
+        sph.position.set(n.x,0,n.z);
+        gGraph.add(sph);
+        api.pick(sph,{node:{id:n.id,motif:n.motif,expr:n.expr,kind:n.kind,masked:!!isMasked}});
+        slbl(n.id,base.getStyle(),0.42,n.x,r+0.34,n.z);
+        if(isMasked){
+          const cone=new T.Mesh(new T.ConeGeometry(0.11,0.4,8),new T.MeshBasicMaterial({color:VI}));
+          cone.rotation.z=Math.PI; cone.position.set(n.x,0.85,n.z); gGraph.add(cone);
+        }
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: contrastive  (InfoNCE — two safe views must agree)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="contrastive"){
+      drawGraph(null);
+      const C=contrastive(tau,unsafe);
+
+      const ex=4.6, ez=0.0, SC=2.6;
+      slbl("embedding space","#8a99ad",0.4,ex,2.7,ez);
+      gView.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(ex,0,ez-2.4),new T.Vector3(ex,0,ez+2.4)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gView.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(ex-2.4,0,ez),new T.Vector3(ex+2.4,0,ez)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      function plotZ(z,colr,name,yLift){
+        const px=ex+z[0]*SC*0.5, pz=ez-z[1]*SC*0.5;
+        const m=new T.Mesh(new T.SphereGeometry(0.2,14,12),new T.MeshStandardMaterial({color:colr,emissive:colr,emissiveIntensity:0.85,roughness:0.25}));
+        m.position.set(px,yLift||0,pz); gView.add(m);
+        gView.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(ex,0,ez),new T.Vector3(px,yLift||0,pz)]),new T.LineBasicMaterial({color:colr.getHex(),transparent:true,opacity:0.6})));
+        lbl(name,colr.getStyle(),0.95,px,(yLift||0)+0.5,pz);
+        return new T.Vector3(px,yLift||0,pz);
+      }
+      const pTF1=plotZ(Z_TF_V1,CY,"z·TF v1",0);
+      const pTF2=plotZ([unsafe?Z_TF_V2[0]-0.18:Z_TF_V2[0],Z_TF_V2[1]],GR,"z·TF v2",0.05);
+      const pG3 =plotZ(Z_G3_V2,AM,"z·G3 v2",0);
+      gView.add(new T.Line(new T.BufferGeometry().setFromPoints([pTF1,pTF2]),new T.LineBasicMaterial({color:GR.getHex()})));
+      const negLn=new T.Line(new T.BufferGeometry().setFromPoints([pTF1,pG3]),new T.LineDashedMaterial({color:AM.getHex(),dashSize:0.2,gapSize:0.15}));
+      negLn.computeLineDistances(); gView.add(negLn);
+
+      lbl(unsafe?"UNSAFE: dropped hi-conf TF edge":"safe views (mask expr · drop lo-conf)",unsafe?"#fb7185":"#34d399",1.05,0,-1.1,-4.4);
+
+      api.setMetric("infoNCE",C.loss.toFixed(3));
+      api.setMetric("simPos",C.simPos.toFixed(3));
+      api.setMetric("recErr","—");
+      api.setMetric("viewSafety",unsafe?"violated":"preserved");
+
+      sceneSnap={mode,tau:+tau.toFixed(3),drop:+drop.toFixed(3),mask:+mask.toFixed(3),unsafe:unsafe?1:0,
+        infoNCE:+C.loss.toFixed(4),simPos:+C.simPos.toFixed(4),simNeg:+C.simNeg.toFixed(4),pPos:+C.pPos.toFixed(4),
+        recErr:null,diversity:null};
+
+      return {
+        badge:"Contrastive · InfoNCE · τ="+tau.toFixed(2)+(unsafe?" · UNSAFE aug":" · safe aug"),
+        formula:"L_i = &minus;log[ exp(sim(z_i,z_i&#8314;)/&tau;) / &Sigma;_j exp(sim(z_i,z_j)/&tau;) ]",
+        insight:"Two safe views of the TF neighbourhood must agree (green pull) while the G3 negative is pushed away (amber). At &tau;="+tau.toFixed(2)+" the positive pair (sim "+C.simPos.toFixed(3)+") gives p="+(C.pPos*100).toFixed(0)+"%, loss "+C.loss.toFixed(3)+". "+(unsafe?"UNSAFE: dropping the high-confidence TF edge forces the model to call two biologically DIFFERENT neighbourhoods the same — a false invariance.":"Safe augmentation masks expression and drops only the low-confidence G1-G3 edge, preserving regulatory identity."),
+        state:"sim(TF v1,TF v2)="+C.simPos.toFixed(3)+" · sim(TF,G3)="+C.simNeg.toFixed(3)+" · pos exp="+C.posScore.toFixed(2)+" · neg exp="+C.negScore.toFixed(2)+" · loss="+C.loss.toFixed(3)+".",
+        metrics:{infoNCE:C.loss.toFixed(3),simPos:C.simPos.toFixed(3),recErr:"—",viewSafety:unsafe?"violated":"preserved"},
+        focus:{center:[0.8,0,-0.2],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: masked  (GraphMAE — hide expression, reconstruct from context)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="masked"){
+      const order=["G1","G2","G3","state","TF"];
+      const nMask=Math.max(1,Math.round(mask*order.length));
+      const maskedSet=new Set(order.slice(0,nMask));
+      drawGraph(maskedSet);
+      const M=masked(mask);
+
+      const bx=4.6;
+      slbl("reconstruct masked expr","#8a99ad",0.4,bx,2.6,0);
+      function bar(x,h,colr,tag,val){
+        const b=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),new T.MeshStandardMaterial({color:colr,emissive:colr,emissiveIntensity:0.55,roughness:0.4}));
+        b.position.set(x,h/2,0); gView.add(b);
+        lbl(val,colr.getStyle(),0.95,x,h+0.45,0);
+        slbl(tag,colr.getStyle(),0.4,x,-0.05,1.1);
+      }
+      bar(bx-0.7,G1_TRUE*3.2,CY,"true x(G1)",G1_TRUE.toFixed(2));
+      bar(bx+0.7,G1_PRED*3.2,GR,"dec(h)",G1_PRED.toFixed(2));
+      lbl("SE="+M.baseSE.toFixed(4),"#a78bfa",0.95,bx,Math.max(G1_TRUE,G1_PRED)*3.2+1.1,0);
+
+      lbl("mask rate "+(mask*100).toFixed(0)+"% · "+nMask+" node(s) hidden","#a78bfa",1.05,0,-1.1,-4.4);
+
+      api.setMetric("infoNCE","—");
+      api.setMetric("simPos","—");
+      api.setMetric("recErr",M.recErr.toFixed(4));
+      api.setMetric("viewSafety",mask>0.6?"rare-erase risk":"ok");
+
+      sceneSnap={mode,tau:+tau.toFixed(3),drop:+drop.toFixed(3),mask:+mask.toFixed(3),unsafe:unsafe?1:0,
+        infoNCE:null,simPos:null,simNeg:null,pPos:null,
+        recErr:+M.recErr.toFixed(5),contextLeft:+M.contextLeft.toFixed(4),nMasked:nMask,diversity:null};
+
+      return {
+        badge:"Masked autoencoding · GraphMAE · mask "+(mask*100).toFixed(0)+"%",
+        formula:"L_mask = (1/|M|) &Sigma;_{v&isin;M} loss( dec(h_v), x_v )",
+        insight:"Expression is hidden on "+nMask+" node(s) (grey, violet cones) and reconstructed from neighbours. The canonical G1 channel: true "+G1_TRUE.toFixed(2)+", predicted "+G1_PRED.toFixed(2)+", squared error "+M.baseSE.toFixed(4)+" — a good fit. But masking more nodes ("+(mask*100).toFixed(0)+"%) leaves only "+(M.contextLeft*100).toFixed(0)+"% context: a high rate can erase a rare marker, and the model may reconstruct easy batch effects instead of mechanism.",
+        state:"Masked nodes: "+[...maskedSet].join(", ")+" · graph reconstruction error "+M.recErr.toFixed(4)+" · usable context "+(M.contextLeft*100).toFixed(0)+"%.",
+        metrics:{infoNCE:"—",simPos:"—",recErr:M.recErr.toFixed(4),viewSafety:mask>0.6?"rare-erase risk":"ok"},
+        focus:{center:[0.8,0,-0.2],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: bootstrap  (BGRL — predict another view, NO negatives, watch collapse)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="bootstrap"){
+      drawGraph(null);
+      const B=bootstrap(drop);
+
+      const ox=4.2;
+      function tower(x,colr,tag){
+        const m=new T.Mesh(new T.CylinderGeometry(0.55,0.55,1.3,20),new T.MeshStandardMaterial({color:colr,emissive:colr,emissiveIntensity:0.5,roughness:0.35}));
+        m.position.set(x,0.65,0); gView.add(m);
+        lbl(tag,colr.getStyle(),0.9,x,1.7,0);
+        return new T.Vector3(x,0.65,0);
+      }
+      tower(ox,CY,"online f_θ");
+      tower(ox+2.6,GR,"target f_ξ (sg)");
+      const ar=new T.Mesh(new T.ConeGeometry(0.16,0.42,10),new T.MeshBasicMaterial({color:0xfde68a}));
+      ar.position.set(ox+1.3,0.65,0); ar.rotation.z=-Math.PI/2; gView.add(ar);
+      lbl("predictor q","#fbbf24",0.85,ox+1.3,1.25,0);
+
+      const cz=-3.2;
+      for(let d=0;d<16;d++){
+        const sp=B.diversity;
+        const dx=ox+1.3+(prand(d*13+1)-0.5)*3.2*sp;
+        const dz=cz+(prand(d*29+5)-0.5)*1.8*sp;
+        const c=B.collapse>0.6?VI.clone():CY.clone();
+        const dot=new T.Mesh(new T.SphereGeometry(0.12,10,8),new T.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:0.7,roughness:0.4}));
+        dot.position.set(dx,0,dz); gView.add(dot);
+      }
+      lbl(B.collapse>0.6?"COLLAPSE: embeddings bunch up":"diverse embeddings (no negatives needed)",B.collapse>0.6?"#a78bfa":"#34d399",1.0,ox+1.3,0.1,cz-1.4);
+
+      api.setMetric("infoNCE","—");
+      api.setMetric("simPos",(B.diversity*100).toFixed(0)+"%");
+      api.setMetric("recErr","—");
+      api.setMetric("viewSafety",B.collapse>0.6?"collapsed":"healthy");
+
+      sceneSnap={mode,tau:+tau.toFixed(3),drop:+drop.toFixed(3),mask:+mask.toFixed(3),unsafe:unsafe?1:0,
+        infoNCE:null,simPos:null,simNeg:null,pPos:null,recErr:null,
+        diversity:+B.diversity.toFixed(4),collapse:+B.collapse.toFixed(4)};
+
+      return {
+        badge:"Bootstrap · BGRL · no negatives · drop "+(drop*100).toFixed(0)+"%",
+        formula:"min_&theta;  &#8214; q(z_online) &minus; sg(z_target) &#8214;&sup2;    (no negative bank)",
+        insight:"BGRL predicts a target view from an online view with a predictor + stop-gradient — no negatives, so it never punishes true-but-unobserved biology as a false negative. The price is collapse: at edge-drop "+(drop*100).toFixed(0)+"% the embedding diversity is "+(B.diversity*100).toFixed(0)+"%. "+(B.collapse>0.6?"Here the cloud has bunched up (violet) — the encoder is outputting nearly the same vector for everything.":"Asymmetry (predictor, stop-gradient) keeps embeddings diverse."),
+        state:"Embedding diversity "+(B.diversity*100).toFixed(0)+"% · collapse "+(B.collapse*100).toFixed(0)+"% · negatives used: none.",
+        metrics:{infoNCE:"—",simPos:(B.diversity*100).toFixed(0)+"%",recErr:"—",viewSafety:B.collapse>0.6?"collapsed":"healthy"},
+        focus:{center:[1.6,0,-0.6],radius:13}
+      };
+    }
+
+    return {badge:"B13",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"b13",
+    kind:"self-supervised-graph-ssl",
+    eyebrow:"Block B · GNN Architectures",
+    title:"B13 · Self-supervised graph representation learning",
+    subtitle:"Build a pretext task from the graph itself. Three SSL families on one tiny GRN: contrastive (InfoNCE), masked autoencoding (GraphMAE), and bootstrap (BGRL). The point is the three-way bargain — view agreement vs preserved biology vs collapse.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, an edge, or an embedding point.",
+    modes:[
+      {value:"contrastive", label:"Contrastive (InfoNCE · two safe views)"},
+      {value:"masked",      label:"Masked autoencoding (GraphMAE)"},
+      {value:"bootstrap",   label:"Bootstrap (BGRL · no negatives)"}
+    ],
+    params:[
+      {key:"tau",   label:"temperature τ (contrastive sharpness)",min:0.1,max:1.0,step:0.05,value:0.5,
+       fmt:v=>v.toFixed(2),modes:["contrastive"]},
+      {key:"drop",  label:"edge-drop strength (augmentation)",min:0,max:1,step:0.05,value:0.3,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["contrastive","bootstrap"]},
+      {key:"mask",  label:"feature-mask rate",min:0,max:1,step:0.05,value:0.2,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["masked"]},
+      {key:"unsafe",label:"augmentation (0=safe 1=unsafe)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"safe":"UNSAFE",modes:["contrastive"]}
+    ],
+    metrics:[
+      {key:"infoNCE",   label:"InfoNCE loss",accent:"cyan"},
+      {key:"simPos",    label:"positive sim / diversity",accent:"green"},
+      {key:"recErr",    label:"reconstruction error",accent:"violet"},
+      {key:"viewSafety",label:"biology preserved?",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph",  label:"GRN graph"},
+      {group:"views",  label:"Views / embeddings"},
+      {group:"loss",   label:"Loss geometry"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Safe augmentation",
+      on:api=>{api.setParam("unsafe",0);api.setParam("drop",0.3);api.setParam("mask",0.2);}
+    },
+    secondary:{
+      label:"Push it (unsafe / collapse)",
+      on:api=>{api.setParam("unsafe",1);api.setParam("drop",0.85);api.setParam("mask",0.8);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#34d399">green</span>=safe / hi-confidence edge / positive · <span style="color:#fbbf24">amber</span>=TF node / negative / hazard · <span style="color:#a78bfa">violet</span>=reconstruction / collapse · <span style="color:#fb7185">rose</span>=dropped evidence · <span style="color:#4dd7ff">cyan</span>=gene / view-1.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="bootstrap") api.frame([1.6,0,-0.6],13);
+      else api.frame([0.8,0,-0.2],13);
+    },
+    onSelect(api,d){
+      if(d.node)  api.setSelected("Node "+d.node.id+" · "+d.node.kind+" · motif="+d.node.motif.toFixed(1)+" expr="+d.node.expr.toFixed(1)+(d.node.masked?" · MASKED":""));
+      if(d.edge)  api.setSelected("Edge "+d.edge.a+"–"+d.edge.b+" · "+(d.edge.tier==="hi"?"high-confidence":"low-confidence")+(d.edge.dropped?" · DROPPED":" · kept"));
+    },
+    build,
+    snapshot(s){
+      const tau=s.tau, drop=s.drop, mask=s.mask, unsafe=Math.round(s.unsafe)===1;
+      const C=contrastive(tau,unsafe);
+      const M=masked(mask);
+      const B=bootstrap(drop);
+      return {
+        mode:s.mode,
+        tau:+tau.toFixed(3),
+        drop:+drop.toFixed(3),
+        mask:+mask.toFixed(3),
+        unsafe:unsafe?1:0,
+        infoNCE:+C.loss.toFixed(4),
+        simPos:+C.simPos.toFixed(4),
+        simNeg:+C.simNeg.toFixed(4),
+        pPos:+C.pPos.toFixed(4),
+        recErr:+M.recErr.toFixed(5),
+        contextLeft:+M.contextLeft.toFixed(4),
+        diversity:+B.diversity.toFixed(4),
+        collapse:+B.collapse.toFixed(4),
+        biologyPreserved:(s.mode==="contrastive")?!unsafe:(s.mode==="masked"?mask<=0.6:B.collapse<=0.6)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

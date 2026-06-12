@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G13 · Sheaf energy as biological consistency regularization</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no Math.random / Date) ──────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── canonical Section-5 worked example (the FACTS) ───────────────────────
+  // Four-gene module: A(TF) B(TF) C(target) D(target); candidate edges
+  // A→C A→D B→C B→D. Stalk d=1. Three cells.
+  const xA=[0.9,0.1,0.5];
+  const xB=[0.1,0.8,0.4];
+  const xC=[0.8,0.2,0.5];
+  const xD=[0.2,0.7,0.4];
+  const atacC=[0.9,0.1,0.5];
+  const atacD=[0.3,0.8,0.5];
+
+  // GENIE3 (unregularized) least-squares weights from the note §5
+  const W_GENIE={AC:0.876,BC:0.143,AD:0.124,BD:0.857};
+
+  // edge → (src expr, tgt expr) lookup
+  const SRC={AC:xA,AD:xA,BC:xB,BD:xB};
+  const TGT={AC:xC,AD:xD,BC:xC,BD:xD};
+  const TFOF={AC:"A",AD:"A",BC:"B",BD:"B"};
+  const GNOF={AC:"C",AD:"D",BC:"C",BD:"D"};
+
+  // mean sheaf energy of an edge under scalar restriction r (default 1)
+  function edgeEnergy(key,r){
+    r=(r==null)?1:r; const s=SRC[key],t=TGT[key]; let sum=0;
+    for(let c=0;c<3;c++){const d=r*s[c]-t[c];sum+=d*d;}
+    return sum/3;
+  }
+  // per-cell delta for an edge (for the bar/line scenes)
+  function edgeDeltas(key,r){
+    r=(r==null)?1:r; const s=SRC[key],t=TGT[key]; const o=[];
+    for(let c=0;c<3;c++){o.push(r*s[c]-t[c]);} return o;
+  }
+  // closed-form r* that minimises Σ(r·rna − atac)²
+  function rStar(rna,atac){let num=0,den=0;for(let c=0;c<3;c++){num+=rna[c]*atac[c];den+=rna[c]*rna[c];}return num/den;}
+  function modalEnergy(rna,atac,r){let s=0;for(let c=0;c<3;c++){const d=r*rna[c]-atac[c];s+=d*d;}return s/3;}
+
+  // sheaf-regularised weight: shrink GENIE3 weight by edge consistency.
+  // w_reg = w_genie / (1 + lambda·E_edge·SCALE)  — high-energy (spurious) edges
+  // get pushed toward zero; low-energy (true) edges barely move.
+  const SHRINK=8.0;
+  function regWeight(key,lambda){
+    const E=edgeEnergy(key,1);
+    return W_GENIE[key]/(1+lambda*E*SHRINK);
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const lambda=s.lambda;
+    const cell=Math.max(0,Math.min(2,Math.round(s.cell)-1)); // 0..2
+    const rG=s.rGain;
+    const sep=s.sep;
+
+    const gNet  =api.group("net");
+    const gBars =api.group("bars");
+    const gCells=api.group("cells");
+    const gLbl  =api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");  // activation / true edge / low energy
+    const RO=new T.Color("#fb7185");  // repression / spurious / high energy
+    const AM=new T.Color("#fbbf24");  // ATAC / accessibility
+    const VI=new T.Color("#a78bfa");  // restriction map / energy
+    const GR=new T.Color("#34d399");  // consistent
+    const SL=new T.Color("#54667c");
+
+    function sph(r,col,emi,seg){return new T.Mesh(new T.SphereGeometry(r,seg||16,(seg||16)-4),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(emi==null?0.55:emi),emissiveIntensity:0.7,roughness:0.4}));}
+    function line(a,b,hex,op){return new T.Line(new T.BufferGeometry().setFromPoints([a,b]),new T.LineBasicMaterial({color:hex,transparent:op!=null,opacity:op==null?1:op}));}
+    function bar(x,z,h,col,active){
+      const m=new T.Mesh(new T.BoxGeometry(1.0,Math.max(0.03,h),1.0),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(active?0.85:0.22),emissiveIntensity:active?0.75:0.2,roughness:0.4,transparent:!active,opacity:active?1:0.55}));
+      m.position.set(x,Math.max(0.03,h)/2,z); return m;
+    }
+
+    // edge order kept stable everywhere
+    const EDGES=["AC","BD","AD","BC"]; // true,true,spurious,spurious
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: regularize  (Application 1 — GRN inference regularization)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="regularize"){
+      // node layout: TFs left, targets right
+      const POS={
+        A:new T.Vector3(-3.4, 1.6,0), B:new T.Vector3(-3.4,-1.6,0),
+        C:new T.Vector3( 3.4, 1.6,0), D:new T.Vector3( 3.4,-1.6,0)
+      };
+      const tfCol={A:CY,B:GR};
+      ["A","B"].forEach(k=>{const m=sph(0.42,tfCol[k]);m.position.copy(POS[k]);gNet.add(m);api.pick(m,{node:{id:k,role:"TF"}});});
+      ["C","D"].forEach(k=>{const m=sph(0.42,VI,0.35);m.position.copy(POS[k]);gNet.add(m);api.pick(m,{node:{id:k,role:"target"}});});
+      L("A·TF","#4dd7ff",1.3,POS.A.x,POS.A.y+0.8,0);
+      L("B·TF","#34d399",1.3,POS.B.x,POS.B.y-0.9,0);
+      L("C","#c4b5fd",1.3,POS.C.x+0.7,POS.C.y+0.6,0);
+      L("D","#c4b5fd",1.3,POS.D.x+0.7,POS.D.y-0.7,0);
+
+      // edges: thickness ∝ regularised weight, colour by energy (true=cyan, spurious=rose)
+      let wTrue=0,wSpur=0;
+      EDGES.forEach(key=>{
+        const E=edgeEnergy(key,1);
+        const w=regWeight(key,lambda);
+        const isTrue=(key==="AC"||key==="BD");
+        if(isTrue) wTrue+=w; else wSpur+=w;
+        const a=POS[TFOF[key]], b=POS[GNOF[key]];
+        const col=isTrue?CY:RO;
+        // draw weight as a thin tube (cylinder) so thickness is visible
+        const mid=a.clone().add(b).multiplyScalar(0.5);
+        const dir=b.clone().sub(a); const len=dir.length();
+        const tube=new T.Mesh(new T.CylinderGeometry(Math.max(0.02,w*0.34),Math.max(0.02,w*0.34),len,10),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.5,transparent:true,opacity:0.35+0.6*Math.min(1,w/0.9)}));
+        tube.position.copy(mid);
+        tube.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+        gNet.add(tube);
+        api.pick(tube,{edge:{key,E:+E.toFixed(4),wGenie:W_GENIE[key],wReg:+w.toFixed(3),isTrue}});
+        // weight readout near target end
+        const lp=a.clone().lerp(b,0.72);
+        l("w="+w.toFixed(2),col.getStyle(),0.34,lp.x,lp.y+0.32,0.1);
+      });
+
+      // energy bars on a baseline below the network (per candidate edge)
+      const x0=-3.0, dx=2.0, base=-3.6;
+      EDGES.forEach((key,i)=>{
+        const E=edgeEnergy(key,1);
+        const isTrue=(key==="AC"||key==="BD");
+        const col=isTrue?CY:RO;
+        const h=E*8.0; // 0.287→~2.3, 0.0067→~0.05
+        const bx=x0+i*dx;
+        const m=bar(bx,base,h,col,true); gBars.add(m);
+        api.pick(m,{ebar:{key,E:+E.toFixed(4),isTrue}});
+        L(E.toFixed(3),col.getStyle(),1.05,bx,base+h+0.5,0);
+        l(TFOF[key]+"→"+GNOF[key],"#9fb4cc",0.36,bx,base-0.55,0);
+      });
+      l("per-edge sheaf energy  E_e = ⟨(x_TF − x_gene)²⟩","#8a99ad",0.42,-1.0,base-1.15,0);
+
+      const ratio=wTrue/(wTrue+wSpur);
+      sceneSnap={mode,lambda:+lambda.toFixed(3),cell:cell+1,
+        wAC:+regWeight("AC",lambda).toFixed(3),wAD:+regWeight("AD",lambda).toFixed(3),
+        wBC:+regWeight("BC",lambda).toFixed(3),wBD:+regWeight("BD",lambda).toFixed(3),
+        trueWeightShare:+ratio.toFixed(3),spuriousWeight:+wSpur.toFixed(3),
+        meanEnergyTrue:0.0067,meanEnergySpurious:0.287};
+
+      return {
+        badge:"GRN regularization · λ="+lambda.toFixed(2)+" · 4 edges",
+        formula:"L = Σ_c(x_g − Σ_t w_{gt}x_t)² + α‖W‖₁ + λ·Σ_e‖x_TF − x_gene‖²",
+        insight:"GENIE3 alone assigns spurious weight to A→D ("+W_GENIE.AD.toFixed(2)+") and B→C ("+W_GENIE.BC.toFixed(2)+") from partial correlations. Those edges carry HIGH sheaf energy (0.287) because the TF and gene are anti-correlated across cells. Raising λ divides each weight by (1+λ·E·"+SHRINK+"), so high-energy spurious edges (rose) shrink toward zero while the true low-energy edges A→C and B→D (cyan, E=0.0067) barely move — recovering A regulates C, B regulates D.",
+        state:"λ="+lambda.toFixed(2)+" → w_AC="+regWeight("AC",lambda).toFixed(2)+", w_BD="+regWeight("BD",lambda).toFixed(2)+" (kept) · w_AD="+regWeight("AD",lambda).toFixed(2)+", w_BC="+regWeight("BC",lambda).toFixed(2)+" (suppressed). True-weight share "+(ratio*100).toFixed(0)+"%.",
+        metrics:{trueShare:(ratio*100).toFixed(0)+"%",spurWeight:wSpur.toFixed(2),meanE:"0.29 / 0.007",lambda:lambda.toFixed(2)},
+        focus:{center:[0,-0.6,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: multimodal  (Application 2 — RNA↔ATAC coupling at a gene)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="multimodal"){
+      // gene C: RNA node (cyan) and ATAC node (amber) per cell, edge = scalar r·RNA vs ATAC
+      const rna=xC, atac=atacC;
+      const rStarC=rStar(rna,atac);
+      const x0=-4.0, dx=4.0;
+      let Etot=0;
+      for(let c=0;c<3;c++){
+        const cx=x0+c*dx;
+        const rnaY=rna[c]*4.0;
+        const scaledY=rG*rna[c]*4.0;   // r·RNA after restriction map
+        const atacY=atac[c]*4.0;
+        const active=(c===cell);
+        // RNA stalk node (raw)
+        const mr=sph(active?0.26:0.2,CY,active?0.7:0.35);
+        mr.position.set(cx-0.7,rnaY,0); gCells.add(mr);
+        api.pick(mr,{modal:{cell:c+1,kind:"RNA",val:rna[c]}});
+        // scaled RNA (after r) marker
+        const ms=sph(0.22,VI,0.6); ms.position.set(cx,scaledY,0); gCells.add(ms);
+        api.pick(ms,{modal:{cell:c+1,kind:"r·RNA",val:+(rG*rna[c]).toFixed(3)}});
+        // ATAC node
+        const ma=sph(active?0.26:0.2,AM,active?0.7:0.35);
+        ma.position.set(cx+0.7,atacY,0); gCells.add(ma);
+        api.pick(ma,{modal:{cell:c+1,kind:"ATAC",val:atac[c]}});
+        // mismatch bar between r·RNA and ATAC
+        const d=rG*rna[c]-atac[c];
+        Etot+=d*d;
+        const gap=Math.abs(scaledY-atacY);
+        const mid=(scaledY+atacY)/2;
+        const gm=new T.Mesh(new T.BoxGeometry(0.18,Math.max(0.02,gap),0.18),
+          new T.MeshStandardMaterial({color:RO,emissive:RO,emissiveIntensity:active?0.7:0.35,roughness:0.4,transparent:true,opacity:active?0.9:0.5}));
+        gm.position.set(cx+0.35,mid,0); gCells.add(gm);
+        gCells.add(line(new T.Vector3(cx,scaledY,0),new T.Vector3(cx+0.7,atacY,0),0x7f93a8,0.5));
+        l("c"+(c+1),"#9fb4cc",0.4,cx,-0.6,0);
+        l("E="+(d*d).toFixed(3),RO.getStyle(),0.34,cx+0.35,mid+0.25,0.1);
+      }
+      Etot/=3;
+      // r* target reference plane (where energy is minimised)
+      L("RNA","#4dd7ff",1.2,x0-1.1,rna[1]*4.0+1.4,0);
+      L("ATAC","#fbbf24",1.2,x0+2*dx+1.2,atac[2]*4.0+0.8,0);
+      L("r·RNA","#a78bfa",1.15,x0-1.0,0.5,0);
+      l("E_g(c) = (r_g·xᴿᴺᴬ − xᴬᵀᴬᶜ)²   r*="+rStarC.toFixed(3),"#8a99ad",0.42,0,-1.4,0);
+
+      sceneSnap={mode,lambda:+lambda.toFixed(3),rGain:+rG.toFixed(3),rStar:+rStarC.toFixed(3),
+        meanModalEnergy:+Etot.toFixed(4),energyAtR1:+modalEnergy(rna,atac,1).toFixed(4),
+        energyAtRStar:+modalEnergy(rna,atac,rStarC).toFixed(4),cell:cell+1};
+
+      return {
+        badge:"Multi-modal · gene C · r_g="+rG.toFixed(2),
+        formula:"E_g(c) = (r_g · x_g^{RNA}(c) − x_g^{ATAC}(c))²",
+        insight:"Same gene measured two ways in the same cells: RNA (cyan) and ATAC accessibility (amber). The scalar restriction map r_g (violet markers = r_g·RNA) couples them. Sheaf energy is the rose mismatch between r_g·RNA and ATAC. Slide r_g to the closed-form optimum r*="+rStarC.toFixed(3)+" and the mean energy drops from "+modalEnergy(rna,atac,1).toFixed(3)+" (r=1) to "+modalEnergy(rna,atac,rStarC).toFixed(3)+". High residual energy at a single cell flags RNA–ATAC decoupling — chromatin remodelling or noise.",
+        state:"r_g="+rG.toFixed(2)+" → mean E="+Etot.toFixed(3)+". Optimum r*="+rStarC.toFixed(3)+" gives E="+modalEnergy(rna,atac,rStarC).toFixed(3)+". r>1 = poised chromatin; r<1 = coupled housekeeping; r=0 = decoupled.",
+        metrics:{meanE:Etot.toFixed(3),rStar:rStarC.toFixed(3),rGain:rG.toFixed(2),lambda:lambda.toFixed(2)},
+        focus:{center:[0,1.6,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: clustering  (Application 3 — sheaf energy as a cluster signal)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="clustering"){
+      // Two regulatory programs (clusters). Cluster K1 = cells consistent with
+      // A→C,B→D coupling (low energy); cluster K2 = a perturbed program whose
+      // cells violate it (energy grows with 'sep'). 'sep' = inter-cluster
+      // separation knob.
+      const N=9;
+      // per-cell base energy for the THREE worked-example cells, tiled
+      const baseE=[0.020,0.020,0.000]; // E_true per cell from §5 (A→C plus B→D)
+      let intra=0,inter=0;
+      for(let k=0;k<2;k++){
+        const cx=k===0?-3.0:3.0;
+        for(let i=0;i<N;i++){
+          const ang=i/N*Math.PI*2;
+          const jit=(prand(i*7+k*53)-0.5)*0.5;
+          const rr=1.3+jit;
+          const px=cx+Math.cos(ang)*rr;
+          const pz=Math.sin(ang)*rr;
+          // K1 low energy; K2 energy scales with sep (perturbed program)
+          const cellE=baseE[i%3]+(k===1?sep*0.45*(0.6+prand(i*11+k))*0.5:prand(i*13)*0.01);
+          const py=cellE*9.0;
+          if(k===0) intra+=cellE; else inter+=cellE;
+          const col=k===0?CY.clone():RO.clone().lerp(VI,prand(i)*0.3);
+          // colour intensity by energy
+          const em=Math.min(1,0.3+cellE*2.5);
+          const m=sph(0.2,col,em); m.position.set(px,py,pz); gCells.add(m);
+          api.pick(m,{cellpt:{cluster:k+1,E:+cellE.toFixed(3)}});
+        }
+        L(k===0?"K1 · stable":"K2 · perturbed",k===0?"#4dd7ff":"#fb7185",1.25,cx,3.4,0);
+      }
+      intra/=N; inter/=N;
+      // baseline grid
+      gCells.add(line(new T.Vector3(-6,0,0),new T.Vector3(6,0,0),0x223247,0.6));
+      l("height = per-cell sheaf energy E_F(x_c; R)","#8a99ad",0.42,0,-0.7,0);
+      L("intra-K low","#34d399",1.05,-3.0,-1.3,0);
+      L("inter-K high","#fb7185",1.05,3.0,-1.3,0);
+
+      const contrast=inter-intra;
+      sceneSnap={mode,lambda:+lambda.toFixed(3),sep:+sep.toFixed(3),
+        intraEnergy:+intra.toFixed(4),interEnergy:+inter.toFixed(4),
+        energyContrast:+contrast.toFixed(4),cell:cell+1};
+
+      return {
+        badge:"Single-cell clustering · separation="+sep.toFixed(2),
+        formula:"L_cluster = L_recon(X;C) + λ·Σ_k mean_{c∈k} E_F(x_c; R)",
+        insight:"Cells are coloured and raised by their per-cell sheaf energy E_F(x_c;R). Cluster K1 (cyan, low) holds cells whose internal regulatory state is consistent with the A→C / B→D coupling. Cluster K2 (rose, high) is a perturbed program that violates it. The regularizer rewards assignments that keep intra-cluster energy low, so clusters track stable regulatory programs (committed cell types) rather than arbitrary expression neighbourhoods. Raise separation to widen the energy gap between programs.",
+        state:"mean intra-K1 energy "+intra.toFixed(3)+" vs inter (K2) "+inter.toFixed(3)+". Contrast "+contrast.toFixed(3)+". Low-energy cells anchor the centroids.",
+        metrics:{intraE:intra.toFixed(3),interE:inter.toFixed(3),contrast:contrast.toFixed(3),lambda:lambda.toFixed(2)},
+        focus:{center:[0,1.2,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: diagnostic  (Section 6 — per-cell energy, healthy vs disease)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="diagnostic"){
+      // Per-cell total energy across all 4 candidate edges, cell 1..3 from §5:
+      // cell1=1.000, cell2=0.740, cell3=0.020 (edge-blind candidate set).
+      // 'sep' acts as a disease shift that inflates the selected cell's energy.
+      const cellTotE=[1.000,0.740,0.020];
+      const x0=-4.0,dx=4.0,base=0;
+      let total=0;
+      for(let c=0;c<3;c++){
+        const cx=x0+c*dx;
+        const diseaseBoost=(c===cell)?sep*0.8:0;
+        const E=cellTotE[c]+diseaseBoost;
+        total+=E;
+        const active=(c===cell);
+        const col=E>0.5?RO.clone():(E>0.15?AM.clone():CY.clone());
+        const h=E*3.2;
+        const m=bar(cx,base,h,col,active); gBars.add(m);
+        api.pick(m,{cellbar:{cell:c+1,E:+E.toFixed(3)}});
+        L(E.toFixed(2),col.getStyle(),1.2,cx,h+0.5,0);
+        l("cell "+(c+1),"#9fb4cc",0.4,cx,-0.55,0);
+        // decompose into the 4 edges as a stacked mini-strip behind the bar
+        let yc=0;
+        ["AC","AD","BC","BD"].forEach(key=>{
+          const eD=edgeDeltas(key,1)[c]; const eE=eD*eD;
+          const eh=eE*3.2;
+          const isTrue=(key==="AC"||key==="BD");
+          const ec=isTrue?CY:RO;
+          const seg=new T.Mesh(new T.BoxGeometry(0.5,Math.max(0.02,eh),0.5),
+            new T.MeshStandardMaterial({color:ec,emissive:ec,emissiveIntensity:0.4,roughness:0.5,transparent:true,opacity:0.55}));
+          seg.position.set(cx+1.0,yc+Math.max(0.02,eh)/2,0); gBars.add(seg);
+          yc+=Math.max(0.02,eh);
+        });
+      }
+      // null shuffle reference line: E_shuffled is much higher (broken structure)
+      const Enull=2.6;
+      gBars.add(line(new T.Vector3(x0-1,Enull*0+0,0),new T.Vector3(x0+2*dx+1,0,0),0x223247,0.6));
+      const yNull=Enull*0.9;
+      gBars.add(line(new T.Vector3(x0-1,yNull,0),new T.Vector3(x0+2*dx+1,yNull,0),0xfb7185,0.5));
+      L("E_null (shuffled) ≈ "+Enull.toFixed(1),"#fb7185",1.0,x0+2*dx-0.5,yNull+0.3,0);
+      l("per-cell E_F = Σ_e ‖x_TF − x_gene‖²   (decomposed by edge →)","#8a99ad",0.42,0,-1.25,0);
+
+      sceneSnap={mode,lambda:+lambda.toFixed(3),sep:+sep.toFixed(3),
+        cellEnergyMax:+Math.max(...cellTotE).toFixed(3),cellEnergyMin:+Math.min(...cellTotE).toFixed(3),
+        selectedCellEnergy:+(cellTotE[cell]+((cell===cell)?sep*0.8:0)).toFixed(3),
+        nullEnergy:Enull,observedLessThanNull:total/3<Enull,cell:cell+1};
+
+      return {
+        badge:"Diagnostic · cell "+(cell+1)+" · shift="+sep.toFixed(2),
+        formula:"E_F(x_c; R) = Σ_e ‖x_TF − x_gene‖²   ;   test  E_obs ≪ E_shuffled",
+        insight:"Each bar is one cell's total sheaf energy over the 4 candidate edges (§5: 1.00, 0.74, 0.02). The mini-stack to the right decomposes it per edge (cyan = true A→C/B→D, rose = spurious A→D/B→C) — pinpointing WHICH coupling is disrupted. Cell 3 is the coherent state (low E). The dashed rose line is the null E_shuffled≈"+Enull.toFixed(1)+" from gene-shuffled data; observed energies sitting far below it confirm the low energy reflects genuine regulatory coherence, not chance. Apply a disease shift to a cell to watch its energy cross into the disrupted regime.",
+        state:"cell energies 1.00 / 0.74 / 0.02. Selected cell "+(cell+1)+" energy "+(cellTotE[cell]+sep*0.8).toFixed(2)+" vs null "+Enull.toFixed(1)+". Per-edge stack localises the disrupted coupling.",
+        metrics:{maxCellE:"1.00",minCellE:"0.02",nullE:Enull.toFixed(1),lambda:lambda.toFixed(2)},
+        focus:{center:[0,1.4,0],radius:14}
+      };
+    }
+
+    return {badge:"G13",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g13",
+    kind:"sheaf-energy-regularization",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G13 · Sheaf energy as biological consistency regularization",
+    subtitle:"E_F(x)=xᵀL_F x scores regulatory consistency. Four views on the §5 four-gene module: GRN regularization, multi-modal RNA–ATAC coupling, single-cell clustering, and the per-cell disease diagnostic.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge, bar, or cell.",
+    modes:[
+      {value:"regularize", label:"GRN regularization (suppress spurious edges)"},
+      {value:"multimodal", label:"Multi-modal RNA↔ATAC coupling"},
+      {value:"clustering", label:"Single-cell clustering by energy"},
+      {value:"diagnostic", label:"Per-cell disease diagnostic"}
+    ],
+    params:[
+      {key:"lambda", label:"λ regularization strength",min:0,max:1,step:0.01,value:0.5,
+       fmt:v=>v.toFixed(2),modes:["regularize"]},
+      {key:"rGain",  label:"r_g restriction map (RNA→ATAC)",min:0,max:2,step:0.01,value:1.0,
+       fmt:v=>v.toFixed(2),modes:["multimodal"]},
+      {key:"sep",    label:"perturbation / separation",min:0,max:2,step:0.02,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["clustering","diagnostic"]},
+      {key:"cell",   label:"focus cell (1–3)",min:1,max:3,step:1,value:1,
+       fmt:v=>"c"+Math.round(v)}
+    ],
+    metrics:[
+      {key:"trueShare",label:"True-weight share",accent:"cyan"},
+      {key:"spurWeight",label:"Spurious weight",accent:"rose"},
+      {key:"meanE",label:"Mean sheaf energy",accent:"violet"},
+      {key:"lambda",label:"λ",accent:"amber"}
+    ],
+    layers:[
+      {group:"net",   label:"Network / edges"},
+      {group:"bars",  label:"Energy bars"},
+      {group:"cells", label:"Cells / modalities"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"No regularization (λ=0)",
+      on:api=>{api.setParam("lambda",0);}
+    },
+    secondary:{
+      label:"Strong regularization (λ=1)",
+      on:api=>{api.setParam("lambda",1);}
+    },
+    defaultCam:{theta:-0.35,phi:0.5,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=true edge / RNA / low energy · <span style="color:#fb7185">rose</span>=spurious edge / mismatch / high energy · <span style="color:#fbbf24">amber</span>=ATAC accessibility · <span style="color:#a78bfa">violet</span>=restriction map r_g · <span style="color:#34d399">green</span>=TF B / consistent.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="regularize") api.frame([0,-0.6,0],13);
+      else if(s.mode==="multimodal") api.frame([0,1.6,0],13);
+      else if(s.mode==="clustering") api.frame([0,1.2,0],14);
+      else api.frame([0,1.4,0],14);
+    },
+    onSelect(api,d){
+      if(d.node)    api.setSelected("Gene "+d.node.id+" · "+d.node.role);
+      if(d.edge)    api.setSelected(d.edge.key+" · E="+d.edge.E+" · w_GENIE3="+d.edge.wGenie+" → w_reg="+d.edge.wReg+(d.edge.isTrue?" · TRUE":" · spurious"));
+      if(d.ebar)    api.setSelected("Edge "+d.ebar.key+" energy "+d.ebar.E+(d.ebar.isTrue?" · true":" · spurious"));
+      if(d.modal)   api.setSelected("Cell "+d.modal.cell+" · "+d.modal.kind+" = "+d.modal.val);
+      if(d.cellpt)  api.setSelected("Cluster K"+d.cellpt.cluster+" cell · E="+d.cellpt.E);
+      if(d.cellbar) api.setSelected("Cell "+d.cellbar.cell+" total energy "+d.cellbar.E);
+    },
+    build,
+    snapshot(s){
+      const lambda=s.lambda;
+      const ratioTrue=(regWeight("AC",lambda)+regWeight("BD",lambda));
+      const ratioSpur=(regWeight("AD",lambda)+regWeight("BC",lambda));
+      return {
+        mode:s.mode,
+        lambda:+lambda.toFixed(3),
+        cell:Math.round(s.cell),
+        rGain:+s.rGain.toFixed(3),
+        sep:+s.sep.toFixed(3),
+        wAC:+regWeight("AC",lambda).toFixed(3),
+        wBD:+regWeight("BD",lambda).toFixed(3),
+        wAD:+regWeight("AD",lambda).toFixed(3),
+        wBC:+regWeight("BC",lambda).toFixed(3),
+        trueWeightShare:+(ratioTrue/(ratioTrue+ratioSpur)).toFixed(3),
+        meanEnergyTrue:0.0067,
+        meanEnergySpurious:0.287,
+        rStarGeneC:+rStar(xC,atacC).toFixed(3),
+        rStarGeneD:+rStar(xD,atacD).toFixed(3),
+        spuriousSuppressed:ratioSpur<0.2
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

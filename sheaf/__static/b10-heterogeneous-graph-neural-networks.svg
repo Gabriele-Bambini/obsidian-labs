@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure B10 — Typed relations keep the evidence channel</title>
+<desc id="d">Four-panel captioned figure: Typed relations keep the evidence channel</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE B10 · BLOCK B · GNN ARCHITECTURES</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Typed relations keep the evidence channel</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Three typed channels into IL7R</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">TF regulates gene</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">0.72</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">drug targets gene</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">0.24</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cell expresses g…</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">0.45</text>
+<circle cx="61" cy="205" r="5" fill="#4dd7ff"/>
+<text x="70" y="209" fill="#9fb4cc" font-size="11">TF (GATA3)</text>
+<circle cx="159.2" cy="205" r="5" fill="#fbbf24"/>
+<text x="168.2" y="209" fill="#9fb4cc" font-size="11">drug (DrugX)</text>
+<circle cx="271.04" cy="205" r="5" fill="#34d399"/>
+<text x="280.04" y="209" fill="#9fb4cc" font-size="11">cell (Tcell)</text>
+<text x="56" y="218" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Relation-specific aggregation</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">h'(IL7R) = σ( Σ_r W_r h_u )</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">= 0.72 + 0.24 + 0.45</text>
+<text x="502" y="187.5" fill="#a78bfa" font-size="11.5" font-weight="700">typed total</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">1.41</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Why the channel matters</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">The TF channel carries 51% of the inflow. If a GRN</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">prediction leans on the cell-expression channel it is a</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">marker, not regulation; if on the drug channel it is</text>
+<text x="56" y="361" fill="#9fb4cc" font-size="11">therapeutic, not transcriptional. The decomposition, not</text>
+<text x="56" y="381" fill="#9fb4cc" font-size="11">the total, carries the biology.</text>
+<rect x="56" y="400" width="120" height="76" fill="none" stroke="#3a4a5e" stroke-width="1"/>
+<path d="M56 406.08 L104 434.2 L140 453.2 L176 469.92" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Collapse erases the schema</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">R-GCN</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">W_r per relation</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">HAN</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">metapath attention</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">HGT</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">typed attention</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">collapse</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">one mean = 0.75</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure B10. </text>
+<text x="140.59" y="538" fill="#c7d2dd" font-size="13">Target </text>
+<text x="197.01" y="538" fill="#c7d2dd" font-size="13">gene </text>
+<text x="237.31" y="538" fill="#c7d2dd" font-size="13">IL7R </text>
+<text x="277.61" y="538" fill="#c7d2dd" font-size="13">receives </text>
+<text x="350.15" y="538" fill="#c7d2dd" font-size="13">three </text>
+<text x="398.51" y="538" fill="#c7d2dd" font-size="13">typed </text>
+<text x="446.87" y="538" fill="#c7d2dd" font-size="13">relation </text>
+<text x="519.41" y="538" fill="#c7d2dd" font-size="13">channels. </text>
+<text x="600.01" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="633.54" y="538" fill="#c7d2dd" font-size="13">TF, </text>
+<text x="665.78" y="538" fill="#c7d2dd" font-size="13">drug, </text>
+<text x="714.14" y="538" fill="#c7d2dd" font-size="13">and </text>
+<text x="746.38" y="538" fill="#c7d2dd" font-size="13">cell </text>
+<text x="786.68" y="538" fill="#c7d2dd" font-size="13">edges </text>
+<text x="835.04" y="538" fill="#c7d2dd" font-size="13">each</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">carry </text>
+<text x="88.36" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="104.48" y="559" fill="#c7d2dd" font-size="13">relation-specific </text>
+<text x="249.56" y="559" fill="#c7d2dd" font-size="13">message. </text>
+<text x="322.1" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="355.63" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="387.87" y="559" fill="#c7d2dd" font-size="13">relation-specific </text>
+<text x="532.95" y="559" fill="#c7d2dd" font-size="13">aggregate </text>
+<text x="613.55" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="637.73" y="559" fill="#c7d2dd" font-size="13">1.41, </text>
+<text x="686.09" y="559" fill="#c7d2dd" font-size="13">and </text>
+<text x="718.33" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="750.57" y="559" fill="#c7d2dd" font-size="13">TF </text>
+<text x="774.75" y="559" fill="#c7d2dd" font-size="13">channel</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">supplies </text>
+<text x="112.54" y="580" fill="#c7d2dd" font-size="13">51% </text>
+<text x="144.78" y="580" fill="#c7d2dd" font-size="13">of </text>
+<text x="168.96" y="580" fill="#c7d2dd" font-size="13">it. </text>
+<text x="201.2" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="234.73" y="580" fill="#c7d2dd" font-size="13">Channel </text>
+<text x="299.21" y="580" fill="#c7d2dd" font-size="13">identity </text>
+<text x="371.75" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="395.93" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="428.17" y="580" fill="#c7d2dd" font-size="13">evidence: </text>
+<text x="508.77" y="580" fill="#c7d2dd" font-size="13">regulation, </text>
+<text x="605.49" y="580" fill="#c7d2dd" font-size="13">marker, </text>
+<text x="669.97" y="580" fill="#c7d2dd" font-size="13">or </text>
+<text x="694.15" y="580" fill="#c7d2dd" font-size="13">therapy </text>
+<text x="758.63" y="580" fill="#c7d2dd" font-size="13">are </text>
+<text x="790.87" y="580" fill="#c7d2dd" font-size="13">different</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">claims. </text>
+<text x="104.48" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="138.01" y="601" fill="#c7d2dd" font-size="13">A </text>
+<text x="154.13" y="601" fill="#c7d2dd" font-size="13">homogeneous </text>
+<text x="250.85" y="601" fill="#c7d2dd" font-size="13">collapse </text>
+<text x="323.39" y="601" fill="#c7d2dd" font-size="13">reports </text>
+<text x="387.87" y="601" fill="#c7d2dd" font-size="13">a </text>
+<text x="403.99" y="601" fill="#c7d2dd" font-size="13">single </text>
+<text x="460.41" y="601" fill="#c7d2dd" font-size="13">mean </text>
+<text x="500.71" y="601" fill="#c7d2dd" font-size="13">of </text>
+<text x="524.89" y="601" fill="#c7d2dd" font-size="13">0.75 </text>
+<text x="565.19" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="597.43" y="601" fill="#c7d2dd" font-size="13">cannot </text>
+<text x="653.85" y="601" fill="#c7d2dd" font-size="13">say </text>
+<text x="686.09" y="601" fill="#c7d2dd" font-size="13">which </text>
+<text x="734.45" y="601" fill="#c7d2dd" font-size="13">channel </text>
+<text x="798.93" y="601" fill="#c7d2dd" font-size="13">carried </text>
+<text x="863.41" y="601" fill="#c7d2dd" font-size="13">the</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">prediction </text>
+<text x="128.66" y="622" fill="#c7d2dd" font-size="13">— </text>
+<text x="144.78" y="622" fill="#c7d2dd" font-size="13">R-GCN, </text>
+<text x="201.2" y="622" fill="#c7d2dd" font-size="13">HAN, </text>
+<text x="241.5" y="622" fill="#c7d2dd" font-size="13">and </text>
+<text x="273.74" y="622" fill="#c7d2dd" font-size="13">HGT </text>
+<text x="305.98" y="622" fill="#c7d2dd" font-size="13">each </text>
+<text x="346.28" y="622" fill="#c7d2dd" font-size="13">preserve </text>
+<text x="418.82" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="451.06" y="622" fill="#c7d2dd" font-size="13">schema </text>
+<text x="507.48" y="622" fill="#c7d2dd" font-size="13">instead.</text>
+</svg>

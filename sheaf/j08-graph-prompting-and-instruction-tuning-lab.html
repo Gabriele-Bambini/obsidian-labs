@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J08 · Graph prompting and instruction tuning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no RNG, no clock) ───────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS from note §5 worked example ────────────────────────────────────
+  // 50,000 co-expression nets pretraining; 50-gene query subnet;
+  // task = lineage-specific vs housekeeping module; 20 labels/class (40 total).
+  const F={
+    pretrainCorpus:50000,   // co-expression networks
+    queryGenes:50,          // genes in query subnetwork
+    labelsPerClass:20,      // 20 per class
+    labelsTotal:40,         // 40 total
+    gnnParams:50000,        // ~50k GNN params
+    promptNodes:5,          // 5 prompt nodes
+    promptDim:64,           // 64-dim prompt features
+    promptParams:320,       // 5 x 64 = 320 learnable params
+    accFrozen:0.56,         // Step 1 frozen baseline
+    accPrompt:0.78,         // Step 2 GraphPrompt @ 40 labels
+    epochs:150,             // prompt optimisation epochs
+    timePromptSec:12,       // 12 s CPU prompt tuning
+    timeRetrainSec:480,     // 8 min full retrain = 480 s
+    // Step 3 few-shot curve: k -> [standard GNN retrain, GraphPrompt]
+    fewshot:[
+      {k:2,  gnn:0.58, prompt:0.64},
+      {k:5,  gnn:0.64, prompt:0.71},
+      {k:10, gnn:0.70, prompt:0.76},
+      {k:20, gnn:0.76, prompt:0.78},
+      {k:50, gnn:0.83, prompt:0.81},
+      {k:100,gnn:0.87, prompt:0.83}
+    ],
+    // Step 4 instruction-tuning: 5 master regulators the graph-LLM names
+    regulators:[
+      {g:"HNF4A", deg:12,  note:"high degree=12, central"},
+      {g:"FOXA2", deg:8,   note:"betweenness 0.34, bridges clusters"},
+      {g:"CEBPA", deg:6,   note:"3 ChIP-seq confirmed targets"},
+      {g:"NR1H4", deg:5,   note:"FXR, high FC at onset"},
+      {g:"HNF1A", deg:4,   note:"coexpressed with all four"}
+    ],
+    graphTokens:8           // n_graph_tokens prepended to the LLM
+  };
+  // crossover k where standard GNN overtakes GraphPrompt (≈ between 20 and 50)
+  F.crossoverK=35;
+
+  let sceneSnap={};
+
+  // accuracy lookup at given k via the few-shot table (piecewise-linear) ----
+  function curveVal(k,key){
+    const t=F.fewshot;
+    if(k<=t[0].k) return t[0][key];
+    if(k>=t[t.length-1].k) return t[t.length-1][key];
+    for(let i=0;i<t.length-1;i++){
+      if(k>=t[i].k && k<=t[i+1].k){
+        const f=(k-t[i].k)/(t[i+1].k-t[i].k);
+        return t[i][key]+f*(t[i+1][key]-t[i][key]);
+      }
+    }
+    return t[t.length-1][key];
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const kShot=Math.round(s.kShot);
+    const nPrompt=Math.round(s.nPrompt);
+    const connDensity=s.connDensity;   // 0..1 prompt->input connection density
+    const instrTokens=Math.round(s.instrTokens);
+
+    const gInput =api.group("input");
+    const gPrompt=api.group("prompt");
+    const gLLM   =api.group("llm");
+    const gCurve =api.group("curve");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY="#4dd7ff";   // input graph / frozen GNN
+    const GR="#34d399";    // GraphPrompt / adapted
+    const AM="#fbbf24";    // standard-GNN / scratch / instruction
+    const VI="#a78bfa";    // prompt nodes / cross-edges / advantage
+    const RO="#fb7185";    // failure / low
+
+    // ---- shared: lay out the 50-gene input subnetwork as a tight ring ----
+    // (compressed to 16 visible representative nodes for legibility)
+    const NV=16, RR=3.2;
+    function inputPos(i){const a=i/NV*Math.PI*2;return [Math.cos(a)*RR,0,Math.sin(a)*RR];}
+    function drawInput(dim){
+      for(let i=0;i<NV;i++){
+        const p=inputPos(i);
+        const isTF=(prand(i*3+1)>0.66);
+        const baseCol=isTF?CY:"#3a6f9e";
+        const nd=api.node(p,{r:isTF?0.30:0.22,color:dim?"#1d2c40":baseCol,halo:!dim,group:"input",
+          pick:{node:{id:i,type:isTF?"TF":"target"}}});
+        // ring edges
+        if(prand(i*5+7)>0.30){
+          const j=(i+1)%NV;
+          api.edge(p,inputPos(j),{color:dim?"#16202f":"#1e3a52",opacity:dim?0.3:0.7,group:"input"});
+        }
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE A — frozen : pretrained GNN applied with NO adaptation (acc 0.56)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="frozen"){
+      drawInput(false);
+      // frozen encoder at centre — locked (no prompt attached)
+      api.node([0,0,0],{r:0.85,color:CY,label:"f_θ (frozen)",labelColor:CY,group:"prompt"});
+      // padlock ring of dim cross-spokes to show GNN reads all nodes
+      for(let i=0;i<NV;i+=2){
+        api.edge([0,0,0],inputPos(i),{color:"#1a3050",opacity:0.3,group:"prompt"});
+      }
+      const acc=F.accFrozen;
+      // single accuracy bar
+      const h=0.2+acc*3.6;
+      const bar=new T.Mesh(new T.BoxGeometry(1.3,h,1.3),api.mat(RO,{emissive:0.5}));
+      bar.position.set(0,h/2,-5.0); gPrompt.add(bar);
+      api.pick(bar,{bar:{name:"frozen",acc}});
+      L((acc*100).toFixed(0)+"%",RO,1.7,0,h+0.6,-5.0);
+      l("frozen baseline",RO,0.42,0,0.06,-5.0);
+      L("no task adaptation","#8a99ad",1.1,0,-0.5,RR+0.9);
+
+      sceneSnap={mode,kShot,nPrompt:0,paradigm:"frozen",accuracy:+acc.toFixed(3),
+        learnableParams:0,vsScratchPP:0,speedupX:0,promptAdvantagePP:null};
+      return {
+        badge:"Frozen pretrained GNN · no adaptation",
+        formula:"h = f_θ(G)  ·  θ frozen · 0 learnable params",
+        insight:"The GNN pretrained on "+F.pretrainCorpus.toLocaleString()+" co-expression networks is applied directly to the new "+F.queryGenes+"-gene module-classification task. It has never seen this task and has no mechanism to distinguish lineage-specific from housekeeping modules — accuracy "+(acc*100).toFixed(0)+"%, barely above the 50% chance line.",
+        state:"Frozen encoder reads all "+F.queryGenes+" genes (16 shown) but nothing is learned. Accuracy "+(acc*100).toFixed(0)+"% ≈ chance. Switch to GraphPrompt to adapt it.",
+        metrics:{accuracy:(acc*100).toFixed(0)+"%",learnableParams:"0",speedup:"—",promptAdvantage:"—"},
+        focus:{center:[0,0,-1.5],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE B — graph-prompt : prepend nPrompt learnable nodes (acc 0.78)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="graph-prompt"){
+      drawInput(false);
+      // frozen encoder
+      api.node([0,0,0],{r:0.8,color:CY,label:"f_θ frozen",labelColor:CY,group:"input"});
+      // prompt nodes stacked above the plane (violet) — the learnable graph G_p
+      const pr=1.5, py=2.6;
+      const ppos=[];
+      for(let i=0;i<nPrompt;i++){
+        const a=i/Math.max(1,nPrompt)*Math.PI*2;
+        const p=[Math.cos(a)*pr,py,Math.sin(a)*pr];
+        ppos.push(p);
+        api.node(p,{r:0.26,color:VI,group:"prompt",pick:{prompt:{id:i}}});
+      }
+      // prompt-internal edges (fully connected G_p)
+      for(let i=0;i<nPrompt;i++)for(let j=i+1;j<nPrompt;j++){
+        api.edge(ppos[i],ppos[j],{color:VI,opacity:0.5,width:0.03,group:"prompt"});
+      }
+      // cross-edges prompt -> input, density-controlled
+      let crossCount=0;
+      for(let i=0;i<nPrompt;i++){
+        for(let v=0;v<NV;v++){
+          if(prand(i*53+v*7+3) < connDensity){
+            api.edge(ppos[i],inputPos(v),{color:VI,opacity:0.28,width:0.02,group:"prompt"});
+            crossCount++;
+          }
+        }
+      }
+      L("G_p · "+nPrompt+" prompt nodes",VI,1.25,0,py+1.0,0);
+
+      const params=nPrompt*F.promptDim;
+      // accuracy scales mildly with nPrompt around the reference 5-node value
+      const acc=Math.max(0.6,Math.min(0.82, F.accPrompt + (nPrompt-F.promptNodes)*0.006 - Math.max(0,nPrompt-9)*0.012));
+      const speedup=F.timeRetrainSec/F.timePromptSec; // 40x
+      const advantage=acc-F.accFrozen;
+
+      // two bars: frozen vs prompt
+      const bars=[{n:"frozen",v:F.accFrozen,c:RO,x:-1.7},{n:"prompt",v:acc,c:GR,x:1.7}];
+      bars.forEach(b=>{
+        const h=0.2+b.v*3.4;
+        const m=new T.Mesh(new T.BoxGeometry(1.2,h,1.2),api.mat(b.c,{emissive:b.n==="prompt"?0.8:0.3}));
+        m.position.set(b.x,h/2,-5.2); gPrompt.add(m);
+        api.pick(m,{bar:{name:b.n,acc:b.v}});
+        L((b.v*100).toFixed(0)+"%",b.c,1.55,b.x,h+0.55,-5.2);
+        l(b.n,b.c,0.4,b.x,0.06,-5.2);
+      });
+
+      sceneSnap={mode,kShot,nPrompt,paradigm:"graph-prompt",accuracy:+acc.toFixed(3),
+        learnableParams:params,crossEdges:crossCount,vsFrozenPP:+(advantage*100).toFixed(1),
+        speedupX:+speedup.toFixed(0),promptAdvantagePP:+(advantage*100).toFixed(1)};
+      return {
+        badge:"GraphPrompt · "+nPrompt+" prompt nodes · "+params+" params",
+        formula:"G_aug = G_p ++ G ;  learn X_p ("+nPrompt+"×"+F.promptDim+"="+params+")  ≪ θ ("+F.gnnParams.toLocaleString()+")",
+        insight:"Prepend a small learnable graph G_p (violet) and attach it to the frozen encoder by cross-edges. Only X_p — "+params+" parameters versus ~"+F.gnnParams.toLocaleString()+" in the GNN — is optimised for "+F.epochs+" epochs on the "+F.labelsTotal+" labelled examples. Accuracy jumps "+(F.accFrozen*100).toFixed(0)+"% → "+(acc*100).toFixed(0)+"% in "+F.timePromptSec+"s CPU (vs "+(F.timeRetrainSec/60)+" min retrain): a "+speedup.toFixed(0)+"× speedup.",
+        state:nPrompt+" prompt nodes · "+crossCount+" cross-edges · "+params+" learnable params. Accuracy "+(acc*100).toFixed(0)+"% (+"+(advantage*100).toFixed(0)+"pp vs frozen). Drag prompt-node count and connection density.",
+        metrics:{accuracy:(acc*100).toFixed(0)+"%",learnableParams:""+params,speedup:speedup.toFixed(0)+"×",promptAdvantage:"+"+(advantage*100).toFixed(0)+"pp"},
+        focus:{center:[0,1,-1.8],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE C — few-shot : GraphPrompt vs standard-GNN retrain across k
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="few-shot"){
+      const tab=F.fewshot;
+      const xS=1.5, yS=4.0, xOff=-4.2, yOff=-0.2;
+      const xOf=i=>xOff+ (Math.log2(tab[i].k)/Math.log2(100))*(tab.length*xS*0.92);
+      // build smooth x via log scale of k between table points; use index map for markers
+      const xAt=k=>xOff + (Math.log2(Math.max(2,Math.min(100,k)))/Math.log2(100))*(tab.length*xS*0.92);
+
+      // axes
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff+tab.length*xS,yOff,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff,yOff+yS,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+
+      // GraphPrompt curve (green) + standard GNN curve (amber)
+      const promptPts=tab.map(p=>new T.Vector3(xAt(p.k),yOff+p.prompt*yS,0));
+      const gnnPts=tab.map(p=>new T.Vector3(xAt(p.k),yOff+p.gnn*yS,0));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(promptPts),new T.LineBasicMaterial({color:0x34d399})));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(gnnPts),new T.LineBasicMaterial({color:0xfbbf24})));
+
+      // advantage ribbon where prompt > gnn (violet)
+      tab.forEach(p=>{
+        if(p.prompt>p.gnn+0.005){
+          const x=xAt(p.k), yP=yOff+p.prompt*yS, yG=yOff+p.gnn*yS;
+          const fill=new T.Mesh(new T.BoxGeometry(0.5,yP-yG,0.04),new T.MeshBasicMaterial({color:0xa78bfa,transparent:true,opacity:0.22}));
+          fill.position.set(x,(yP+yG)/2,0); gCurve.add(fill);
+        }
+      });
+
+      // markers + dots at every table point
+      tab.forEach((p,i)=>{
+        const x=xAt(p.k);
+        const dp=new T.Mesh(new T.SphereGeometry(0.13,12,10),api.mat(GR,{emissive:0.8}));
+        dp.position.set(x,yOff+p.prompt*yS,0.08); gCurve.add(dp);
+        api.pick(dp,{marker:{type:"GraphPrompt",k:p.k,acc:p.prompt}});
+        const dg=new T.Mesh(new T.SphereGeometry(0.13,12,10),api.mat(AM,{emissive:0.8}));
+        dg.position.set(x,yOff+p.gnn*yS,0.08); gCurve.add(dg);
+        api.pick(dg,{marker:{type:"standard GNN",k:p.k,acc:p.gnn}});
+        l("k="+p.k,"#7f93a8",0.34,x,yOff-0.45,0);
+      });
+
+      // current-k highlight ring + vertical gap
+      const accP=curveVal(kShot,"prompt"), accG=curveVal(kShot,"gnn");
+      const xK=xAt(kShot);
+      const ring=new T.Mesh(new T.TorusGeometry(0.30,0.05,10,28),api.mat(VI,{emissive:0.9}));
+      ring.position.set(xK,yOff+accP*yS,0.18); gCurve.add(ring);
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xK,yOff+accG*yS,0.12),new T.Vector3(xK,yOff+accP*yS,0.12)]),new T.LineBasicMaterial({color:0xa78bfa})));
+
+      // crossover marker (where standard GNN overtakes)
+      const xc=xAt(F.crossoverK);
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xc,yOff,0),new T.Vector3(xc,yOff+yS,0)]),new T.LineBasicMaterial({color:0x55677c,transparent:true,opacity:0.6})));
+      L("crossover k≈"+F.crossoverK,"#8a99ad",1.0,xc,yOff+yS+0.35,0);
+
+      L("GraphPrompt",GR,1.2,xAt(100)+0.6,yOff+tab[5].prompt*yS,0);
+      L("standard GNN",AM,1.2,xAt(100)+0.6,yOff+tab[5].gnn*yS-0.45,0);
+      L("acc","#8a99ad",1.0,xOff-0.7,yOff+yS*0.5,0);
+      L("labels per class (log)","#8a99ad",1.0,xOff+tab.length*xS*0.4,yOff-1.0,0);
+
+      const gap=accP-accG;
+      sceneSnap={mode,kShot,nPrompt,paradigm:"few-shot",accuracy:+accP.toFixed(3),
+        gnnAccuracy:+accG.toFixed(3),promptAdvantagePP:+(gap*100).toFixed(1),
+        crossoverK:F.crossoverK,learnableParams:F.promptParams,speedupX:40};
+      return {
+        badge:"Few-shot · k="+kShot+" labels/class · gap "+(gap*100).toFixed(0)+"pp",
+        formula:"GraphPrompt > retrain  while  k < k_cross ≈ "+F.crossoverK+"  per class",
+        insight:"At few labels GraphPrompt (green) beats full GNN retraining (amber) — the violet ribbon is its data-efficiency advantage. At k="+kShot+": prompt "+(accP*100).toFixed(0)+"% vs GNN "+(accG*100).toFixed(0)+"% ("+(gap>=0?"+":"")+(gap*100).toFixed(0)+"pp). They cross near k≈"+F.crossoverK+"; above it the fully-trained GNN wins. For costly biological labels (CRISPR, ChIP-seq) the few-shot regime is where you live.",
+        state:"k="+kShot+"/class → GraphPrompt "+(accP*100).toFixed(0)+"%, standard GNN "+(accG*100).toFixed(0)+"%. Advantage "+(gap>=0?"+":"")+(gap*100).toFixed(0)+"pp. Drag k across the crossover.",
+        metrics:{accuracy:(accP*100).toFixed(0)+"%",learnableParams:""+F.promptParams,speedup:"40×",promptAdvantage:(gap>=0?"+":"")+(gap*100).toFixed(0)+"pp"},
+        focus:{center:[0,1.6,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE D — instruct : graph instruction tuning · graph-LLM querying
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="instruct"){
+      drawInput(false);
+      // graph encoder pools the input into n_graph_tokens virtual tokens
+      api.node([0,0,0],{r:0.7,color:CY,label:"graph encoder",labelColor:CY,group:"input"});
+
+      // graph tokens (amber) rising into the LLM column on the right
+      const tokX=5.2, tokN=F.graphTokens;
+      const tokPos=[];
+      for(let i=0;i<tokN;i++){
+        const y=2.6 - i*(5.0/(tokN-1));
+        const p=[tokX,y,0];
+        tokPos.push(p);
+        api.node(p,{r:0.16,color:AM,halo:false,group:"llm",pick:{token:{id:i}}});
+        // projector edge from encoder to token
+        api.edge([0,0,0],p,{color:"#3a3417",opacity:0.4,width:0.02,group:"llm"});
+      }
+      L(tokN+" graph tokens","#fbbf24",1.05,tokX,3.3,0);
+
+      // instruction tokens (violet) prepended below the graph tokens
+      const insX=6.7;
+      const shown=Math.min(instrTokens,10);
+      for(let i=0;i<shown;i++){
+        const y=2.6 - i*(5.0/9);
+        api.node([insX,y,0],{r:0.13,color:VI,halo:false,group:"llm",pick:{instr:{id:i}}});
+      }
+      L("instruction ("+instrTokens+" tok)",VI,1.0,insX+0.2,3.3,0);
+
+      // ranked master-regulator readout (the LLM's answer) as a degree bar chart
+      const maxDeg=F.regulators[0].deg;
+      F.regulators.forEach((r,i)=>{
+        const z=-2.0 - i*1.15;
+        const w=0.4+ (r.deg/maxDeg)*3.6;
+        const bar=new T.Mesh(new T.BoxGeometry(w,0.42,0.6),api.mat(i===0?GR:CY,{emissive:i===0?0.8:0.45}));
+        bar.position.set(-3.0+w/2,0.3,z); gLLM.add(bar);
+        api.pick(bar,{regulator:{rank:i+1,gene:r.g,deg:r.deg,note:r.note}});
+        l(r.g+" (deg "+r.deg+")",i===0?GR:CY,0.4,-3.0+w+0.5,0.3,z);
+      });
+      L("named master regulators","#cfe0f0",1.15,-1.4,1.2,-2.0-2.3);
+
+      const params=0; // inference-time: nothing updated
+      sceneSnap={mode,kShot,nPrompt,paradigm:"instruct",accuracy:null,
+        graphTokens:tokN,instrTokens,regulatorsNamed:F.regulators.length,
+        learnableParams:params,promptAdvantagePP:null,speedupX:0};
+      return {
+        badge:"Graph instruction tuning · graph-LLM · "+tokN+" graph tokens",
+        formula:"input = [ z_graph ("+tokN+" tok) | instruction ("+instrTokens+" tok) ] → LLM",
+        insight:"A graph-text model encodes the "+F.queryGenes+"-gene network as "+tokN+" virtual graph tokens (amber) and prepends them to a natural-language instruction (violet). The LLM answers in words — naming "+F.regulators.length+" master regulators ("+F.regulators.map(r=>r.g).join(", ")+"). Nothing is updated at inference; flexibility comes from language, not from gradient steps. But the encoding is lossy and outputs map structure→text patterns — degree is a heuristic for regulatory importance, not proof, so answers need biological validation.",
+        state:tokN+" graph tokens + "+instrTokens+" instruction tokens → LLM. Top hit HNF4A (degree 12). Click a regulator bar or token. This compresses topology into a fixed token budget — lossy by design.",
+        metrics:{accuracy:"NL out",learnableParams:"0 (inf.)",speedup:"—",promptAdvantage:F.regulators.length+" TFs"},
+        focus:{center:[1.0,0,-2.0],radius:15}
+      };
+    }
+
+    return {badge:"J08",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"j08",
+    kind:"graph-prompting-instruction-tuning",
+    eyebrow:"Block J · Advanced GNN Theory",
+    title:"J08 · Graph prompting and instruction tuning",
+    subtitle:"Adapt one frozen pretrained GNN to a new GRN task without retraining. Four paradigms on the §5 worked example: frozen baseline, GraphPrompt, the few-shot curve, and graph instruction tuning.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, prompt node, bar, marker, token, or regulator.",
+    modes:[
+      {value:"frozen",       label:"Frozen baseline (no adaptation)"},
+      {value:"graph-prompt", label:"GraphPrompt (prepend learnable G_p)"},
+      {value:"few-shot",     label:"Few-shot curve (prompt vs retrain)"},
+      {value:"instruct",     label:"Graph instruction tuning (graph-LLM)"}
+    ],
+    params:[
+      {key:"kShot",      label:"labels per class (k)",min:2,max:100,step:1,value:20,
+       fmt:v=>Math.round(v).toString(),modes:["few-shot"]},
+      {key:"nPrompt",    label:"# prompt nodes",min:1,max:12,step:1,value:5,
+       fmt:v=>Math.round(v).toString(),modes:["graph-prompt"]},
+      {key:"connDensity",label:"prompt→input density",min:0,max:1,step:0.05,value:0.5,
+       fmt:v=>v.toFixed(2),modes:["graph-prompt"]},
+      {key:"instrTokens",label:"instruction tokens",min:4,max:32,step:1,value:16,
+       fmt:v=>Math.round(v).toString(),modes:["instruct"]}
+    ],
+    metrics:[
+      {key:"accuracy",         label:"Accuracy (10-fold)",accent:"green"},
+      {key:"learnableParams",  label:"Learnable params",  accent:"violet"},
+      {key:"speedup",          label:"Speed vs retrain",  accent:"cyan"},
+      {key:"promptAdvantage",  label:"Prompt advantage",  accent:"amber"}
+    ],
+    layers:[
+      {group:"input",  label:"Input subnetwork"},
+      {group:"prompt", label:"Prompt graph G_p"},
+      {group:"llm",    label:"Graph tokens / LLM"},
+      {group:"curve",  label:"Few-shot curve"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Reference (k=20, 5 nodes)",
+      on:api=>{api.setParam("kShot",20);api.setParam("nPrompt",5);api.setParam("connDensity",0.5);}
+    },
+    secondary:{
+      label:"Past crossover (k=100)",
+      on:api=>{api.setParam("kShot",100);}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:14},
+    hint:'<span style="color:#4dd7ff">cyan</span>=input graph / frozen f_θ · <span style="color:#a78bfa">violet</span>=prompt G_p / instruction / advantage · <span style="color:#34d399">green</span>=GraphPrompt (adapted) · <span style="color:#fbbf24">amber</span>=standard GNN / graph tokens · <span style="color:#fb7185">rose</span>=frozen baseline.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="few-shot") api.frame([0,1.6,0],14);
+      else if(s.mode==="instruct") api.frame([1.0,0,-2.0],15);
+      else if(s.mode==="graph-prompt") api.frame([0,1,-1.8],14);
+      else api.frame([0,0,-1.5],13);
+    },
+    onSelect(api,d){
+      if(d.node)      api.setSelected("Gene "+d.node.id+" · "+d.node.type);
+      if(d.prompt)    api.setSelected("Prompt node "+d.prompt.id+" · learnable X_p row (64-dim)");
+      if(d.bar)       api.setSelected(d.bar.name+" · acc "+(d.bar.acc*100).toFixed(0)+"%");
+      if(d.marker)    api.setSelected(d.marker.type+" @ k="+d.marker.k+" → "+(d.marker.acc*100).toFixed(0)+"%");
+      if(d.token)     api.setSelected("Graph token "+d.token.id+" / 8 · pooled graph embedding slot");
+      if(d.instr)     api.setSelected("Instruction token "+d.instr.id+" · natural-language query");
+      if(d.regulator) api.setSelected("#"+d.regulator.rank+" "+d.regulator.gene+" · degree "+d.regulator.deg+" · "+d.regulator.note);
+    },
+    build,
+    snapshot(s){
+      const kShot=Math.round(s.kShot);
+      const nPrompt=Math.round(s.nPrompt);
+      const accP=curveVal(kShot,"prompt");
+      const accG=curveVal(kShot,"gnn");
+      return {
+        mode:s.mode,
+        kShot,
+        nPrompt,
+        instrTokens:Math.round(s.instrTokens),
+        connDensity:+(+s.connDensity).toFixed(2),
+        promptParams:nPrompt*F.promptDim,
+        accFrozen:F.accFrozen,
+        accPromptAtK:+accP.toFixed(3),
+        accGnnAtK:+accG.toFixed(3),
+        promptAdvantagePP:+((accP-accG)*100).toFixed(1),
+        promptWinsAtK:(accP>accG),
+        crossoverK:F.crossoverK,
+        speedupX:40,
+        regulatorsNamed:F.regulators.length
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I09 · Scaling to atlas-sized single-cell graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── lesson FACTS (note Section 1 + Section 5 worked example) ─────────────
+  // Section 5 large GRN: N=10000 genes, E=50000 edges, d_in=64, d_v=8.
+  //   dense  L = (N*d_v)^2 * 4 bytes ; sparse L = E * 4 * d_v^2 * 4 bytes
+  // Section 1 memory wall table uses d_v=4.
+  const FA={
+    Nlarge:10000, Elarge:50000, dvLarge:8,         // Section 5
+    Ncluster:50, defParts:50,                       // Cluster-GCN: 50 partitions
+  };
+
+  let sceneSnap={};
+
+  // dense bytes for [N*d_v, N*d_v] float32
+  function denseBytes(N,dv){ return (N*dv)*(N*dv)*4; }
+  // sparse COO bytes: nnz = E*4*d_v^2 entries, each (2 int64 idx + 1 float64) ~ 20 B
+  function sparseBytes(E,dv){ return E*4*dv*dv*20; }
+  // note's headline sparse estimate (float32 values): E*4*d_v^2*4
+  function sparseNoteMB(E,dv){ return E*4*dv*dv*4/1048576; }
+  function fmtBytes(b){
+    if(b>=1073741824) return (b/1073741824).toFixed(b<10737418240?1:0)+" GB";
+    if(b>=1048576)    return (b/1048576).toFixed(b<10485760?1:0)+" MB";
+    if(b>=1024)       return (b/1024).toFixed(0)+" KB";
+    return b+" B";
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const logN=s.logN;                              // log10(N) slider 1.7..5.7
+    const N=Math.round(Math.pow(10,logN));
+    const dv=Math.round(s.dv);                      // stalk dim
+    const numParts=Math.round(s.numParts);          // Cluster-GCN partitions
+    const walk=Math.round(s.walk);                  // GraphSAINT walk length
+    const modular=Math.round(s.modular);            // 0=random GRN, 1=modular GRN
+
+    const gGraph =api.group("graph");
+    const gBars  =api.group("bars");
+    const gParts =api.group("parts");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // sparse / good
+    const AM=new T.Color("#fbbf24");   // dense / OOM
+    const GR=new T.Color("#34d399");   // intra-cluster / kept
+    const VI=new T.Color("#a78bfa");   // boundary / cross
+    const RO=new T.Color("#fb7185");   // lost / bias
+    const SL=new T.Color("#54667c");
+
+    // edges ~ 5 per gene (note: n_TFs = N/5, E = n_TFs*8 ~ scale-free)
+    const E=Math.max(8,Math.round(N*5));
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: memory  — dense [N·dv, N·dv] vs sparse COO O(E·dv²)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="memory"){
+      const dB=denseBytes(N,dv);
+      const sB=sparseBytes(E,dv);
+      const ratio=dB/sB;
+      const GPU=16*1073741824;                       // 16 GB budget
+      const denseFits=dB<=GPU;
+
+      // log-height bars (bytes -> log scale)
+      const lg=b=>Math.log10(Math.max(1,b));
+      const yS=0.62;
+      const dH=Math.max(0.1,(lg(dB)-3)*yS);          // start scale at KB
+      const sH=Math.max(0.1,(lg(sB)-3)*yS);
+      const budH=Math.max(0.1,(lg(GPU)-3)*yS);
+
+      // dense bar (amber, turns rose when > GPU)
+      const dCol=denseFits?AM.clone():RO.clone();
+      const dBar=new T.Mesh(new T.BoxGeometry(1.7,dH,1.6),
+        new T.MeshStandardMaterial({color:dCol,emissive:dCol.clone().multiplyScalar(0.7),emissiveIntensity:0.6,roughness:0.4}));
+      dBar.position.set(-2.6,dH/2,0); gBars.add(dBar);
+      api.pick(dBar,{bar:{kind:"dense",bytes:dB,fits:denseFits}});
+      addLbl(fmtBytes(dB),dCol.getStyle(),1.5,-2.6,dH+0.6,0);
+      addSlbl("dense  [N·d·²]",dCol.getStyle(),0.4,-2.6,0.05,1.05);
+
+      // sparse bar (cyan)
+      const sBar=new T.Mesh(new T.BoxGeometry(1.7,sH,1.6),
+        new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(0.7),emissiveIntensity:0.65,roughness:0.4}));
+      sBar.position.set(2.6,sH/2,0); gBars.add(sBar);
+      api.pick(sBar,{bar:{kind:"sparse",bytes:sB,fits:true}});
+      addLbl(fmtBytes(sB),"#4dd7ff",1.5,2.6,sH+0.6,0);
+      addSlbl("sparse COO  O(E·d·²)","#4dd7ff",0.4,2.6,0.05,1.05);
+
+      // 16 GB GPU budget plane
+      gBars.add(new T.Mesh(new T.PlaneGeometry(9,0.045),
+        new T.MeshBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.85,side:T.DoubleSide}))
+        ).position.set(0,budH,0);
+      addSlbl("16 GB GPU budget","#a78bfa",0.4,0,budH+0.32,0);
+
+      // ground baseline
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5,0,0),new T.Vector3(5,0,0)]),new T.LineBasicMaterial({color:0x1e3046})));
+
+      addLbl("N="+N.toLocaleString()+" · d·="+dv+" · E="+E.toLocaleString(),"#cfe0f0",1.15,0,-0.85,2.0);
+      addLbl(denseFits?"dense fits":"dense OOM","#"+(denseFits?"34d399":"fb7185"),1.3,-2.6,-0.85,0);
+
+      sceneSnap={mode,N,dv,numParts,walk,modular,
+        denseMB:+(dB/1048576).toFixed(2), sparseMB:+(sB/1048576).toFixed(3),
+        compression:+ratio.toFixed(0), denseFitsGPU:denseFits,
+        boundaryFrac:null, effEdgeFrac:null};
+
+      return {
+        badge:"Memory · N="+N.toLocaleString()+" · d·="+dv+(denseFits?" · dense fits":" · dense OOM"),
+        formula:"dense: (N·d·)² floats &nbsp; vs &nbsp; sparse: nnz = O(E·d·²)",
+        insight:"The dense sheaf Laplacian is [N·d·, N·d·] and grows as O((N·d·)²) — it hits the 16 GB GPU wall near N≈5,000 (d·=4). The sparse COO Laplacian stores only the E·4·d·² non-zero blocks, so memory is O(E·d·²) and scales to atlas size. Drag N past the violet budget line to see dense turn red (OOM) while sparse stays flat.",
+        state:"dense "+fmtBytes(dB)+" vs sparse "+fmtBytes(sB)+" → "+ratio.toFixed(0)+"× smaller. Dense "+(denseFits?"fits":"exceeds")+" the 16 GB budget.",
+        metrics:{
+          memDense:fmtBytes(dB),
+          memSparse:fmtBytes(sB),
+          compression:ratio.toFixed(0)+"×",
+          status:denseFits?"dense OK":"sparse only"
+        },
+        focus:{center:[0,2.2,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: cluster  — Cluster-GCN: partition into k clusters, keep intra-edges
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="cluster"){
+      const k=numParts;
+      const ringN=24;                                // illustrative nodes on a ring
+      // assign each node to a cluster; modular GRN => contiguous arcs, random => scattered
+      const clusterOf=i=> modular? Math.floor(i/(ringN/Math.min(k,ringN))) % Math.min(k,8)
+                                  : Math.floor(prand(i*9+3)*Math.min(k,8));
+      const palette=[CY,GR,AM,VI,RO,new T.Color("#7fe7c0"),new T.Color("#fda4b0"),new T.Color("#c4b5fd")];
+      const R=3.6;
+      const pos=[];
+      for(let i=0;i<ringN;i++){
+        const ang=i/ringN*Math.PI*2;
+        pos.push(new T.Vector3(Math.cos(ang)*R,0,Math.sin(ang)*R));
+      }
+      // nodes coloured by cluster
+      for(let i=0;i<ringN;i++){
+        const c=clusterOf(i);
+        const col=palette[c%palette.length];
+        const sph=new T.Mesh(new T.SphereGeometry(0.26,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.55,roughness:0.4}));
+        sph.position.copy(pos[i]); gGraph.add(sph);
+        api.pick(sph,{node:{id:i,cluster:c}});
+      }
+      // edges: green = intra-cluster (kept), violet dashed = boundary (dropped per step)
+      let intra=0, boundary=0;
+      for(let i=0;i<ringN;i++){
+        // each node connects to 2 deterministic neighbours
+        for(let t=1;t<=2;t++){
+          const j=(i+ (t===1?1: 1+Math.floor(prand(i*5+t)*6)))%ringN;
+          if(j<=i) continue;
+          const same=clusterOf(i)===clusterOf(j);
+          if(same) intra++; else boundary++;
+          const col= same? GR.getHex(): VI.getHex();
+          const line=new T.Line(new T.BufferGeometry().setFromPoints([pos[i],pos[j]]),
+            new T.LineBasicMaterial({color:col,transparent:true,opacity:same?0.85:0.3}));
+          gGraph.add(line);
+        }
+      }
+      // theoretical boundary fraction: random ~ 1-1/k ; modular ~ small
+      const kEff=Math.min(k,ringN);
+      const boundaryFrac= modular? Math.max(0.30, 1/Math.sqrt(kEff)) : (1-1/kEff);
+      const effEdgeFrac=1-boundaryFrac;
+
+      // highlight the active sampled cluster (cluster 0) — induced subgraph
+      const subY=2.4;
+      for(let i=0;i<ringN;i++){
+        if(clusterOf(i)===0){
+          const halo=new T.Mesh(new T.SphereGeometry(0.34,16,12),
+            new T.MeshBasicMaterial({color:CY.getHex(),transparent:true,opacity:0.18}));
+          halo.position.copy(pos[i]); gGraph.add(halo);
+        }
+      }
+
+      addLbl(k+" partitions","#4dd7ff",1.4,0,-0.95,R+0.6);
+      addLbl(modular?"modular GRN":"random GRN","#fbbf24",1.2,0,-0.95,-(R+0.9));
+      addSlbl("green = intra (kept)","#34d399",0.42,-R-0.2,0.1,-R*0.4);
+      addSlbl("violet = boundary (dropped)","#a78bfa",0.42,R-0.6,0.1,-R*0.4);
+
+      sceneSnap={mode,N,dv,numParts:k,walk,modular,
+        denseMB:null,sparseMB:null,compression:null,denseFitsGPU:null,
+        boundaryFrac:+boundaryFrac.toFixed(3), effEdgeFrac:+effEdgeFrac.toFixed(3)};
+
+      return {
+        badge:"Cluster-GCN · "+k+" parts · "+(modular?"modular":"random")+" GRN",
+        formula:"induced subgraph: edges with both endpoints in cluster c &nbsp;→&nbsp; boundary ≈ 1 − 1/k",
+        insight:"Cluster-GCN partitions N nodes into k clusters and trains on the induced subgraph of one cluster per step — only intra-cluster edges (green) are seen; boundary edges (violet) are dropped that step. On a random GRN nearly 1−1/k of edges are boundary (k=50 ⇒ ~98% lost per batch); a modular GRN keeps co-regulatory modules inside clusters, so far fewer edges cross. The cyan halo marks the active sampled cluster.",
+        state:k+" partitions · "+(modular?"modular":"random")+" GRN → boundary ≈ "+(boundaryFrac*100).toFixed(0)+"% of edges dropped per step; "+(effEdgeFrac*100).toFixed(0)+"% effective edges retained.",
+        metrics:{
+          memDense:"—",
+          memSparse:"—",
+          compression:k+" parts",
+          status:(boundaryFrac*100).toFixed(0)+"% boundary"
+        },
+        focus:{center:[0,0.5,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: saint  — GraphSAINT random-walk sampler, importance-reweighted
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="saint"){
+      const L=walk;                                  // walk length
+      const R=3.6;
+      const ringN=24;
+      const pos=[];
+      for(let i=0;i<ringN;i++){
+        const ang=i/ringN*Math.PI*2;
+        pos.push(new T.Vector3(Math.cos(ang)*R,0,Math.sin(ang)*R));
+      }
+      // base graph (faint)
+      for(let i=0;i<ringN;i++){
+        const j=(i+1)%ringN;
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([pos[i],pos[j]]),
+          new T.LineBasicMaterial({color:0x1e3046,transparent:true,opacity:0.4})));
+        if(prand(i*5+7)>0.55){
+          const h=(i+5+Math.floor(prand(i*3)*6))%ringN;
+          gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([pos[i],pos[h]]),
+            new T.LineBasicMaterial({color:0x16263c,transparent:true,opacity:0.3})));
+        }
+      }
+      // deterministic random walk of length L from a fixed start, crossing clusters
+      const start=3;
+      const walkNodes=[start];
+      let cur=start;
+      for(let step=0;step<L;step++){
+        // pick a "neighbour" deterministically (jump across the ring -> cross-cluster)
+        const jump=1+Math.floor(prand(cur*7+step*13)*5);
+        cur=(cur+jump)%ringN;
+        walkNodes.push(cur);
+      }
+      // draw nodes; sampled walk nodes glow cyan, rest dim
+      const sampled=new Set(walkNodes);
+      for(let i=0;i<ringN;i++){
+        const inW=sampled.has(i);
+        const col=inW?CY.clone():SL.clone();
+        const sph=new T.Mesh(new T.SphereGeometry(inW?0.30:0.20,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:inW?CY.clone().multiplyScalar(0.8):new T.Color("#101c2e"),emissiveIntensity:inW?0.8:0.2,roughness:0.4}));
+        sph.position.copy(pos[i]); gGraph.add(sph);
+        api.pick(sph,{node:{id:i,sampled:inW}});
+      }
+      // walk path (amber arrows) — these are cross-cluster edges GraphSAINT can see
+      for(let w=0;w<walkNodes.length-1;w++){
+        const a=pos[walkNodes[w]], b=pos[walkNodes[w+1]];
+        const arr=new T.ArrowHelper(b.clone().sub(a).normalize(),a,a.distanceTo(b),AM.getHex(),0.4,0.24);
+        gGraph.add(arr);
+      }
+      // importance-weight bars (right side): node sampling prob -> 1/p reweight
+      const probs=walkNodes.map((n,i)=> 0.35+0.5*prand(n*11+i));
+      const distinct=[...sampled];
+      distinct.slice(0,6).forEach((n,idx)=>{
+        const p=0.35+0.5*prand(n*11);
+        const w=1/p;                                 // importance weight ~ 1/prob
+        const h=0.2+ (w-1)*0.9;
+        const x=-3.6+idx*1.45;
+        const bar=new T.Mesh(new T.BoxGeometry(0.55,h,0.55),
+          new T.MeshStandardMaterial({color:GR,emissive:GR.clone().multiplyScalar(0.6),emissiveIntensity:0.55,roughness:0.4}));
+        bar.position.set(x,h/2,-R-1.4); gBars.add(bar);
+        addSlbl("·"+w.toFixed(1),"#34d399",0.36,x,h+0.3,-R-1.4);
+      });
+      addLbl("importance weights  loss ·= 1/p_node","#34d399",1.1,-1.0,0.1,-R-2.0);
+
+      addLbl("walk length L="+L,"#fbbf24",1.4,0,-0.95,R+0.6);
+      addLbl(walkNodes.length+" nodes sampled · crosses clusters","#4dd7ff",1.15,0,-0.95,-(R+0.9));
+
+      // GraphSAINT sees cross-cluster edges -> boundary bias removed
+      const boundaryFrac=0.0;                         // by construction, no dropped boundary class
+      const effEdgeFrac=1.0;
+
+      sceneSnap={mode,N,dv,numParts,walk:L,modular,
+        denseMB:null,sparseMB:null,compression:null,denseFitsGPU:null,
+        boundaryFrac:+boundaryFrac.toFixed(3),effEdgeFrac:+effEdgeFrac.toFixed(3),
+        nSampled:walkNodes.length};
+
+      return {
+        badge:"GraphSAINT · random walk · L="+L,
+        formula:"loss ·= 1/p(node) &nbsp;→&nbsp; unbiased estimate of full-graph loss",
+        insight:"GraphSAINT samples a random-walk subgraph (amber path, length L) and rescales each term of the loss by 1/p_node, the inverse node-sampling probability (green bars). Because walks hop across clusters, cross-cluster edges ARE seen — there is no Cluster-GCN boundary bias — and the importance weights make the mini-batch loss an unbiased estimate of the full-graph loss. Longer walks cover more of the graph per step but raise variance.",
+        state:"L="+L+" → "+walkNodes.length+" nodes in the walk subgraph; cross-cluster edges retained, boundary bias 0%. Loss reweighted by 1/p_node.",
+        metrics:{
+          memDense:"—",
+          memSparse:"—",
+          compression:"L="+L,
+          status:"0% boundary"
+        },
+        focus:{center:[0,0.3,-1],radius:12}
+      };
+    }
+
+    return {badge:"I09",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── create the lab ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i09",
+    kind:"atlas-scaling-single-cell",
+    eyebrow:"Block I · Implementation",
+    title:"I09 · Scaling to atlas-sized single-cell graphs",
+    subtitle:"From a 500-node prototype to 500,000-cell atlases. Three views: the dense-vs-sparse memory wall, Cluster-GCN partitioning, and GraphSAINT random-walk sampling.",
+    selectedLabel:"Element",
+    selectedHint:"Click a bar, node, or cluster.",
+    modes:[
+      {value:"memory",  label:"Memory wall (dense vs sparse Laplacian)"},
+      {value:"cluster", label:"Cluster-GCN (partition · boundary bias)"},
+      {value:"saint",   label:"GraphSAINT (random-walk · reweighted)"}
+    ],
+    params:[
+      {key:"logN",    label:"graph size N (log·· cells/genes)",min:1.7,max:5.7,step:0.05,value:4.0,
+       fmt:v=>Math.round(Math.pow(10,v)).toLocaleString(),modes:["memory"]},
+      {key:"dv",      label:"stalk dimension d·",min:1,max:16,step:1,value:8,
+       fmt:v=>Math.round(v).toString(),modes:["memory"]},
+      {key:"numParts",label:"Cluster-GCN partitions k",min:2,max:50,step:1,value:50,
+       fmt:v=>Math.round(v).toString(),modes:["cluster"]},
+      {key:"walk",    label:"GraphSAINT walk length L",min:1,max:6,step:1,value:2,
+       fmt:v=>Math.round(v).toString(),modes:["saint"]},
+      {key:"modular", label:"GRN structure (0=random 1=modular)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"random":"modular",modes:["cluster"]}
+    ],
+    metrics:[
+      {key:"memDense",   label:"Dense Laplacian",accent:"amber"},
+      {key:"memSparse",  label:"Sparse Laplacian",accent:"cyan"},
+      {key:"compression",label:"Compression",accent:"green"},
+      {key:"status",     label:"Status",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph", label:"Graph / nodes"},
+      {group:"bars",  label:"Bars"},
+      {group:"parts", label:"Partitions"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Atlas scale (N=500k)",
+      on:api=>{api.setParam("logN",5.7);}
+    },
+    secondary:{
+      label:"Prototype (N=500)",
+      on:api=>{api.setParam("logN",2.7);}
+    },
+    defaultCam:{theta:-0.42,phi:0.6,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=sparse / sampled · <span style="color:#fbbf24">amber</span>=dense / walk · <span style="color:#34d399">green</span>=intra-cluster / weights · <span style="color:#a78bfa">violet</span>=boundary / budget · <span style="color:#fb7185">rose</span>=OOM / lost.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="memory") api.frame([0,2.2,0],12);
+      else if(s.mode==="cluster") api.frame([0,0.5,0],11);
+      else api.frame([0,0.3,-1],12);
+    },
+    onSelect(api,d){
+      if(d.bar)  api.setSelected(d.bar.kind+" Laplacian · "+(d.bar.fits?"fits GPU":"OOM"));
+      if(d.node && d.node.cluster!=null) api.setSelected("Node "+d.node.id+" · cluster "+d.node.cluster);
+      else if(d.node) api.setSelected("Node "+d.node.id+(d.node.sampled?" · in walk subgraph":" · not sampled"));
+    },
+    build,
+    snapshot(s){
+      const N=Math.round(Math.pow(10,s.logN));
+      const dv=Math.round(s.dv);
+      const k=Math.round(s.numParts);
+      const L=Math.round(s.walk);
+      const modular=Math.round(s.modular);
+      const E=Math.max(8,Math.round(N*5));
+      const dB=denseBytes(N,dv), sB=sparseBytes(E,dv);
+      const kEff=Math.min(k,24);
+      const boundaryFrac= modular? Math.max(0.30,1/Math.sqrt(kEff)) : (1-1/kEff);
+      return {
+        mode:s.mode,
+        N:N, dv:dv, numParts:k, walk:L, modular:modular,
+        denseMB:+(dB/1048576).toFixed(2),
+        sparseMB:+(sB/1048576).toFixed(3),
+        compression:+(dB/sB).toFixed(0),
+        denseFitsGPU:(dB<=16*1073741824),
+        boundaryFrac:(s.mode==="saint")?0:+boundaryFrac.toFixed(3),
+        effEdgeFrac:(s.mode==="saint")?1:+(1-boundaryFrac).toFixed(3)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

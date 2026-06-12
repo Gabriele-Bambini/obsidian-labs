@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure G02 — A fixed sheaf Laplacian replaces the scalar GCN Laplacian</title>
+<desc id="d">Four-panel captioned figure: A fixed sheaf Laplacian replaces the scalar GCN Laplacian</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE G02 · BLOCK G · SHEAF GNN FOR BIOLOGY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="23" font-weight="700">A fixed sheaf Laplacian replaces the scalar GCN Laplacian</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The Section-5 GRN sheaf</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">TF1 GeneA GeneB</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e1 (+)</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">F(TF1,e1)=0.9·I</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e2 (−)</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">F(TF1,e2)=−0.7·I</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">L_F dim</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">6×6</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The SNN layer</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">x^{l+1} = σ((I − α·L_F/λmax) x^l W^l)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">(L_F x)_A = x_A − 0.9·x_TF</text>
+<text x="502" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">α / λmax</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.5 / 2.0</text>
+<text x="502" y="207.5" fill="#34d399" font-size="11.5" font-weight="700">x_GeneA^1</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">1.65, 1.24</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Sheaf energy vs GCN-blind</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">Sheaf energy E_F = Σ_e ‖δx_e‖² puts almost all</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">inconsistency on the repressor e2. A scalar GCN (identity</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">maps) erases the sign and barely sees it.</text>
+<text x="56" y="369.5" fill="#fb7185" font-size="11.5" font-weight="700">sheaf e2 energy</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">7.03</text>
+<text x="56" y="389.5" fill="#fbbf24" font-size="11.5" font-weight="700">GCN e2 energy</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">0.36</text>
+<rect x="56" y="471.45" width="12" height="0.55" rx="2" fill="#34d399"/>
+<text x="62" y="484" fill="#8a99ad" font-size="9" text-anchor="middle">e1</text>
+<rect x="74" y="408" width="12" height="64" rx="2" fill="#fb7185"/>
+<text x="80" y="484" fill="#8a99ad" font-size="9" text-anchor="middle">e2</text>
+<line x1="56" y1="407.36" x2="92" y2="407.36" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Spectral takeaway</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">λ = 0 mode</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">global section</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">high-λ mode</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">×(1−α)^l</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">per layer</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">retain 0.50</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">GCN ⊂ sheaf</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">d=1, +scalar</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure G02. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Section-5 </text>
+<text x="224.91" y="538" fill="#c7d2dd" font-size="13">GRN: </text>
+<text x="268.84" y="538" fill="#c7d2dd" font-size="13">TF1 </text>
+<text x="303.5" y="538" fill="#c7d2dd" font-size="13">activates </text>
+<text x="384.1" y="538" fill="#c7d2dd" font-size="13">GeneA </text>
+<text x="434.88" y="538" fill="#c7d2dd" font-size="13">(e1, </text>
+<text x="475.18" y="538" fill="#c7d2dd" font-size="13">+0.9), </text>
+<text x="531.6" y="538" fill="#c7d2dd" font-size="13">represses </text>
+<text x="612.2" y="538" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="662.97" y="538" fill="#c7d2dd" font-size="13">(e2, </text>
+<text x="703.27" y="538" fill="#c7d2dd" font-size="13">−0.7); </text>
+<text x="759.69" y="538" fill="#c7d2dd" font-size="13">R² </text>
+<text x="782.66" y="538" fill="#c7d2dd" font-size="13">stalks. </text>
+<text x="847.14" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a)</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">Signed </text>
+<text x="97.63" y="559" fill="#c7d2dd" font-size="13">scalar </text>
+<text x="154.05" y="559" fill="#c7d2dd" font-size="13">maps </text>
+<text x="194.35" y="559" fill="#c7d2dd" font-size="13">build </text>
+<text x="242.71" y="559" fill="#c7d2dd" font-size="13">L_F </text>
+<text x="277.37" y="559" fill="#c7d2dd" font-size="13">(6×6, </text>
+<text x="332.18" y="559" fill="#c7d2dd" font-size="13">trace </text>
+<text x="380.54" y="559" fill="#c7d2dd" font-size="13">6.60). </text>
+<text x="436.96" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="470.48" y="559" fill="#c7d2dd" font-size="13">One </text>
+<text x="503.93" y="559" fill="#c7d2dd" font-size="13">SNN </text>
+<text x="539.8" y="559" fill="#c7d2dd" font-size="13">layer </text>
+<text x="588.16" y="559" fill="#c7d2dd" font-size="13">(α=0.5, </text>
+<text x="652.64" y="559" fill="#c7d2dd" font-size="13">λmax=2.0) </text>
+<text x="733.24" y="559" fill="#c7d2dd" font-size="13">sends </text>
+<text x="781.6" y="559" fill="#c7d2dd" font-size="13">GeneA </text>
+<text x="832.38" y="559" fill="#c7d2dd" font-size="13">to</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">1.65,1.24. </text>
+<text x="128.66" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="162.19" y="580" fill="#c7d2dd" font-size="13">e2 </text>
+<text x="186.37" y="580" fill="#c7d2dd" font-size="13">energy=7.03 </text>
+<text x="283.09" y="580" fill="#c7d2dd" font-size="13">(99% </text>
+<text x="329.84" y="580" fill="#c7d2dd" font-size="13">of </text>
+<text x="354.02" y="580" fill="#c7d2dd" font-size="13">E_F=7.10); </text>
+<text x="445.1" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="461.22" y="580" fill="#c7d2dd" font-size="13">sign-blind </text>
+<text x="549.88" y="580" fill="#c7d2dd" font-size="13">GCN </text>
+<text x="585.74" y="580" fill="#c7d2dd" font-size="13">reports </text>
+<text x="650.22" y="580" fill="#c7d2dd" font-size="13">only </text>
+<text x="690.52" y="580" fill="#c7d2dd" font-size="13">0.36. </text>
+<text x="738.88" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="772.41" y="580" fill="#c7d2dd" font-size="13">Each </text>
+<text x="813.92" y="580" fill="#c7d2dd" font-size="13">layer</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">scales </text>
+<text x="96.42" y="601" fill="#c7d2dd" font-size="13">mode </text>
+<text x="136.72" y="601" fill="#c7d2dd" font-size="13">i </text>
+<text x="152.84" y="601" fill="#c7d2dd" font-size="13">by </text>
+<text x="177.02" y="601" fill="#c7d2dd" font-size="13">(1−α·λ_i/λmax): </text>
+<text x="312.43" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="344.67" y="601" fill="#c7d2dd" font-size="13">λ=0 </text>
+<text x="376.91" y="601" fill="#c7d2dd" font-size="13">global </text>
+<text x="433.33" y="601" fill="#c7d2dd" font-size="13">section </text>
+<text x="497.81" y="601" fill="#c7d2dd" font-size="13">survives, </text>
+<text x="578.41" y="601" fill="#c7d2dd" font-size="13">inconsistent </text>
+<text x="683.19" y="601" fill="#c7d2dd" font-size="13">modes </text>
+<text x="731.55" y="601" fill="#c7d2dd" font-size="13">damp.</text>
+</svg>

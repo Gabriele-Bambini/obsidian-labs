@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H05 · Open Graph Benchmark and biological graph tasks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no rng, no clock) ────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — Section 3/4/5 of the note (single source of truth)
+  // ════════════════════════════════════════════════════════════════════════
+  const F={
+    // The three OGB biological datasets (note §3 table)
+    ds:[
+      {key:"ogbn-proteins", task:"node clf",   nodes:132534, edges:79122504, labels:112, split:"species",  metric:"ROC-AUC", hue:"cyan"},
+      {key:"ogbl-biokg",    task:"link pred",  nodes:93773,  edges:5088434,  labels:51,  split:"time",     metric:"Hits@10", hue:"violet"},
+      {key:"ogbg-molhiv",   task:"graph clf",  nodes:41127,  edges:1110429,  labels:1,   split:"scaffold", metric:"ROC-AUC", hue:"amber"}
+    ],
+    // ogbn-proteins species split node counts (note §5)
+    trainNodes:105000, valNodes:14000, testNodes:13534, trainOrg:7, valOrg:2, testOrg:3,
+    // class-imbalance table (note §5): positive fraction -> pos_weight
+    go:[
+      {name:"Cell nucleus",     pos:0.35, pw:1.9},
+      {name:"Cytoplasm",        pos:0.30, pw:2.3},
+      {name:"Plasma membrane",  pos:0.20, pw:4.0},
+      {name:"Metal ion binding",pos:0.12, pw:7.3},
+      {name:"Kinase activity",  pos:0.05, pw:19.0},
+      {name:"Nuclear hormone",  pos:0.02, pw:49.0}
+    ],
+    rocNoWeight:0.68,    // mean ROC-AUC without pos_weight (rare terms ~0.5)
+    rocWithWeight:0.86,  // mean ROC-AUC with pos_weight
+    // NeighborLoader fanout (note §4)
+    fanout:[10,10,5], batch:1024,
+    // leaderboard (note §4) — model -> test ROC-AUC
+    board:[
+      {m:"GCN",        roc:0.7251},
+      {m:"GraphSAGE",  roc:0.7668},
+      {m:"DeeperGCN",  roc:0.8580},
+      {m:"RevGNN-112", roc:0.8774}
+    ]
+  };
+
+  let sceneSnap={};
+
+  // ── per-GO pos_weight model: pw = (1-pos)/pos ; with the open-world clamp ──
+  function posWeight(posFrac){const p=Math.max(0.001,Math.min(0.999,posFrac));return (1-p)/p;}
+  // rare-term ROC lift: without weighting rare terms sit near 0.5; weighting lifts
+  // them toward the common-term ceiling proportional to log-amplified gradient.
+  function rocTerm(posFrac,weighted){
+    const p=Math.max(0.005,Math.min(0.5,posFrac));
+    const easy=0.55+0.42*Math.sqrt(p/0.35);            // common terms learn well either way
+    if(!weighted) return Math.max(0.50,Math.min(0.92,0.50+(easy-0.50)*p/0.35));
+    return Math.max(0.50,Math.min(0.92,easy));
+  }
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+
+    const gMain =api.group("main");
+    const gAux  =api.group("aux");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");
+    const GR=new T.Color("#34d399");
+    const AM=new T.Color("#fbbf24");
+    const VI=new T.Color("#a78bfa");
+    const RO=new T.Color("#f472b6");
+    const SL=new T.Color("#54667c");
+    const hueCol={cyan:CY,violet:VI,amber:AM,green:GR,rose:RO};
+
+    const addLbl=(txt,col,sz,x,y,z)=>{const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);};
+    const addSlbl=(txt,col,sz,x,y,z)=>{const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);};
+    const line=(a,b,hex,op)=>{const m=new T.LineBasicMaterial({color:hex,transparent:op!=null,opacity:op==null?1:op});return new T.Line(new T.BufferGeometry().setFromPoints([a,b]),m);};
+    const sphere=(p,r,col,emi)=>{const o=new T.Mesh(new T.SphereGeometry(r,16,12),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(emi==null?0.6:emi),emissiveIntensity:0.6,roughness:0.4}));o.position.copy(p);return o;};
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: datasets — the three OGB biological graphs at scale
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="datasets"){
+      const dsIdx=Math.round(s.dataset);              // 0,1,2
+      const ds=F.ds[dsIdx];
+      const xPos=[-4.0,0,4.0];
+
+      // log-scale node count -> graph radius / node density per dataset
+      F.ds.forEach((d,i)=>{
+        const x=xPos[i];
+        const active=(i===dsIdx);
+        const col=hueCol[d.hue];
+        // ring of nodes sized by log10(nodes); denser = bigger dataset
+        const logN=Math.log10(d.nodes);               // ~4.6..5.1
+        const nVis=active?Math.round(8+ (logN-4.5)*16):Math.round(6+(logN-4.5)*8);
+        const R=active?1.9:1.15;
+        const cz=0;
+        for(let k=0;k<nVis;k++){
+          const ang=k/nVis*Math.PI*2;
+          const px=x+Math.cos(ang)*R, pz=cz+Math.sin(ang)*R;
+          const nd=sphere(new T.Vector3(px,0,pz),active?0.17:0.10,col.clone(),active?0.7:0.3);
+          if(!active) nd.material.opacity=0.55, nd.material.transparent=true;
+          gMain.add(nd);
+          // edge density ~ log(edges/nodes): draw a fraction of chords
+          if(prand(k*13+i*97)> (active?0.35:0.6)){
+            const j=(k+1+Math.floor(prand(k*7+i*3)*3))%nVis;
+            const a2=j/nVis*Math.PI*2;
+            gMain.add(line(new T.Vector3(px,0,pz),new T.Vector3(x+Math.cos(a2)*R,0,cz+Math.sin(a2)*R),0x1e3046,active?0.5:0.25));
+          }
+        }
+        if(active) F.ds[i]._R=R;
+        // dataset card label
+        addLbl(d.key,col.getStyle(),active?1.6:1.15,x,active?2.7:1.85,0);
+        addSlbl(d.task,active?"#9fb2c6":"#6b7a8d",active?0.42:0.34,x,active?-2.4:-1.7,0);
+      });
+
+      // active dataset stat plate
+      const col=hueCol[ds.hue];
+      addLbl(ds.metric,col.getStyle(),1.25,xPos[dsIdx],-3.0,0);
+      addSlbl(ds.split+" split · "+ds.labels+" labels",col.getStyle(),0.40,xPos[dsIdx],-3.6,0);
+
+      // pick targets = the three centres
+      F.ds.forEach((d,i)=>{
+        const pk=sphere(new T.Vector3(xPos[i],0,0),0.001,col.clone());
+        pk.visible=false; gMain.add(pk);
+        api.pick(pk,{ds:{key:d.key,nodes:d.nodes,edges:d.edges,labels:d.labels,split:d.split,metric:d.metric}});
+      });
+
+      const edgePerNode=Math.round(ds.edges/ds.nodes);
+      sceneSnap={mode,dataset:dsIdx,datasetNodes:ds.nodes,datasetEdges:ds.edges,
+                 datasetLabels:ds.labels,edgesPerNode:edgePerNode,splitType:ds.split,meanRocLift:null};
+
+      return {
+        badge:"OGB · "+ds.key+" · "+ds.split+" split",
+        formula:ds.key+": "+ds.nodes.toLocaleString()+" nodes · "+ds.edges.toLocaleString()+" edges → "+ds.metric,
+        insight:"OGB bundles three large biological graphs. <b>ogbn-proteins</b> (132K STRING-linked proteins, ~600 neighbours each) is node classification of 112 GO terms; <b>ogbl-biokg</b> is link prediction over a 5-type heterogeneous knowledge graph; <b>ogbg-molhiv</b> is graph-level HIV-activity classification of ~25-atom molecules. None is a GRN benchmark — they are the architecture stress test.",
+        state:ds.key+": "+ds.nodes.toLocaleString()+" nodes, "+ds.edges.toLocaleString()+" edges (~"+edgePerNode+" edges/node), "+ds.labels+" labels, "+ds.split+" split, metric "+ds.metric+".",
+        metrics:{
+          datasetScale:ds.nodes.toLocaleString()+" nodes",
+          edgesPerNode:"~"+edgePerNode,
+          splitType:ds.split,
+          meanRoc:"—"
+        },
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: split — random (leakage) vs principled (species/scaffold/time)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="split"){
+      const principled=Math.round(s.principled)===1;  // 0=random, 1=species-based
+      // two organism clusters: a TRAIN organism and a TEST organism, each with
+      // a homologous protein pair (human TP53 / mouse Trp53, ~95% identity).
+      const trainC=new T.Vector3(-3.2,0,0);
+      const testC =new T.Vector3( 3.2,0,0);
+      addLbl("TRAIN organisms",CY.getStyle(),1.25,-3.2,3.0,0);
+      addLbl("TEST organisms",AM.getStyle(),1.25,3.2,3.0,0);
+      addSlbl(F.trainOrg+" species · ~"+(F.trainNodes/1000).toFixed(0)+"K nodes",CY.getStyle(),0.40,-3.2,-3.0,0);
+      addSlbl(F.testOrg+" species · ~"+(F.testNodes/1000).toFixed(1)+"K nodes",AM.getStyle(),0.40,3.2,-3.0,0);
+
+      // build a small gene-family cluster in each organism
+      function cluster(center,col,seed){
+        const pts=[];
+        const n=7;
+        for(let k=0;k<n;k++){
+          const ang=k/n*Math.PI*2+seed;
+          const rr=1.5+prand(k*5+seed*11)*0.5;
+          const p=new T.Vector3(center.x+Math.cos(ang)*rr,(prand(k*3+seed)-0.5)*0.8,center.z+Math.sin(ang)*rr);
+          gMain.add(sphere(p,0.18,col.clone(),0.55));
+          pts.push(p);
+        }
+        // intra-cluster edges (evolutionary family)
+        for(let k=0;k<n;k++) gMain.add(line(pts[k],pts[(k+1)%n],col.clone().multiplyScalar(0.35).getHex(),0.5));
+        return pts;
+      }
+      const trP=cluster(trainC,CY,0.3);
+      const teP=cluster(testC,AM,1.1);
+
+      // the HOMOLOGOUS pair: human TP53 (train) vs mouse Trp53 (test), 95% id
+      const tp53=trP[0].clone(); tp53.y=1.6;
+      const trp53=teP[0].clone(); trp53.y=1.6;
+      const hHuman=sphere(tp53,0.30,GR.clone(),0.8); gMain.add(hHuman);
+      const hMouse=sphere(trp53,0.30,GR.clone(),0.8); gMain.add(hMouse);
+      addSlbl("human TP53",GR.getStyle(),0.40,tp53.x,tp53.y+0.6,tp53.z);
+      addSlbl("mouse Trp53",GR.getStyle(),0.40,trp53.x,trp53.y+0.6,trp53.z);
+      api.pick(hHuman,{prot:{name:"human TP53",set:"train"}});
+      api.pick(hMouse,{prot:{name:"mouse Trp53",set:principled?"test (held-out species)":"test"}});
+
+      let leakage, gen, badge, state, formulaTxt;
+      if(!principled){
+        // RANDOM split: homology BRIDGE crosses the train/test boundary → leakage
+        const bridge=line(tp53,trp53,RO.getHex());
+        bridge.material.linewidth=2; gMain.add(bridge);
+        // mid arrow marker
+        const mid=tp53.clone().add(trp53).multiplyScalar(0.5);
+        const cone=new T.Mesh(new T.ConeGeometry(0.16,0.42,8),new T.MeshBasicMaterial({color:RO.getHex()}));
+        cone.position.copy(mid); cone.position.y+=0.0; cone.rotation.z=Math.PI/2; gMain.add(cone);
+        addLbl("95% identity → leakage",RO.getStyle(),1.2,0,2.4,0);
+        leakage=0.95; gen=0.50;
+        badge="Random split · evolutionary LEAKAGE";
+        formulaTxt="random: homolog(TP53,Trp53)=0.95 spans train↔test ⇒ memorise, not learn";
+        state="Random split puts human TP53 in train and 95%-identical mouse Trp53 in test. The GNN 'predicts' Trp53 by copying TP53's GO annotation — homology exploitation, ROC-AUC inflated, generalisation ~0.50.";
+      } else {
+        // SPECIES split: a barrier plane separates train from test, no bridge
+        const bar=new T.Mesh(new T.PlaneGeometry(0.06,6.0),new T.MeshBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.5,side:T.DoubleSide}));
+        bar.rotation.y=Math.PI/2; bar.position.set(0,0.5,0); gAux.add(bar);
+        addLbl("species barrier — no shared homologs",VI.getStyle(),1.2,0,2.7,0);
+        addSlbl("test species never seen in training",VI.getStyle(),0.40,0,2.1,0);
+        leakage=0.05; gen=0.82;
+        badge="Species-based split · honest generalisation";
+        formulaTxt="species split: train∩test species = ∅ ⇒ cross-species generalisation";
+        state="Species split holds out "+F.testOrg+" organisms entirely. Test proteins share no organism with training, so the model must generalise across evolutionary distance — the biologically meaningful challenge. GRN analog: cross-cell-type split.";
+      }
+
+      sceneSnap={mode,principled:principled?1:0,leakageFraction:+leakage.toFixed(2),
+                 genGap:+gen.toFixed(2),trainNodes:F.trainNodes,testNodes:F.testNodes,splitType:principled?"species":"random"};
+
+      return {
+        badge,
+        formula:formulaTxt,
+        insight:"A <b>random</b> split lets a homologous protein appear on both sides of the train/test boundary (rose bridge): the model memorises the annotation through homology. The <b>species-based</b> split (violet barrier) holds out whole organisms, forcing cross-species generalisation. Scaffold (molecules) and time (knowledge graph) splits do the same job for their domains.",
+        state,
+        metrics:{
+          datasetScale:F.trainNodes.toLocaleString()+" train",
+          edgesPerNode:(leakage*100).toFixed(0)+"% leak",
+          splitType:principled?"species":"random",
+          meanRoc:(gen*100).toFixed(0)+"% gen"
+        },
+        focus:{center:[0,0.5,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: imbalance — pos_weight rescues rare GO terms (ROC 0.68→0.86)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="imbalance"){
+      const weighted=Math.round(s.weighted)===1;
+      const tIdx=Math.min(F.go.length-1,Math.max(0,Math.round(s.term)));
+      const term=F.go[tIdx];
+      const xPos=[-4.4,-2.6,-0.8,1.0,2.8,4.6];
+
+      // one bar per GO term: height = ROC-AUC for that term under current weighting
+      let rocs=[];
+      F.go.forEach((g,i)=>{
+        const x=xPos[i];
+        const roc=rocTerm(g.pos,weighted);
+        rocs.push(roc);
+        const active=(i===tIdx);
+        const col=g.pos<0.10?(weighted?GR.clone():RO.clone()):CY.clone();
+        const h=0.2+roc*4.2;
+        const bar=new T.Mesh(new T.BoxGeometry(1.0,h,1.0),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(active?0.8:0.22),emissiveIntensity:active?0.7:0.2,roughness:0.4,transparent:!active,opacity:active?1:0.6}));
+        bar.position.set(x,h/2,0); gMain.add(bar);
+        api.pick(bar,{term:{name:g.name,pos:g.pos,pw:posWeight(g.pos),roc:roc}});
+        addLbl(roc.toFixed(2),col.getStyle(),1.25,x,h+0.5,0);
+        addSlbl((g.pos*100).toFixed(0)+"%",g.pos<0.10?(weighted?"#34d399":"#f472b6"):"#4dd7ff",0.36,x,-0.5,0);
+        // pos_weight tick above rare-term bars
+        if(g.pos<0.10){
+          addSlbl("×"+posWeight(g.pos).toFixed(0),AM.getStyle(),0.38,x,h+1.1,0);
+        }
+      });
+
+      // 0.5 random-baseline reference line + the mean line
+      const y05=0.2+0.5*4.2;
+      gAux.add(line(new T.Vector3(-5.2,y05,0),new T.Vector3(5.4,y05,0),0x3a4d62));
+      addSlbl("0.50 random",SL.getStyle(),0.34,-5.6,y05,0);
+      const meanRoc=weighted?F.rocWithWeight:F.rocNoWeight;
+      const yMean=0.2+meanRoc*4.2;
+      gAux.add(line(new T.Vector3(-5.2,yMean,0),new T.Vector3(5.4,yMean,0),(weighted?GR:RO).getHex()));
+      addLbl("mean "+meanRoc.toFixed(2),(weighted?GR:RO).getStyle(),1.2,5.9,yMean,0);
+
+      addLbl(weighted?"BCE + pos_weight":"plain BCE",weighted?GR.getStyle():RO.getStyle(),1.5,0,5.6,0);
+      addSlbl("← common GO terms        rare GO terms →","#8a99ad",0.40,0,-1.3,0);
+
+      const pw=posWeight(term.pos);
+      sceneSnap={mode,weighted:weighted?1:0,term:tIdx,posFraction:+term.pos.toFixed(3),
+                 posWeight:+pw.toFixed(1),meanRoc:meanRoc,rareTermRoc:+rocTerm(0.02,weighted).toFixed(3),
+                 splitType:"species"};
+
+      return {
+        badge:"Class imbalance · "+(weighted?"weighted":"plain")+" · "+term.name,
+        formula:"pos_weight[k] = neg_count/pos_count = (1−p)/p ;  "+term.name+": ×"+pw.toFixed(0),
+        insight:"112 GO terms span "+(F.go[0].pos*100).toFixed(0)+"% down to <1% positive rate. With <b>plain BCE</b> the model predicts all-negative for rare terms (ROC ≈ 0.50) and the mean sits at "+F.rocNoWeight.toFixed(2)+". <b>BCEWithLogitsLoss(pos_weight)</b> amplifies each false-negative gradient by (1−p)/p — up to ×49 for the 2% term — so rare terms become learnable and the mean rises to "+F.rocWithWeight.toFixed(2)+".",
+        state:term.name+": positive rate "+(term.pos*100).toFixed(0)+"%, pos_weight ×"+pw.toFixed(0)+", ROC-AUC "+rocTerm(term.pos,weighted).toFixed(2)+" ("+(weighted?"weighted":"plain")+"). Mean across 112 terms: "+meanRoc.toFixed(2)+".",
+        metrics:{
+          datasetScale:(term.pos*100).toFixed(0)+"% pos",
+          edgesPerNode:"×"+pw.toFixed(0),
+          splitType:weighted?"weighted":"plain",
+          meanRoc:meanRoc.toFixed(2)
+        },
+        focus:{center:[0,2.4,0],radius:13}
+      };
+    }
+
+    return {badge:"H05",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"h05",
+    kind:"ogb-biological-benchmarks",
+    eyebrow:"Block H · Benchmarks and Datasets",
+    title:"H05 · Open Graph Benchmark and biological graph tasks",
+    subtitle:"Three large OGB biological graphs, the principled splits that block biological leakage, and the per-class pos_weight that rescues rare GO labels.",
+    selectedLabel:"Element",
+    selectedHint:"Click a dataset, protein, or GO-term bar.",
+    modes:[
+      {value:"datasets", label:"Datasets (proteins / biokg / molhiv)"},
+      {value:"split",    label:"Splits (random leakage vs species)"},
+      {value:"imbalance",label:"Class imbalance (pos_weight rescue)"}
+    ],
+    params:[
+      {key:"dataset",   label:"dataset (0=proteins 1=biokg 2=molhiv)",min:0,max:2,step:1,value:0,
+       fmt:v=>["ogbn-proteins","ogbl-biokg","ogbg-molhiv"][Math.round(v)],modes:["datasets"]},
+      {key:"principled",label:"split (0=random 1=species-based)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"random":"species",modes:["split"]},
+      {key:"weighted",  label:"loss (0=plain BCE 1=pos_weight)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"plain":"weighted",modes:["imbalance"]},
+      {key:"term",      label:"GO term (0 common → 5 rare)",min:0,max:5,step:1,value:5,
+       fmt:v=>["nucleus","cytoplasm","membrane","metal-ion","kinase","nuc-hormone"][Math.round(v)],modes:["imbalance"]}
+    ],
+    metrics:[
+      {key:"datasetScale",label:"Scale / rate",accent:"cyan"},
+      {key:"edgesPerNode", label:"Density / weight",accent:"violet"},
+      {key:"splitType",    label:"Split / loss",accent:"amber"},
+      {key:"meanRoc",      label:"Generalisation",accent:"green"}
+    ],
+    layers:[
+      {group:"main",  label:"Graph / bars"},
+      {group:"aux",   label:"Reference lines"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Rarest GO term",
+      on:api=>{if(api.state.mode==="imbalance") api.setParam("term",5);}
+    },
+    secondary:{
+      label:"Toggle pos_weight",
+      on:api=>{if(api.state.mode==="imbalance") api.setParam("weighted",Math.round(api.state.weighted)===1?0:1);}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=ogbn-proteins / common GO · <span style="color:#a78bfa">violet</span>=ogbl-biokg / species barrier · <span style="color:#fbbf24">amber</span>=ogbg-molhiv / pos_weight · <span style="color:#34d399">green</span>=homolog / weighted-rescue · <span style="color:#f472b6">rose</span>=leakage / unrescued rare term.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="imbalance") api.frame([0,2.4,0],13);
+      else if(s.mode==="split") api.frame([0,0.5,0],12);
+      else api.frame([0,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.ds)   api.setSelected(d.ds.key+" · "+d.ds.nodes.toLocaleString()+" nodes · "+d.ds.edges.toLocaleString()+" edges · "+d.ds.split+" split · "+d.ds.metric);
+      if(d.prot) api.setSelected(d.prot.name+" · "+d.prot.set);
+      if(d.term) api.setSelected(d.term.name+" · pos "+(d.term.pos*100).toFixed(0)+"% · pos_weight ×"+d.term.pw.toFixed(0)+" · ROC "+d.term.roc.toFixed(2));
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const dsIdx=Math.round(s.dataset);
+      const weighted=Math.round(s.weighted)===1;
+      const tIdx=Math.min(F.go.length-1,Math.max(0,Math.round(s.term)));
+      const term=F.go[tIdx];
+      const ds=F.ds[dsIdx];
+      return {
+        mode,
+        dataset:dsIdx,
+        datasetNodes:ds.nodes,
+        datasetEdges:ds.edges,
+        edgesPerNode:Math.round(ds.edges/ds.nodes),
+        principled:Math.round(s.principled),
+        weighted:weighted?1:0,
+        term:tIdx,
+        posFraction:+term.pos.toFixed(3),
+        posWeight:+posWeight(term.pos).toFixed(1),
+        meanRoc:weighted?F.rocWithWeight:F.rocNoWeight,
+        rocLift:+(F.rocWithWeight-F.rocNoWeight).toFixed(3),
+        splitType:mode==="datasets"?ds.split:(mode==="split"?(Math.round(s.principled)===1?"species":"random"):"species")
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

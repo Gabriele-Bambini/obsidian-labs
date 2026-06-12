@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D02 · Protein-protein interaction networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no nondeterministic calls) ──
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  WORKED EXAMPLE — Section 5: the EGFR-RAS-MAPK / EGFR-PI3K subgraph.
+  //  6 proteins, hexagonal ring layout.  Numbers are EXACT from the note.
+  // ════════════════════════════════════════════════════════════════════════
+  // index: 0 EGFR · 1 GRB2 · 2 SOS1 · 3 KRAS · 4 RAF1 · 5 PIK3CA
+  const PROT = ["EGFR","GRB2","SOS1","KRAS","RAF1","PIK3CA"];
+  const PROT_ROLE = ["RTK receptor","adaptor","RAS-GEF","GTPase","kinase","lipid kinase"];
+  const PROT_DRIVER = [1,0,0,1,1,1];   // is_cancer_driver  (note 4th feature)
+  // hex positions (x,z) on a ring of radius RH
+  const RH=3.5;
+  const HEX=PROT.map((_,i)=>{const a=(Math.PI/2)-i/6*Math.PI*2;return [Math.cos(a)*RH,Math.sin(a)*RH];});
+
+  // STRING experimental+database combined scores (note Section 5, exact)
+  // each: [i, j, score, channel]   channel: 0=experiments 1=database 2=text/co-exp
+  const EDGES=[
+    [0,1,0.994,0], // EGFR-GRB2   AP-MS, co-IP, crystal SH2-pY
+    [1,2,0.989,0], // GRB2-SOS1   crystal SH3-PR complex
+    [2,3,0.920,0], // SOS1-KRAS   co-IP, GEF assay, structure
+    [3,4,0.849,0], // KRAS-RAF1   co-IP multiple cell lines
+    [3,5,0.789,0], // KRAS-PIK3CA co-IP, RAS-binding domain
+    [0,5,0.741,0], // EGFR-PIK3CA AP-MS, phospho LC-MS
+    [4,5,0.634,2]  // RAF1-PIK3CA below 0.700 -> excluded at high confidence
+  ];
+  // a single illustrative text-mining-only spurious edge (study-bias),
+  // appears ONLY when the threshold is low — teaches Misconception 1 & 2.
+  const TEXT_EDGE=[0,3,0.31,2]; // EGFR-KRAS co-mention in cancer abstracts
+
+  // node features (note Section 5): [seqLenNorm, logMW, expr_A549, driver, kinase, deg/maxDeg]
+  const FEAT=[
+    [0.52,4.32,8.21,1,1,0.89], // EGFR
+    [0.14,3.64,6.10,0,0,0.12], // GRB2
+    [0.71,4.58,5.44,0,0,0.34], // SOS1
+    [0.11,3.25,6.88,1,0,0.41], // KRAS
+    [0.38,4.01,5.92,1,1,0.22], // RAF1
+    [0.67,4.78,6.12,1,1,0.58]  // PIK3CA
+  ];
+
+  // hub-bias diagnostic constants (note Section 3 / exercise 2)
+  const HUBS=[
+    {name:"TP53",  combined:1447, exp:300, role:"artifact hub"},
+    {name:"BRCA1", combined:1156, exp:240, role:"artifact hub"},
+    {name:"MYC",   combined:1023, exp:210, role:"artifact hub"},
+    {name:"EGFR",  combined: 892, exp:380, role:"mixed"},
+    {name:"CDK2",  combined: 412, exp:300, role:"biological hub"}
+  ];
+
+  const COL={
+    cyan:"#4dd7ff", green:"#34d399", amber:"#fbbf24", violet:"#a78bfa",
+    rose:"#fb7185", slate:"#54667c", driver:"#fb7185"
+  };
+
+  let sceneSnap={};
+
+  // ── active edge set for a given threshold (includes text edge if low) ────
+  function activeEdges(thr,expOnly){
+    const out=[];
+    for(const e of EDGES){
+      if(e[2]<thr) continue;
+      if(expOnly && e[3]===2) continue; // experimental-only drops text/co-exp
+      out.push(e);
+    }
+    if(!expOnly && TEXT_EDGE[2]>=thr) out.push(TEXT_EDGE);
+    return out;
+  }
+
+  // ── degree with self-loops (A~ = A + I) over an edge set ─────────────────
+  function degrees(edges){
+    const d=PROT.map(()=>1); // +1 self loop
+    for(const e of edges){ d[e[0]]++; d[e[1]]++; }
+    return d;
+  }
+
+  // ── GCN symmetric-normalized weight for an (i,j) edge:  1/sqrt(Di*Dj) ────
+  function gcnW(i,j,d){ return 1/Math.sqrt(d[i]*d[j]); }
+
+  // ── deterministic GAT attention on edge (i,j): blends STRING confidence,
+  //    experimental-channel reliability and feature (driver/kinase) similarity.
+  //    temperature sharpens with the 'attnTemp' slider. Returns RAW score. ──
+  function gatRaw(i,j,score,channel,temp){
+    const fi=FEAT[i], fj=FEAT[j];
+    // cosine-ish similarity on the (driver,kinase,expr) sub-features
+    const sim=(fi[3]*fj[3]+fi[4]*fj[4]+ (fi[2]*fj[2])/70);
+    const evid=channel===0?1.0:(channel===1?0.7:0.25); // experimental up-weight
+    const raw=(0.6*score + 0.9*evid + 0.5*sim);
+    return raw*temp;
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const thr=s.threshold;                 // STRING combined-score cutoff
+    const expOnly=Math.round(s.expOnly)===1;
+    const layers=Math.round(s.layers);     // GCN/GAT depth
+    const attnTemp=s.attnTemp;             // GAT sharpening
+
+    const gGraph =api.group("graph");
+    const gFlow  =api.group("flow");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color(COL.cyan), GR=new T.Color(COL.green), AM=new T.Color(COL.amber);
+    const VI=new T.Color(COL.violet), RO=new T.Color(COL.rose), SL=new T.Color(COL.slate);
+
+    // place the 6 proteins; cancer drivers in rose, others cyan-ish
+    function drawProtein(i,emph){
+      const [x,z]=HEX[i];
+      const isDrv=PROT_DRIVER[i]===1;
+      const base=isDrv?RO.clone():CY.clone();
+      const r=0.30+(FEAT[i][5])*0.22;
+      const m=new T.Mesh(
+        new T.SphereGeometry(r,18,14),
+        new T.MeshStandardMaterial({color:base,emissive:base.clone().multiplyScalar(emph?0.85:0.5),
+          emissiveIntensity:emph?0.8:0.45,roughness:0.38})
+      );
+      m.position.set(x,0,z);
+      gGraph.add(m);
+      api.pick(m,{prot:{i,name:PROT[i],role:PROT_ROLE[i],driver:isDrv}});
+      addSlbl(PROT[i],isDrv?COL.rose:COL.cyan,0.40,x,r+0.42,z);
+      return m;
+    }
+
+    function edgeColor(channel){
+      return channel===0?GR:(channel===1?AM:SL);
+    }
+    function drawEdge(e,w,col,op){
+      const [i,j]=e;
+      const a=new T.Vector3(HEX[i][0],0,HEX[i][1]);
+      const b=new T.Vector3(HEX[j][0],0,HEX[j][1]);
+      const mat=new T.LineBasicMaterial({color:col.getHex(),transparent:true,opacity:op});
+      // thicken visually by drawing a thin tube-like box along the edge
+      const mid=a.clone().add(b).multiplyScalar(0.5);
+      const dir=b.clone().sub(a); const len=dir.length();
+      const tube=new T.Mesh(
+        new T.CylinderGeometry(0.018+w*0.10,0.018+w*0.10,len,8),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),
+          emissiveIntensity:0.5,roughness:0.5,transparent:true,opacity:op})
+      );
+      tube.position.copy(mid);
+      tube.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir.clone().normalize());
+      gGraph.add(tube);
+      api.pick(tube,{edge:{i,j,name:PROT[i]+"-"+PROT[j]}});
+      return mid;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE A: string  — evidence channels + threshold filtering
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="string"){
+      const edges=activeEdges(thr,expOnly);
+      for(let i=0;i<6;i++) drawProtein(i,false);
+      let nExp=0,nText=0;
+      for(const e of edges){
+        const col=edgeColor(e[3]);
+        const op=0.45+e[2]*0.5;
+        const mid=drawEdge(e,e[2],col,op);
+        // score chip floating at edge midpoint
+        addSlbl(e[2].toFixed(3),e[3]===0?COL.green:(e[3]===1?COL.amber:COL.slate),0.34,mid.x,0.55,mid.z);
+        if(e[3]===0) nExp++; else nText++;
+      }
+      // combined-score formula demo: combined = 1 - prod(1-score_c)
+      // illustrate on a 2-channel example (experiments 0.86, database 0.70)
+      const c1=0.86,c2=0.70, combined=1-(1-c1)*(1-c2);
+      addLbl("STRING subgraph · EGFR signaling","#4dd7ff",1.25,0,2.7,0);
+      addLbl(expOnly?"experimental only":"all channels","#fbbf24",1.1,0,-2.7,0);
+
+      const kept=edges.length;
+      sceneSnap={mode,threshold:+thr.toFixed(3),expOnly:expOnly?1:0,
+        edgesKept:kept,expEdges:nExp,textEdges:nText,
+        combinedScore:+combined.toFixed(3),layers:0,gatEntropy:0,maxGcnW:0};
+
+      return {
+        badge:"STRING · score ≥ "+thr.toFixed(2)+" · "+(expOnly?"exp-only":"all chan")+" · "+kept+" edges",
+        formula:"combined = 1 − Π_c (1 − score_c) &nbsp;=&nbsp; 1−(1−0.86)(1−0.70) = <b>"+combined.toFixed(3)+"</b>",
+        insight:"Each PPI edge is a weighted claim. <b>Green</b> = experimental (co-IP/AP-MS/Y2H), <b>amber</b> = curated database, <b>grey</b> = text-mining / co-expression. Raise the threshold to drop weak edges (RAF1-PIK3CA falls at 0.70); toggle experimental-only to delete the study-biased text edge entirely. Combined score multiplies the miss-probability across channels.",
+        state:"At score ≥ "+thr.toFixed(2)+": "+kept+" edges ("+nExp+" experimental, "+nText+" other). "+(thr>0.7?"High-confidence regime — RAF1-PIK3CA (0.634) excluded.":"Low threshold keeps weak / text-mining edges."),
+        metrics:{edgesKept:""+kept, combinedScore:combined.toFixed(3), gatEntropy:"—", maxGcnW:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE B: gcn  — symmetric-normalized diffusion  D^-1/2 A D^-1/2
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="gcn"){
+      const edges=activeEdges(thr,expOnly);
+      const d=degrees(edges);
+      for(let i=0;i<6;i++) drawProtein(i,false);
+
+      // colour each edge by GCN normalized weight; thickness ∝ weight
+      let maxW=0, maxPair="";
+      for(const e of edges){
+        const w=gcnW(e[0],e[1],d);
+        if(w>maxW){maxW=w;maxPair=PROT[e[0]]+"-"+PROT[e[1]];}
+      }
+      for(const e of edges){
+        const w=gcnW(e[0],e[1],d);
+        const t=w/Math.max(maxW,1e-6);
+        const col=new T.Color().setRGB(0.30+0.7*t, 0.55+0.4*t, 1.0); // cyan->white hot
+        const mid=drawEdge(e,w*1.6,col,0.55+0.4*t);
+        addSlbl(w.toFixed(3),"#cfe8ff",0.34,mid.x,0.55,mid.z);
+      }
+
+      // show degree (with self-loop) above each node
+      for(let i=0;i<6;i++){
+        const [x,z]=HEX[i];
+        addSlbl("D="+d[i],"#8a99ad",0.32,x,-0.55,z);
+      }
+
+      // animate L layers of diffusion as expanding rings around EGFR(0)
+      const src=0;
+      for(let l=1;l<=layers;l++){
+        const ring=new T.Mesh(
+          new T.RingGeometry(l*1.0,l*1.0+0.06,40),
+          new T.MeshBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.35-l*0.06,side:T.DoubleSide})
+        );
+        ring.rotation.x=-Math.PI/2;
+        ring.position.set(HEX[src][0],0.02,HEX[src][1]);
+        gFlow.add(ring);
+      }
+      addLbl("D^-1/2 A D^-1/2 · L="+layers+" hops","#a78bfa",1.15,0,2.7,0);
+      addLbl("hot edge: "+maxPair,"#4dd7ff",1.0,0,-2.7,0);
+
+      // over-smoothing warning when layers high on this small graph
+      const overSmooth=layers>=3;
+      sceneSnap={mode,threshold:+thr.toFixed(3),expOnly:expOnly?1:0,
+        edgesKept:edges.length,layers,maxGcnW:+maxW.toFixed(3),
+        oversmoothing:overSmooth?1:0,combinedScore:0,gatEntropy:0};
+
+      return {
+        badge:"GCN · L="+layers+" · max ŵ="+maxW.toFixed(3)+" ("+maxPair+")",
+        formula:"H^(l+1)=σ( D̃^(−½) Ã D̃^(−½) H^(l) W^(l) ),&nbsp; ŵ_ij = 1/√(D̃_i·D̃_j)",
+        insight:"Symmetric normalization makes a partner's contribution inversely proportional to its degree — high-degree hubs contribute less, preventing hub domination. The brightest edge is <b>"+maxPair+"</b> (lowest-degree endpoint amplified). On this 6-node graph, "+(overSmooth?"L≥3 already reaches every node — over-smoothing: representations collapse toward a hub-influenced mean.":"L="+layers+" keeps neighborhoods distinct."),
+        state:"Degrees (with self-loop): "+PROT.map((p,i)=>p+"="+d[i]).join(", ")+". Max normalized weight "+maxW.toFixed(3)+" on "+maxPair+". "+(overSmooth?"OVER-SMOOTHING risk at L="+layers+".":""),
+        metrics:{edgesKept:""+edges.length, combinedScore:"—", gatEntropy:"—", maxGcnW:maxW.toFixed(3)},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE C: gat  — attention down-weights study-biased edges
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="gat"){
+      // GAT always benefits from seeing the text edge so it can LEARN to drop it
+      const edges=activeEdges(thr,false);
+      for(let i=0;i<6;i++) drawProtein(i,false);
+
+      // per-node softmax over incident edges -> attention alpha_ij
+      // collect incident edges per node
+      const inc=PROT.map(()=>[]);
+      for(const e of edges){ inc[e[0]].push(e); inc[e[1]].push(e); }
+      // compute alpha for each (directed) endpoint and store the symmetric mean for drawing
+      const alphaOf={};
+      let entropySum=0, entropyN=0;
+      for(let v=0;v<6;v++){
+        const es=inc[v];
+        if(!es.length) continue;
+        const raws=es.map(e=>{const other=e[0]===v?e[1]:e[0];return gatRaw(v,other,e[2],e[3],attnTemp);});
+        const mx=Math.max(...raws);
+        const exps=raws.map(r=>Math.exp(r-mx));
+        const Z=exps.reduce((a,b)=>a+b,0);
+        let H=0;
+        es.forEach((e,k)=>{
+          const a=exps[k]/Z;
+          const key=Math.min(e[0],e[1])+"-"+Math.max(e[0],e[1]);
+          alphaOf[key]=(alphaOf[key]||0)+a*0.5; // average the two endpoints
+          if(a>1e-6) H-=a*Math.log(a);
+        });
+        entropySum+=H; entropyN++;
+      }
+      const avgEntropy=entropyN?entropySum/entropyN:0;
+
+      let maxA=0,maxPair="";
+      for(const e of edges){
+        const key=Math.min(e[0],e[1])+"-"+Math.max(e[0],e[1]);
+        const a=alphaOf[key]||0;
+        if(a>maxA){maxA=a;maxPair=PROT[e[0]]+"-"+PROT[e[1]];}
+      }
+      // text edge attention (should be low)
+      const textKey=Math.min(TEXT_EDGE[0],TEXT_EDGE[1])+"-"+Math.max(TEXT_EDGE[0],TEXT_EDGE[1]);
+      const textAlpha=alphaOf[textKey]||0;
+
+      for(const e of edges){
+        const key=Math.min(e[0],e[1])+"-"+Math.max(e[0],e[1]);
+        const a=alphaOf[key]||0;
+        const t=a/Math.max(maxA,1e-6);
+        const isText=e[3]===2;
+        const col=isText?SL.clone():new T.Color().setRGB(1.0,0.55+0.4*t,0.2+0.3*t); // amber->hot
+        if(isText) col.lerp(new T.Color(COL.slate),0.5);
+        const mid=drawEdge(e,a*3.0,col,0.35+0.6*t);
+        addSlbl("α="+a.toFixed(2),isText?COL.slate:COL.amber,0.34,mid.x,0.55,mid.z);
+      }
+      addLbl("GAT attention · α_ij","#fbbf24",1.2,0,2.7,0);
+      addLbl("text edge α="+textAlpha.toFixed(2)+" (down-weighted)","#54667c",1.0,0,-2.7,0);
+
+      sceneSnap={mode,threshold:+thr.toFixed(3),attnTemp:+attnTemp.toFixed(2),
+        edgesKept:edges.length,maxAlpha:+maxA.toFixed(3),textAlpha:+textAlpha.toFixed(3),
+        gatEntropy:+avgEntropy.toFixed(3),layers:0,combinedScore:0,maxGcnW:0};
+
+      return {
+        badge:"GAT · max α="+maxA.toFixed(2)+" ("+maxPair+") · text α="+textAlpha.toFixed(2),
+        formula:"α_ij = softmax_j( LeakyReLU( aᵀ[W·h_i ‖ W·h_j] ) ),&nbsp; h_i^(l+1)=σ(Σ_j α_ij W h_j)",
+        insight:"Attention learns edge-specific weights. The highest attention falls on <b>"+maxPair+"</b> — a crystal-validated experimental edge. The grey <b>text-mining</b> EGFR-KRAS edge gets the lowest α ("+textAlpha.toFixed(2)+"): GAT implicitly down-weights study-biased evidence when the objective rewards functional specificity. Raise temperature to sharpen the softmax.",
+        state:"Top attention "+maxA.toFixed(2)+" on "+maxPair+"; text-mining edge held at α="+textAlpha.toFixed(2)+". Mean per-node attention entropy "+avgEntropy.toFixed(3)+" ("+(attnTemp>1.3?"sharp":"soft")+").",
+        metrics:{edgesKept:""+edges.length, combinedScore:"—", gatEntropy:avgEntropy.toFixed(3), maxGcnW:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE D: hub-bias  — combined vs experimental degree, inflation ratio
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="hub"){
+      const x0=-5.0, bw=1.5, gap=2.4, yS=4.0/1447;
+      HUBS.forEach((h,k)=>{
+        const x=x0+k*gap;
+        const ratio=h.combined/h.exp;
+        const artifact=ratio>=3.0;
+        // combined-degree bar (tall, dim if artifact)
+        const hc=0.1+h.combined*yS;
+        const barC=new T.Mesh(new T.BoxGeometry(bw*0.55,hc,bw*0.55),
+          new T.MeshStandardMaterial({color:SL,emissive:SL.clone().multiplyScalar(0.4),
+            emissiveIntensity:0.3,roughness:0.5,transparent:true,opacity:0.5}));
+        barC.position.set(x-0.42,hc/2,0);
+        gBars.add(barC);
+        // experimental-degree bar (real signal)
+        const he=0.1+h.exp*yS;
+        const col=artifact?RO.clone():GR.clone();
+        const barE=new T.Mesh(new T.BoxGeometry(bw*0.55,he,bw*0.55),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.7),
+            emissiveIntensity:0.65,roughness:0.4}));
+        barE.position.set(x+0.42,he/2,0);
+        gBars.add(barE);
+        api.pick(barE,{hub:{name:h.name,combined:h.combined,exp:h.exp,ratio:+ratio.toFixed(2),role:h.role}});
+
+        addSlbl(h.name,artifact?COL.rose:COL.green,0.40,x,hc+0.5,0);
+        addSlbl("×"+ratio.toFixed(1),artifact?COL.rose:COL.green,0.36,x,-0.5,0);
+      });
+      // legend
+      addLbl("grey = combined degree · color = experimental-only","#8a99ad",1.0,0,4.6,0);
+      addLbl("inflation ratio ≥ 3 ⇒ artifact hub","#fb7185",1.05,0,-1.3,0);
+
+      // mean ratio across the panel
+      const ratios=HUBS.map(h=>h.combined/h.exp);
+      const meanR=ratios.reduce((a,b)=>a+b,0)/ratios.length;
+      const nArtifact=ratios.filter(r=>r>=3).length;
+
+      sceneSnap={mode,threshold:0,layers:0,combinedScore:0,gatEntropy:0,maxGcnW:0,
+        meanInflation:+meanR.toFixed(2),artifactHubs:nArtifact,tp53Ratio:+(1447/300).toFixed(2)};
+
+      return {
+        badge:"Hub bias · "+nArtifact+"/"+HUBS.length+" artifact hubs · mean ×"+meanR.toFixed(1),
+        formula:"inflation(v) = deg_combined(v) / deg_experimental(v);&nbsp; TP53 = 1447/300 = <b>4.8</b>",
+        insight:"Apparent degree mixes biology with study bias. TP53 shows degree 1447 in combined STRING but ~300 with experimental evidence only — an inflation ratio of 4.8 (a study-biased <b>artifact hub</b>). CDK2 stays near ×1.4 — a genuine <b>biological hub</b>. A GNN trained on raw degree encodes a century of attention as if it were topology.",
+        state:"Artifact hubs (ratio ≥ 3, rose): "+HUBS.filter(h=>h.combined/h.exp>=3).map(h=>h.name).join(", ")+". Biological hubs (green): "+HUBS.filter(h=>h.combined/h.exp<3).map(h=>h.name).join(", ")+". Mean inflation ×"+meanR.toFixed(2)+".",
+        metrics:{edgesKept:"—", combinedScore:"—", gatEntropy:"—", maxGcnW:"—"},
+        focus:{center:[0,1.5,0],radius:13}
+      };
+    }
+
+    return {badge:"D02",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d02",
+    kind:"ppi-networks",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D02 · Protein-protein interaction networks",
+    subtitle:"The EGFR signaling subgraph (EGFR, GRB2, SOS1, KRAS, RAF1, PIK3CA). Four views: STRING evidence channels, GCN normalized diffusion, GAT attention, and the study-bias hub problem.",
+    selectedLabel:"Element",
+    selectedHint:"Click a protein, edge, or hub bar.",
+    modes:[
+      {value:"string", label:"STRING (evidence channels + threshold)"},
+      {value:"gcn",    label:"GCN (D⁻½ A D⁻½ diffusion)"},
+      {value:"gat",    label:"GAT (attention down-weights bias)"},
+      {value:"hub",    label:"Hub bias (combined vs experimental)"}
+    ],
+    params:[
+      {key:"threshold",label:"STRING score cutoff",min:0.15,max:0.95,step:0.05,value:0.70,
+       fmt:v=>v.toFixed(2),modes:["string","gcn"]},
+      {key:"expOnly",  label:"evidence (0=all 1=experimental)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===1?"exp-only":"all chan",modes:["string","gcn"]},
+      {key:"layers",   label:"GCN message-passing layers L",min:1,max:5,step:1,value:2,
+       fmt:v=>"L="+Math.round(v),modes:["gcn"]},
+      {key:"attnTemp", label:"GAT attention temperature",min:0.5,max:2.0,step:0.1,value:1.0,
+       fmt:v=>v.toFixed(1)+"×",modes:["gat"]}
+    ],
+    metrics:[
+      {key:"edgesKept",     label:"Edges kept",accent:"cyan"},
+      {key:"combinedScore", label:"Combined score (demo)",accent:"green"},
+      {key:"gatEntropy",    label:"Mean attention entropy",accent:"amber"},
+      {key:"maxGcnW",       label:"Max GCN weight",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph", label:"Proteins / edges"},
+      {group:"flow",  label:"Diffusion rings"},
+      {group:"bars",  label:"Hub-bias bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"High confidence (0.70)",
+      on:api=>{api.setParam("threshold",0.70);}
+    },
+    secondary:{
+      label:"Experimental only",
+      on:api=>{api.setParam("expOnly",1);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:11},
+    hint:'<span style="color:#fb7185">rose</span>=cancer driver · <span style="color:#4dd7ff">cyan</span>=non-driver · edges: <span style="color:#34d399">green</span>=experimental, <span style="color:#fbbf24">amber</span>=database, <span style="color:#54667c">grey</span>=text-mining/co-expression.',
+    onParam(api){ api.frame([0,api.state.mode==="hub"?1.5:0,0], api.state.mode==="hub"?13:11); },
+    onMode(api){ api.frame([0,api.state.mode==="hub"?1.5:0,0], api.state.mode==="hub"?13:11); },
+    onSelect(api,d){
+      if(d.prot) api.setSelected(d.prot.name+" · "+d.prot.role+(d.prot.driver?" · CANCER DRIVER":""));
+      if(d.edge) api.setSelected("Edge "+d.edge.name);
+      if(d.hub)  api.setSelected(d.hub.name+" · combined "+d.hub.combined+" / exp "+d.hub.exp+" = ×"+d.hub.ratio+" · "+d.hub.role);
+    },
+    build,
+    snapshot(s){
+      const thr=+s.threshold;
+      const expOnly=Math.round(s.expOnly)===1;
+      const edges=activeEdges(thr,expOnly);
+      const d=degrees(edges);
+      let maxW=0;
+      for(const e of edges){const w=gcnW(e[0],e[1],d);if(w>maxW)maxW=w;}
+      const c1=0.86,c2=0.70, combined=1-(1-c1)*(1-c2);
+      return {
+        mode:s.mode,
+        threshold:+thr.toFixed(3),
+        expOnly:expOnly?1:0,
+        layers:Math.round(s.layers),
+        attnTemp:+(+s.attnTemp).toFixed(2),
+        edgesKept:edges.length,
+        combinedScore:+combined.toFixed(3),
+        maxGcnW:+maxW.toFixed(3),
+        tp53Inflation:+(1447/300).toFixed(2),
+        highConfidence:thr>=0.70
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

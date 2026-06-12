@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F05 · PIDC and information-theoretic single-cell GRN</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG, no clock) ───────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── worked-example FACTS (note Section 5, B=3 tertile bins) ───────────────
+  // 6 cells × genes. Bin codes: 1=low/off, 2=mid, 3=high/on.
+  // HBB tertiles: [1,1,3,3,2,2]; GATA1 & KLF1 on→bin3 in cells 3,4 else bin1;
+  // RUNX1 on (bin3) in cells 1,2 (where HBB low); CD3E ~ off where HBB high.
+  const F={
+    cells:6, genes:6, tfs:3, bins:3,
+    MI_GATA_HBB:0.918,        // bits — pairwise MI, GATA1↔HBB
+    MI_KLF_HBB :0.918,        // identical binned pattern as GATA1
+    Ispec_low :0.585,         // I_spec(GATA1;HBB=low)  = log2(1/0.667)
+    Ispec_mid :0.585,         // I_spec(GATA1;HBB=med)
+    Ispec_high:1.585,         // I_spec(GATA1;HBB=high) = log2(1/0.333)
+    Imin_KLF :0.918,          // Imin(GATA1,KLF1;HBB) — fully redundant
+    UI_KLF   :0.0,            // UI(GATA1;HBB|KLF1)=MI−Imin = 0
+    UI_CD3E  :0.918,          // UI(GATA1;HBB|CD3E) ≈ MI (irrelevant context)
+    UI_RUNX  :0.40,           // UI(GATA1;HBB|RUNX1) — partial redundancy
+    CD_GATA_HBB:0.50,         // PIDC score CD(GATA1;HBB) ≈ avg over contexts
+    alpha:0.1                 // Laplace smoothing pseudocount
+  };
+
+  // Context genes (besides the tested TF GATA1 and target HBB) with their
+  // per-context Imin redundancy with GATA1 about HBB. UI = max(0, MI − Imin).
+  // Each context's specific-info profile drives how much of MI is redundant.
+  const CONTEXTS=[
+    {name:"KLF1",  redund:1.00, accent:"rose",   note:"co-regulator (identical profile)"},
+    {name:"RUNX1", redund:0.56, accent:"amber",  note:"progenitor TF (partial overlap)"},
+    {name:"CD3E",  redund:0.00, accent:"cyan",   note:"T-cell gene (irrelevant)"},
+    {name:"CDKN1A",redund:0.18, accent:"violet", note:"cycling gene (weak overlap)"}
+  ];
+
+  let sceneSnap={};
+
+  // ── deterministic models keyed off the note numbers ─────────────────────
+  // Pairwise MI as a function of bin count B (B=3 → 0.918; richer bins recover
+  // a touch more, fewer bins lose resolution). alpha smooths toward base.
+  function pairwiseMI(bins,alpha){
+    const b=Math.max(2,Math.min(5,bins));
+    const base=F.MI_GATA_HBB;                 // anchored at B=3, α=0.10 → 0.918
+    const gain=(b-3)*0.028;                    // more bins → slightly more MI
+    const smear=(alpha-0.10)*0.42;             // smoothing erodes MI (0 at default α)
+    return Math.max(0.05,base+gain-smear);
+  }
+  // UI(GATA1;HBB | context) given a context's redundancy fraction.
+  function uniqueInfo(mi,redundFrac,bins,alpha){
+    const imin=mi*redundFrac*(1-(alpha*0.20)) + (bins<3?0.04:0);
+    return Math.max(0,mi-imin);
+  }
+  // CD = average UI over the selected context genes (PIDC context averaging).
+  function pidcScore(mi,bins,alpha,nCtx){
+    const k=Math.max(1,Math.min(CONTEXTS.length,nCtx));
+    let s=0;
+    for(let i=0;i<k;i++) s+=uniqueInfo(mi,CONTEXTS[i].redund,bins,alpha);
+    return s/k;
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const bins=Math.round(s.bins);
+    const alpha=s.alpha;
+    const ctxIdx=Math.round(s.context);                 // active single context
+    const nCtx=Math.round(s.nContexts);                 // contexts averaged
+
+    const gGraph =api.group("graph");
+    const gBars  =api.group("bars");
+    const gPanel =api.group("panel");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // unique / retained
+    const RO=new T.Color("#fb7185");   // redundant / pruned
+    const AM=new T.Color("#fbbf24");   // mutual information
+    const VI=new T.Color("#a78bfa");   // context / PIDC score
+    const GR=new T.Color("#34d399");   // target
+    const SL=new T.Color("#54667c");
+
+    const mi=pairwiseMI(bins,alpha);
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: pairwise-mi  — ARACNE-style symmetric MI; co-regulators clash
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="pairwise-mi"){
+      const miGK=mi;                    // MI(GATA1;HBB)=MI(KLF1;HBB) identical
+      // three nodes: GATA1, KLF1 (co-regulators), HBB (target)
+      const posG=new T.Vector3(-3.2,0,1.6);
+      const posK=new T.Vector3(-3.2,0,-1.6);
+      const posH=new T.Vector3( 3.0,0,0);
+
+      function gene(pos,col,name,big){
+        const m=new T.Mesh(new T.SphereGeometry(big?0.55:0.46,20,16),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.copy(pos); gGraph.add(m); return m;
+      }
+      const ng=gene(posG,AM,"GATA1"); api.pick(ng,{gene:{name:"GATA1",role:"TF (co-regulator)"}});
+      const nk=gene(posK,AM,"KLF1");  api.pick(nk,{gene:{name:"KLF1",role:"TF (co-regulator)"}});
+      const nh=gene(posH,GR,"HBB",true); api.pick(nh,{gene:{name:"HBB",role:"target"}});
+      L("GATA1","#fbbf24",1.4,posG.x,posG.y+0.95,posG.z);
+      L("KLF1","#fbbf24",1.4,posK.x,posK.y+0.95,posK.z);
+      L("HBB","#34d399",1.5,posH.x,posH.y+1.05,posH.z);
+
+      // symmetric MI edges (double-headed — no direction)
+      function miEdge(a,b,val){
+        const g=new T.BufferGeometry().setFromPoints([a,b]);
+        gGraph.add(new T.Line(g,new T.LineBasicMaterial({color:AM.getHex()})));
+        const mid=a.clone().add(b).multiplyScalar(0.5);
+        L(val.toFixed(3)+" bits","#fbbf24",1.25,mid.x,mid.y+0.6,mid.z);
+      }
+      miEdge(posG,posH,miGK);
+      miEdge(posK,posH,miGK);
+      // the co-regulator MI between GATA1 and KLF1 (high — they co-vary)
+      const gkLine=new T.BufferGeometry().setFromPoints([posG,posK]);
+      gGraph.add(new T.Line(gkLine,new T.LineDashedMaterial({color:RO.getHex(),dashSize:0.22,gapSize:0.16})).computeLineDistances?
+        (function(o){o.computeLineDistances();return o;})(new T.Line(gkLine,new T.LineDashedMaterial({color:RO.getHex(),dashSize:0.22,gapSize:0.16}))):
+        new T.Line(gkLine,new T.LineBasicMaterial({color:RO.getHex()})));
+      L("co-vary","#fb7185",1.1,(posG.x+posK.x)/2-0.1,0,0);
+
+      // ARACNE/DPI verdict marker — one true edge would be pruned
+      const pruneArrow=new T.Mesh(new T.ConeGeometry(0.16,0.42,8),new T.MeshBasicMaterial({color:RO.getHex()}));
+      pruneArrow.position.set((posK.x+posH.x)/2,0.75,(posK.z+posH.z)/2);
+      pruneArrow.rotation.z=Math.PI; gGraph.add(pruneArrow);
+      L("DPI prunes one","#fb7185",1.2,(posK.x+posH.x)/2,1.5,(posK.z+posH.z)/2);
+
+      L("Pairwise MI is symmetric — no direction, co-regulators look interchangeable","#8a99ad",1.05,0,-2.2,0);
+
+      sceneSnap={mode,bins,alpha:+alpha.toFixed(2),context:ctxIdx,nContexts:nCtx,
+        mi:+miGK.toFixed(3),uniqueInfo:null,pidcScore:null,redundancy:null,edgesRetained:1};
+
+      return {
+        badge:"Pairwise MI · MI(GATA1;HBB)="+miGK.toFixed(3)+" bits",
+        formula:"MI(X;Y) = H(X) + H(Y) − H(X,Y) &nbsp;=&nbsp; "+miGK.toFixed(3)+" bits",
+        insight:"GATA1 and KLF1 both activate HBB and co-vary in erythroid cells, so MI(GATA1;HBB) = MI(KLF1;HBB) = "+miGK.toFixed(3)+" bits. Pairwise MI is symmetric and pairwise-only: ARACNE's data-processing inequality treats one of the two co-regulators as an indirect detour and prunes a TRUE edge. The information that A shares with HBB is never separated from what KLF1 already explains.",
+        state:"MI(GATA1;HBB)="+miGK.toFixed(3)+" = MI(KLF1;HBB). The two co-regulators are indistinguishable to pairwise MI; ARACNE-DPI would prune one true edge.",
+        metrics:{mi:miGK.toFixed(3)+" bits", uniqueInfo:"—", pidcScore:"—", redundancy:"—"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: unique-info  — decompose MI(GATA1;HBB) under ONE context gene
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="unique-info"){
+      const ctx=CONTEXTS[ctxIdx];
+      const imin=mi*ctx.redund*(1-(alpha*0.20));
+      const ui=Math.max(0,mi-imin);
+      const ctxCol=new T.Color(api.col(ctx.accent));
+
+      // a stacked vertical bar of MI = redundant (bottom) + unique (top)
+      const x0=-2.4;
+      const yScale=4.4;
+      const redH=imin*yScale, uniH=ui*yScale;
+      const W=1.7;
+      const redBar=new T.Mesh(new T.BoxGeometry(W,Math.max(0.02,redH),W),
+        new T.MeshStandardMaterial({color:RO,emissive:RO.clone().multiplyScalar(0.5),emissiveIntensity:0.45,roughness:0.4,transparent:true,opacity:0.92}));
+      redBar.position.set(x0,redH/2,0); gBars.add(redBar);
+      api.pick(redBar,{part:{kind:"redundant",val:imin}});
+      const uniBar=new T.Mesh(new T.BoxGeometry(W,Math.max(0.02,uniH),W),
+        new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.35}));
+      uniBar.position.set(x0,redH+uniH/2,0); gBars.add(uniBar);
+      api.pick(uniBar,{part:{kind:"unique",val:ui}});
+
+      L("redundant","#fb7185",1.15,x0,Math.max(0.4,redH/2),W*0.9);
+      L("Imin "+imin.toFixed(3),"#fb7185",1.05,x0,Math.max(0.18,redH-0.0)-0.0,-W);
+      L("unique","#4dd7ff",1.2,x0,redH+uniH/2,W*0.9);
+      L("UI "+ui.toFixed(3),"#4dd7ff",1.1,x0,redH+uniH+0.45,0);
+      L("MI "+mi.toFixed(3),"#fbbf24",1.25,x0,mi*yScale+1.0,0);
+
+      // reference MI bar (total) next to the stack
+      const xRef=0.4;
+      const refBar=new T.Mesh(new T.BoxGeometry(W*0.9,Math.max(0.02,mi*yScale),W*0.9),
+        new T.MeshStandardMaterial({color:AM,emissive:AM.clone().multiplyScalar(0.3),emissiveIntensity:0.3,roughness:0.5,transparent:true,opacity:0.5}));
+      refBar.position.set(xRef,mi*yScale/2,0); gBars.add(refBar);
+      L("MI(GATA1;HBB)","#fbbf24",1.1,xRef,-0.55,0);
+
+      // context gene node feeding the redundancy
+      const ctxNode=new T.Mesh(new T.SphereGeometry(0.5,18,14),
+        new T.MeshStandardMaterial({color:ctxCol,emissive:ctxCol.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+      ctxNode.position.set(3.6,1.4,0); gGraph.add(ctxNode);
+      api.pick(ctxNode,{context:{name:ctx.name,redund:ctx.redund}});
+      L("context "+ctx.name,api.col(ctx.accent),1.35,3.6,2.5,0);
+      l(ctx.note,"#8a99ad",0.40,3.6,0.55,0);
+      // arrow context → redundant block
+      const arr=new T.Mesh(new T.ConeGeometry(0.14,0.4,8),new T.MeshBasicMaterial({color:ctxCol}));
+      arr.position.set(x0+0.95,redH*0.5,0); arr.rotation.z=Math.PI/2; gGraph.add(arr);
+
+      l("UI = max(0, MI − Imin) — what GATA1 says about HBB that "+ctx.name+" cannot","#8a99ad",0.42,0,-1.6,0);
+
+      sceneSnap={mode,bins,alpha:+alpha.toFixed(2),context:ctxIdx,nContexts:nCtx,
+        mi:+mi.toFixed(3),uniqueInfo:+ui.toFixed(3),redundancy:+imin.toFixed(3),
+        pidcScore:null,contextRedundFrac:+ctx.redund.toFixed(2)};
+
+      return {
+        badge:"Unique info · context "+ctx.name+" · UI="+ui.toFixed(3)+" bits",
+        formula:"UI(GATA1;HBB | "+ctx.name+") = MI − Imin = "+mi.toFixed(3)+" − "+imin.toFixed(3)+" = "+ui.toFixed(3)+" bits",
+        insight:(ctx.name==="KLF1"
+          ? "KLF1 has an IDENTICAL information profile about HBB (same binned pattern), so every bit GATA1 carries is redundant: Imin = MI and UI = 0. Looking at this one context alone, GATA1 looks like it adds nothing — the trap that pairwise methods fall into."
+          : "Context "+ctx.name+" explains only "+(ctx.redund*100).toFixed(0)+"% of GATA1's information about HBB (Imin = "+imin.toFixed(3)+"). The remaining "+ui.toFixed(3)+" bits are UNIQUE to GATA1 — evidence for a direct GATA1→HBB edge that this context cannot account for.")
+          +" Imin redundancy = Σ_c p(c)·min(I_spec(GATA1;c), I_spec("+ctx.name+";c)).",
+        state:"MI="+mi.toFixed(3)+" → redundant Imin="+imin.toFixed(3)+" (rose) + unique UI="+ui.toFixed(3)+" (cyan). Context "+ctx.name+" redundancy fraction "+(ctx.redund*100).toFixed(0)+"%.",
+        metrics:{mi:mi.toFixed(3)+" bits", uniqueInfo:ui.toFixed(3)+" bits", pidcScore:"—", redundancy:imin.toFixed(3)+" bits"},
+        focus:{center:[0,2,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: pidc-average  — CD = average UI over context genes; edge survives
+    // ════════════════════════════════════════════════════════════════
+    {
+      const k=Math.max(1,Math.min(CONTEXTS.length,nCtx));
+      const cd=pidcScore(mi,bins,alpha,k);
+
+      // one UI bar per context gene, plus the averaged CD bar
+      const xs=[-4.0,-2.2,-0.4,1.4];
+      const yScale=4.4;
+      let sumUI=0;
+      for(let i=0;i<CONTEXTS.length;i++){
+        const c=CONTEXTS[i];
+        const active=i<k;
+        const ui=uniqueInfo(mi,c.redund,bins,alpha);
+        if(active) sumUI+=ui;
+        const col=new T.Color(api.col(c.accent));
+        const h=Math.max(0.02,ui*yScale);
+        const bar=new T.Mesh(new T.BoxGeometry(1.25,h,1.25),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(active?0.7:0.15),
+            emissiveIntensity:active?0.65:0.15,roughness:0.4,transparent:!active,opacity:active?1.0:0.32}));
+        bar.position.set(xs[i],h/2,0); gBars.add(bar);
+        api.pick(bar,{ctxbar:{name:c.name,ui,active}});
+        L(c.name,active?api.col(c.accent):"#54667c",1.05,xs[i],h+0.45,0);
+        l("UI "+ui.toFixed(2),active?api.col(c.accent):"#54667c",0.36,xs[i],0.05,0);
+      }
+
+      // averaged PIDC score bar (violet, set apart)
+      const xCD=3.8;
+      const hCD=Math.max(0.02,cd*yScale);
+      const cdBar=new T.Mesh(new T.BoxGeometry(1.7,hCD,1.7),
+        new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.85),emissiveIntensity:0.8,roughness:0.3}));
+      cdBar.position.set(xCD,hCD/2,0); gBars.add(cdBar);
+      api.pick(cdBar,{cd:{val:cd,k}});
+      L("CD(GATA1;HBB)","#a78bfa",1.3,xCD,hCD+0.95,0);
+      L(cd.toFixed(3)+" bits","#a78bfa",1.45,xCD,hCD+0.45,0);
+
+      // averaging bracket line from contexts to CD
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-4.0,-0.35,0),new T.Vector3(1.4,-0.35,0)]),
+        new T.LineBasicMaterial({color:SL.getHex()})));
+      const aArr=new T.Mesh(new T.ConeGeometry(0.16,0.44,8),new T.MeshBasicMaterial({color:VI.getHex()}));
+      aArr.position.set(2.6,-0.35,0); aArr.rotation.z=-Math.PI/2; gBars.add(aArr);
+      l("average over "+k+" contexts","#8a99ad",0.40,-1.3,-0.85,0);
+
+      // retention verdict — CD>0 → both co-regulator edges retained
+      const retained=cd>0.05;
+      L(retained?"edge RETAINED (CD>0)":"edge lost","#34d399",1.2,xCD,-0.9,0);
+
+      sceneSnap={mode,bins,alpha:+alpha.toFixed(2),context:ctxIdx,nContexts:k,
+        mi:+mi.toFixed(3),pidcScore:+cd.toFixed(3),uniqueInfo:+(sumUI/k).toFixed(3),
+        redundancy:null,edgesRetained:retained?2:0};
+
+      return {
+        badge:"PIDC score · CD(GATA1;HBB)="+cd.toFixed(3)+" bits · "+k+" contexts",
+        formula:"CD(A;C) = (1/n) Σ_B UI(A;C | B) = "+cd.toFixed(3)+" bits",
+        insight:"Any single context can give UI=0 (KLF1) or UI=MI (CD3E). PIDC averages UI over ALL context genes: the KLF1 zero is outvoted by the many contexts where GATA1's information is unique. CD(GATA1;HBB) = "+cd.toFixed(3)+" bits stays positive, so BOTH co-regulator edges GATA1→HBB and KLF1→HBB are retained — exactly the convergent-regulation case ARACNE-DPI would break.",
+        state:"Averaging UI over "+k+" contexts → CD = "+cd.toFixed(3)+" bits. "+(retained?"Positive: both GATA1→HBB and KLF1→HBB survive.":"Below retention floor."),
+        metrics:{mi:mi.toFixed(3)+" bits", uniqueInfo:(sumUI/k).toFixed(3)+" bits", pidcScore:cd.toFixed(3)+" bits", redundancy:"avg"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+  }
+
+  // ── MathLab.create ───────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f05",
+    kind:"pidc-information-theoretic-grn",
+    eyebrow:"Block F · GRN Inference",
+    title:"F05 · PIDC and information-theoretic single-cell GRN",
+    subtitle:"From symmetric pairwise MI to unique information to the context-averaged PIDC score, on the GATA1/KLF1 → HBB convergent-regulation example (6 cells, B=3 bins).",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, an MI/UI bar, or a context node.",
+    modes:[
+      {value:"pairwise-mi",  label:"Pairwise MI (ARACNE / symmetric)"},
+      {value:"unique-info",  label:"Unique info (one context gene)"},
+      {value:"pidc-average", label:"PIDC score (average over contexts)"}
+    ],
+    params:[
+      {key:"bins",     label:"discretization bins B",min:2,max:5,step:1,value:3,
+       fmt:v=>"B="+Math.round(v)},
+      {key:"alpha",    label:"Laplace smoothing α",min:0,max:0.5,step:0.05,value:0.10,
+       fmt:v=>v.toFixed(2)},
+      {key:"context",  label:"context gene (unique-info)",min:0,max:3,step:1,value:0,
+       fmt:v=>["KLF1","RUNX1","CD3E","CDKN1A"][Math.round(v)],modes:["unique-info"]},
+      {key:"nContexts",label:"# contexts averaged",min:1,max:4,step:1,value:4,
+       fmt:v=>Math.round(v).toString(),modes:["pidc-average"]}
+    ],
+    metrics:[
+      {key:"mi",         label:"MI(GATA1;HBB)",accent:"amber"},
+      {key:"uniqueInfo", label:"Unique info UI",accent:"cyan"},
+      {key:"pidcScore",  label:"PIDC score CD",accent:"violet"},
+      {key:"redundancy", label:"Imin redundancy",accent:"rose"}
+    ],
+    layers:[
+      {group:"graph",  label:"Genes / context"},
+      {group:"bars",   label:"MI / UI / CD bars"},
+      {group:"panel",  label:"Decomposition"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Context = KLF1 (UI→0)",
+      on:api=>{api.setParam("context",0);}
+    },
+    secondary:{
+      label:"Context = CD3E (UI→MI)",
+      on:api=>{api.setParam("context",2);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#fbbf24">amber</span>=mutual information · <span style="color:#4dd7ff">cyan</span>=unique info (retained) · <span style="color:#fb7185">rose</span>=redundant / Imin · <span style="color:#a78bfa">violet</span>=PIDC score CD · <span style="color:#34d399">green</span>=target HBB.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="pairwise-mi") api.frame([0,0,0],12);
+      else api.frame([0,2,0],s.mode==="pidc-average"?13:12);
+    },
+    onSelect(api,d){
+      if(d.gene)    api.setSelected(d.gene.name+" · "+d.gene.role);
+      if(d.part)    api.setSelected(d.part.kind+" = "+d.part.val.toFixed(3)+" bits");
+      if(d.context) api.setSelected("context "+d.context.name+" · redundancy "+(d.context.redund*100).toFixed(0)+"%");
+      if(d.ctxbar)  api.setSelected("UI | "+d.ctxbar.name+" = "+d.ctxbar.ui.toFixed(3)+" bits"+(d.ctxbar.active?"":" (excluded)"));
+      if(d.cd)      api.setSelected("CD(GATA1;HBB) = "+d.cd.val.toFixed(3)+" bits over "+d.cd.k+" contexts");
+    },
+    build,
+    snapshot(s){
+      const bins=Math.round(s.bins);
+      const alpha=s.alpha;
+      const mi=pairwiseMI(bins,alpha);
+      const ctxIdx=Math.round(s.context);
+      const nCtx=Math.round(s.nContexts);
+      const ui=uniqueInfo(mi,CONTEXTS[ctxIdx].redund,bins,alpha);
+      const cd=pidcScore(mi,bins,alpha,nCtx);
+      return {
+        mode:s.mode,
+        bins,
+        alpha:+alpha.toFixed(2),
+        context:ctxIdx,
+        nContexts:nCtx,
+        mi:+mi.toFixed(3),
+        uniqueInfo:+ui.toFixed(3),
+        pidcScore:+cd.toFixed(3),
+        contextRedundFrac:+CONTEXTS[ctxIdx].redund.toFixed(2),
+        edgeRetained:cd>0.05
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

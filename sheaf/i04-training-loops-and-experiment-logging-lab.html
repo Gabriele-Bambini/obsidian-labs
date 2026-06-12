@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I04 · Training loops and experiment logging</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS — note Section 5 worked example (50-gene DREAM4-style GRN) ──────
+  // N=50 genes, 10 TFs, d=20 conditions, ~70 regulatory edges.
+  // run_training: val_ratio=0.15, test_ratio=0.15 -> 70/15/15 edge split.
+  // AUROC diagnostic bands (Section 5): <0.6 random · 0.6-0.7 marginal ·
+  //   0.7-0.85 healthy · >0.85 suspect leakage.
+  const F={
+    N:50, N_TF:10, d:20, E:70,
+    valRatio:0.15, testRatio:0.15,
+    bandRandom:0.60, bandMarginal:0.70, bandLeak:0.85,
+    peakAuroc:0.81, patience:40
+  };
+  // edge split counts derived from F.E and the ratios
+  const E_TEST=Math.round(F.E*F.testRatio);          // 11
+  const E_VAL =Math.round(F.E*F.valRatio);           // 11
+  const E_TRAIN=F.E-E_VAL-E_TEST;                    // 48
+
+  let sceneSnap={};
+
+  // ── deterministic learning-curve model ──────────────────────────────────
+  // honest run: rises, peaks near F.peakAuroc, early-stops on patience.
+  // leaky run: shoots high fast (val edges visible in message passing).
+  // epoch e in [1..maxE], returns AUROC in [0,1].
+  function auroc(epoch,maxE,leaky){
+    const t=Math.max(0,Math.min(1,epoch/maxE));
+    if(leaky){
+      // leakage: near-train AUROC, climbs to ~0.96 quickly, no real plateau
+      return Math.max(0.5,Math.min(0.97,0.62+0.40*(1-Math.exp(-4.5*t))));
+    }
+    // honest: sigmoid rise to peak ~0.81, then gentle overfit dip
+    const rise=0.50+(F.peakAuroc-0.50)*(1-Math.exp(-3.2*t));
+    const dip=0.06*Math.max(0,t-0.62);          // mild late overfit
+    return Math.max(0.45,Math.min(0.95,rise-dip));
+  }
+  // sample the curve at fixed deterministic epochs
+  function curveSamples(maxE,leaky){
+    const pts=[];const STEPS=18;
+    for(let k=0;k<STEPS;k++){
+      const e=Math.round(1+k*((maxE-1)/(STEPS-1)));
+      pts.push({e,a:auroc(e,maxE,leaky)});
+    }
+    return pts;
+  }
+  // early-stopping epoch: best AUROC then `patience` epochs of no improvement
+  function bestEpoch(pts){
+    let bi=0;for(let i=1;i<pts.length;i++) if(pts[i].a>pts[bi].a) bi=i; return bi;
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const valEdges =Math.round(s.valEdges);     // 4..30 evaluation edges held out
+    const maxEpochs=Math.round(s.maxEpochs);    // 50..500
+    const batch    =Math.round(s.batchPct);     // 5..100 % of nodes per step
+    const leaky    =Math.round(s.leak)===1;     // 0 honest · 1 leaky split
+
+    const gGraph =api.group("graph");
+    const gSplit =api.group("split");
+    const gCurve =api.group("curve");
+    const gLog   =api.group("log");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addS(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // train / message-passing
+    const GR=new T.Color("#34d399");   // val
+    const AM=new T.Color("#fbbf24");    // test / scratch
+    const VI=new T.Color("#a78bfa");    // logging / gap
+    const RO=new T.Color("#fb7185");    // leakage / danger
+    const SL=new T.Color("#54667c");
+
+    // 50-gene GRN geometry (10 TFs ring inner, 40 targets outer) — deterministic
+    function genePositions(){
+      const pos=[];
+      for(let i=0;i<F.N;i++){
+        const isTF=i<F.N_TF;
+        const ring=isTF?1.9:3.9;
+        const cnt=isTF?F.N_TF:(F.N-F.N_TF);
+        const idx=isTF?i:(i-F.N_TF);
+        const ang=idx/cnt*Math.PI*2 + (isTF?0:0.18);
+        pos.push({x:Math.cos(ang)*ring, y:0, z:Math.sin(ang)*ring, isTF});
+      }
+      return pos;
+    }
+    // deterministic edge list: each TF -> 5..8 targets (Section 5 generator)
+    function geneEdges(){
+      const es=[];
+      for(let tf=0;tf<F.N_TF;tf++){
+        const nT=5+Math.floor(prand(tf*9+3)*4); // 5..8
+        for(let k=0;k<nT;k++){
+          const tgt=F.N_TF+((tf*4+k)%(F.N-F.N_TF));
+          es.push([tf,tgt]);
+        }
+      }
+      return es.slice(0,F.E);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: split  — the leakage decision (Section 3 / Misconception 1)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="split"){
+      const pos=genePositions();
+      const edges=geneEdges();
+      // partition E edges into TRAIN(msg) / VAL / TEST by deterministic hash.
+      // valEdges slider controls how many edges are held out for val (+ equal test).
+      const held=Math.min(edges.length-4, valEdges*2); // val + test
+      const order=edges.map((e,i)=>({e,i,h:prand(i*13+5)})).sort((a,b)=>a.h-b.h);
+      const nVal=Math.floor(held/2), nTest=held-nVal;
+      const role=new Array(edges.length).fill(0); // 0 train,1 val,2 test
+      for(let k=0;k<order.length;k++){
+        if(k<nVal) role[order[k].i]=1; else if(k<nVal+nTest) role[order[k].i]=2;
+      }
+      // nodes
+      pos.forEach((p,i)=>{
+        const c=p.isTF?CY:new T.Color("#9fb2c6");
+        const m=new T.Mesh(new T.SphereGeometry(p.isTF?0.26:0.17,14,10),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.5),emissiveIntensity:p.isTF?0.6:0.32,roughness:0.45}));
+        m.position.set(p.x,p.y,p.z); gGraph.add(m);
+        api.pick(m,{node:{id:i,tf:p.isTF}});
+      });
+      // edges colored by role; VAL/TEST drawn dashed + lifted = "withheld"
+      let nTrainMsg=0;
+      edges.forEach((e,i)=>{
+        const a=pos[e[0]], b=pos[e[1]];
+        const r=role[i];
+        // in a LEAKY split, val/test edges stay in the message-passing graph (flat, solid)
+        const inMsg = (r===0) || leaky;
+        if(r===0) nTrainMsg++;
+        const lift = inMsg?0:0.9;        // withheld edges float above the graph
+        const col = r===0?CY:(r===1?GR:AM);
+        const p0=new T.Vector3(a.x,a.y,a.z);
+        const p1=new T.Vector3(b.x,b.y+lift,b.z);
+        const mid=new T.Vector3((a.x+b.x)/2,(a.y+b.y)/2+lift*1.25,(a.z+b.z)/2);
+        const curve=new T.QuadraticBezierCurve3(p0,mid,p1);
+        const pts=curve.getPoints(10);
+        const line=new T.Line(new T.BufferGeometry().setFromPoints(pts),
+          new T.LineBasicMaterial({color:(leaky&&r!==0?RO:col).getHex(),transparent:true,opacity:r===0?0.7:0.95}));
+        (r===0?gGraph:gSplit).add(line);
+        if(r!==0){
+          const dot=new T.Mesh(new T.SphereGeometry(0.12,8,8),
+            new T.MeshStandardMaterial({color:leaky?RO:col,emissive:leaky?RO:col,emissiveIntensity:0.8,roughness:0.3}));
+          dot.position.copy(p1); gSplit.add(dot);
+          api.pick(dot,{edge:{role:r===1?"val":"test",leaky}});
+        }
+      });
+      addLbl("message-passing graph = TRAIN edges","#4dd7ff",1.25,0,-1.5,0);
+      addLbl(leaky?"LEAKAGE: val/test in message passing":"val/test WITHHELD (lifted)",leaky?"#fb7185":"#34d399",1.3,0,3.2,0);
+      addS("10 TFs (inner) · 40 targets (outer)","#7f8ea3",0.42,0,-2.2,0);
+
+      const leakRisk=leaky?1.0:0.0;
+      sceneSnap={mode,valEdges:nVal,testEdges:nTest,trainMsgEdges:nTrainMsg,leaky:leaky?1:0,leakRisk,maxEpochs,batch,peakAuroc:null};
+      return {
+        badge:"Edge split · "+nVal+" val / "+nTest+" test "+(leaky?"· LEAKING":"· withheld"),
+        formula:"message_passing_edge_index = TRAIN edges only  ·  score VAL/TEST after embedding",
+        insight:leaky
+          ? "Leaky split: validation and test edges (rose) stay inside the GNN's input graph. Each held-out endpoint already \"knows\" its neighbour during embedding, so the predictor inflates those scores without learning regulation — AUROC climbs past 0.85 for the wrong reason."
+          : "Honest split: only the "+nTrainMsg+" TRAIN edges (cyan) carry messages. The "+nVal+" val (green) and "+nTest+" test (amber) edges float above the graph — withheld from message passing, scored only after the encoder produces embeddings. This is what RandomLinkSplit enforces.",
+        state:(leaky?"Val/test edges ARE in the message graph → embeddings see the answers. ":"Val/test edges excluded from message passing → no endpoint leakage. ")+"Train(msg) "+nTrainMsg+" · val "+nVal+" · test "+nTest+".",
+        metrics:{splitRatio:nTrainMsg+"/"+nVal+"/"+nTest,leakRisk:leaky?"HIGH":"none",peakAuroc:"—",bestEpoch:"—"},
+        focus:{center:[0,0.6,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: batch — full-batch vs mini-batch NeighborLoader (Section 4/9)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="batch"){
+      const pos=genePositions();
+      const edges=geneEdges();
+      // batch% selects a seed set; NeighborLoader expands [10,5] 2-hop neighbours.
+      const full = batch>=100;
+      const nSeed=Math.max(1,Math.round(F.N*batch/100));
+      // deterministic seed-node selection by hash rank
+      const ranked=pos.map((p,i)=>({i,h:prand(i*7+11)})).sort((a,b)=>a.h-b.h);
+      const isSeed=new Array(F.N).fill(false);
+      for(let k=0;k<nSeed;k++) isSeed[ranked[k].i]=true;
+      // hop-1 / hop-2 neighbourhood of seeds (sampled subgraph)
+      const adj=Array.from({length:F.N},()=>[]);
+      edges.forEach(e=>{adj[e[0]].push(e[1]);adj[e[1]].push(e[0]);});
+      const inBatch=new Array(F.N).fill(false);
+      for(let i=0;i<F.N;i++) if(isSeed[i]) inBatch[i]=true;
+      if(!full){
+        // hop 1: up to 10 neighbours, hop 2: up to 5
+        const h1=new Set();
+        for(let i=0;i<F.N;i++) if(isSeed[i]){ adj[i].slice(0,10).forEach(j=>{inBatch[j]=true;h1.add(j);}); }
+        h1.forEach(j=>{ adj[j].slice(0,5).forEach(k=>{inBatch[k]=true;}); });
+      }else{ for(let i=0;i<F.N;i++) inBatch[i]=true; }
+      let nNodesInBatch=0; for(let i=0;i<F.N;i++) if(inBatch[i]) nNodesInBatch++;
+
+      pos.forEach((p,i)=>{
+        let c,emi,r2;
+        if(isSeed[i]){c=AM;emi=0.85;r2=p.isTF?0.27:0.2;}
+        else if(inBatch[i]){c=CY;emi=0.45;r2=p.isTF?0.24:0.16;}
+        else{c=new T.Color("#1f2d40");emi=0.1;r2=0.12;}
+        const m=new T.Mesh(new T.SphereGeometry(r2,14,10),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(emi),emissiveIntensity:emi,roughness:0.45}));
+        m.position.set(p.x,p.y,p.z); gGraph.add(m);
+        api.pick(m,{node:{id:i,seed:isSeed[i],inBatch:inBatch[i]}});
+      });
+      edges.forEach(e=>{
+        const a=pos[e[0]], b=pos[e[1]];
+        const active=inBatch[e[0]]&&inBatch[e[1]];
+        const line=new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(a.x,a.y,a.z),new T.Vector3(b.x,b.y,b.z)]),
+          new T.LineBasicMaterial({color:active?0x2e7bb0:0x172534,transparent:true,opacity:active?0.7:0.25}));
+        gGraph.add(line);
+      });
+      // GPU memory bar: full-batch O(N·d) vs mini-batch O(batch·k^L·d)
+      const memFull=F.N*F.d;                 // 1000
+      const memMini=nNodesInBatch*F.d;       // subgraph nodes · d
+      const memFrac=memMini/memFull;
+      [["full O(N·d)",memFull/memFull,CY,-2.2],["this batch",memFrac,AM,2.2]].forEach(b=>{
+        const h=0.2+b[1]*2.8;
+        const bar=new T.Mesh(new T.BoxGeometry(1.1,h,1.1),
+          new T.MeshStandardMaterial({color:b[2],emissive:b[2].clone().multiplyScalar(0.55),emissiveIntensity:0.5,roughness:0.4}));
+        bar.position.set(b[3],h/2,-4.6); gCurve.add(bar);
+        addLbl((b[1]*100).toFixed(0)+"%",b[2].getStyle(),1.3,b[3],h+0.4,-4.6);
+        addS(b[0],b[2].getStyle(),0.4,b[3],0.04,-4.6);
+      });
+      addLbl(full?"FULL-BATCH · 1 step / epoch":"MINI-BATCH · NeighborLoader [10,5]",full?"#4dd7ff":"#fbbf24",1.3,0,3.0,0);
+      addS("amber = seed nodes · cyan = sampled k-hop","#7f8ea3",0.42,0,-2.2,0);
+
+      const memPct=Math.round(memFrac*100);
+      sceneSnap={mode,batch,seedNodes:nSeed,batchNodes:nNodesInBatch,memPct,full:full?1:0,leaky:leaky?1:0,valEdges:E_VAL,maxEpochs,peakAuroc:null};
+      return {
+        badge:(full?"Full-batch":"Mini-batch")+" · "+nSeed+" seeds → "+nNodesInBatch+" nodes",
+        formula:full?"mem = O(N·d) = "+F.N+"·"+F.d+" = "+memFull:"mem = O(batch·k^L·d) ≈ "+nNodesInBatch+"·"+F.d+" = "+memMini,
+        insight:full
+          ? "Full-batch (N<10,000): one gradient step per whole graph. Every node sees its complete 2-hop neighbourhood each pass — exact, simple, fits in memory for DREAM4-scale 50-gene GRNs."
+          : "Mini-batch via NeighborLoader: "+nSeed+" seed nodes (amber) expand to their sampled [10,5] 2-hop neighbourhoods ("+nNodesInBatch+" nodes total). This is a stochastic approximation of full-batch — different random subsets each epoch act as regularisation but add gradient variance. Needed when N>10,000.",
+        state:(full?"Full-batch: ":"Mini-batch: ")+nNodesInBatch+"/"+F.N+" nodes active · GPU mem "+memPct+"% of full · "+(full?"1 step/epoch":nSeed+" seeds/step")+".",
+        metrics:{splitRatio:E_TRAIN+"/"+E_VAL+"/"+E_TEST,leakRisk:"—",peakAuroc:"—",bestEpoch:full?"full":memPct+"% mem"},
+        focus:{center:[0,0.4,-1.4],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: curve — learning curve, AUROC bands, early stopping (Section 5)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="curve"){
+      const pts=curveSamples(maxEpochs,leaky);
+      const bi=bestEpoch(pts);
+      const best=pts[bi];
+      const xS=0.46, yS=4.4, xOff=-4.0, yOff=-1.6;
+      const X=i=>xOff+i*xS, Y=a=>yOff+a*yS;
+      // axes
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff+pts.length*xS,yOff,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff,yOff+yS,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      // AUROC diagnostic band planes (Section 5): random / marginal / healthy / leak
+      const bands=[[0.0,F.bandRandom,"#243244","random"],[F.bandRandom,F.bandMarginal,"#2a3550","marginal"],[F.bandMarginal,F.bandLeak,"#1e3a30","healthy"],[F.bandLeak,1.0,"#3a2330","leak?"]];
+      bands.forEach(b=>{
+        const y0=Y(b[0]), y1=Y(b[1]);
+        const plane=new T.Mesh(new T.PlaneGeometry(pts.length*xS,y1-y0),
+          new T.MeshBasicMaterial({color:new T.Color(b[2]).getHex(),transparent:true,opacity:0.5,side:T.DoubleSide}));
+        plane.position.set(xOff+pts.length*xS/2,(y0+y1)/2,-0.06);
+        gCurve.add(plane);
+        addS(b[3],"#5d6e82",0.36,xOff+pts.length*xS+0.55,(y0+y1)/2,0);
+      });
+      // curve line + markers
+      const lpts=pts.map((p,i)=>new T.Vector3(X(i),Y(p.a),0));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(lpts),new T.LineBasicMaterial({color:(leaky?RO:CY).getHex()})));
+      pts.forEach((p,i)=>{
+        const isBest=(i===bi);
+        const m=new T.Mesh(new T.SphereGeometry(isBest?0.2:0.1,12,10),
+          new T.MeshStandardMaterial({color:isBest?VI:(leaky?RO:CY),emissive:isBest?VI:(leaky?RO:CY),emissiveIntensity:isBest?0.95:0.6,roughness:0.3}));
+        m.position.set(X(i),Y(p.a),0.1); gCurve.add(m);
+        api.pick(m,{pt:{epoch:p.e,auroc:p.a,best:isBest}});
+      });
+      // early-stop marker: best + patience window
+      const stopI=Math.min(pts.length-1,bi+Math.max(1,Math.round(F.patience/((maxEpochs-1)/(pts.length-1)))));
+      const stopX=X(stopI);
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(stopX,yOff,0.05),new T.Vector3(stopX,yOff+yS,0.05)]),new T.LineBasicMaterial({color:AM.getHex(),transparent:true,opacity:0.8})));
+      addLbl("early stop","#fbbf24",1.0,stopX,yOff+yS+0.35,0);
+      // best marker callout
+      addLbl("peak "+(best.a*100).toFixed(0)+"% @ ep"+best.e,leaky?"#fb7185":"#a78bfa",1.25,X(bi),Y(best.a)+0.6,0);
+      addS("AUROC","#8a99ad",0.42,xOff-0.55,yOff+yS*0.5,0);
+      addS("epochs","#8a99ad",0.42,xOff+pts.length*xS*0.5,yOff-0.4,0);
+
+      const diag=best.a>F.bandLeak?"leak?":(best.a>F.bandMarginal?"healthy":(best.a>F.bandRandom?"marginal":"random"));
+      sceneSnap={mode,maxEpochs,leaky:leaky?1:0,peakAuroc:+best.a.toFixed(3),bestEpoch:best.e,diagnostic:diag,valEdges:E_VAL,batch};
+      return {
+        badge:"Learning curve · peak "+(best.a*100).toFixed(0)+"% @ epoch "+best.e+" · "+diag,
+        formula:"early stop: if val_AUROC > best → save; else patience−=1 (patience="+F.patience+")",
+        insight:leaky
+          ? "Leaky run: val AUROC rockets past 0.85 into the rose band almost immediately — the model is replaying edges it can already see. Section 5's diagnostic flags AUROC>0.85: \"check for data leakage!\""
+          : "Honest run: val AUROC rises into the healthy 0.70–0.85 band and peaks near "+(F.peakAuroc*100).toFixed(0)+"% (the note's DREAM4 result). Early stopping saves the best checkpoint, then waits "+F.patience+" epochs; if no improvement it halts — preventing late overfit (the gentle dip after the peak).",
+        state:"Peak val AUROC "+(best.a*100).toFixed(0)+"% at epoch "+best.e+" → band: "+diag+". "+(diag==="leak?"?"AUROC>0.85 ⇒ audit the split.":diag==="random"?"≈0.5 ⇒ model not learning.":"Healthy signal; checkpoint saved."),
+        metrics:{splitRatio:E_TRAIN+"/"+E_VAL+"/"+E_TEST,leakRisk:leaky?"HIGH":"none",peakAuroc:(best.a*100).toFixed(0)+"%",bestEpoch:"ep "+best.e},
+        focus:{center:[0,0.6,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: log — reproducibility manifest (Section 5 / Misconception 5)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="log"){
+      // 7 artefacts that MUST be logged for reproducibility (Section 8 Q6)
+      const items=[
+        {k:"seed = 42",c:CY},
+        {k:"graph snapshot + hash",c:GR},
+        {k:"train/val/test indices",c:AM},
+        {k:"model arch + weights .pt",c:VI},
+        {k:"optimizer + LR + epochs",c:CY},
+        {k:"AUROC eval script",c:GR},
+        {k:"library versions",c:AM}
+      ];
+      // logged fraction controlled by valEdges slider repurposed? use batchPct as "logged %"
+      const loggedN=Math.max(1,Math.min(items.length,Math.round(items.length*batch/100)));
+      // central W&B run sphere
+      const run=new T.Mesh(new T.SphereGeometry(0.8,24,18),
+        new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.6,roughness:0.3}));
+      gLog.add(run); addLbl("W&B run","#a78bfa",1.4,0,1.25,0);
+      // ring of 7 artefacts; logged ones glow + connect, missing ones grey & detached
+      items.forEach((it,i)=>{
+        const ang=i/items.length*Math.PI*2 - Math.PI/2;
+        const R=3.6, x=Math.cos(ang)*R, z=Math.sin(ang)*R;
+        const logged=i<loggedN;
+        const c=logged?it.c:new T.Color("#26384e");
+        const box=new T.Mesh(new T.BoxGeometry(0.7,0.7,0.7),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(logged?0.7:0.15),emissiveIntensity:logged?0.6:0.18,roughness:0.4}));
+        box.position.set(x,0,z); gLog.add(box);
+        api.pick(box,{art:{name:it.k,logged}});
+        if(logged){
+          gLog.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0,0,0),new T.Vector3(x,0,z)]),
+            new T.LineBasicMaterial({color:it.c.getHex(),transparent:true,opacity:0.6})));
+        }else{
+          // broken link = irreproducible
+          const cone=new T.Mesh(new T.ConeGeometry(0.12,0.34,8),new T.MeshBasicMaterial({color:RO.getHex()}));
+          cone.position.set(x*0.6,0.0,z*0.6); gLog.add(cone);
+        }
+        addS(it.k,(logged?it.c:new T.Color("#5a6c80")).getStyle(),0.36,x*1.36,0.0,z*1.36);
+      });
+      const repro=loggedN>=items.length;
+      addLbl(repro?"REPRODUCIBLE":"missing "+(items.length-loggedN)+" → irreproducible",repro?"#34d399":"#fb7185",1.3,0,-3.4,0);
+
+      const reproPct=Math.round(loggedN/items.length*100);
+      sceneSnap={mode,loggedArtefacts:loggedN,totalArtefacts:items.length,reproPct,reproducible:repro?1:0,leaky:leaky?1:0,valEdges:E_VAL,maxEpochs,peakAuroc:repro?F.peakAuroc:null};
+      return {
+        badge:"Experiment log · "+loggedN+"/"+items.length+" artefacts "+(repro?"· reproducible":"· INCOMPLETE"),
+        formula:"reproducible ⟺ {seed, snapshot+hash, split indices, weights, optimizer, eval script, versions}",
+        insight:repro
+          ? "All 7 artefacts logged: an independent lab can rebuild the exact result from your seed, graph snapshot hash (from I03), the precise train/val/test edge indices, the model weights, optimizer state, the AUROC script, and library versions. W&B artifact tracking bundles these per run."
+          : "Logging the final AUROC alone is NOT reproducible (Misconception 5). With "+(items.length-loggedN)+" artefact(s) missing (rose cones = broken links), an independent lab cannot rebuild the run — the result is a one-time event, not a finding.",
+        state:loggedN+"/"+items.length+" artefacts logged ("+reproPct+"%). "+(repro?"Run is reproducible from the W&B manifest.":"Missing pieces break the reproduction chain."),
+        metrics:{splitRatio:E_TRAIN+"/"+E_VAL+"/"+E_TEST,leakRisk:repro?"none":"—",peakAuroc:repro?(F.peakAuroc*100).toFixed(0)+"%":"—",bestEpoch:reproPct+"% logged"},
+        focus:{center:[0,0,0],radius:11.5}
+      };
+    }
+
+    return {badge:"I04",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i04",
+    kind:"training-loops-logging",
+    eyebrow:"Block I · Implementation",
+    title:"I04 · Training loops and experiment logging",
+    subtitle:"A GRN training loop is a controlled experiment. Four views on the 50-gene DREAM4-style example: the leakage-safe edge split, full vs mini-batch, the learning curve with early stopping, and the reproducibility log.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, edge, curve point, or log artefact.",
+    modes:[
+      {value:"split", label:"Edge split (leakage)"},
+      {value:"batch", label:"Full-batch vs mini-batch"},
+      {value:"curve", label:"Learning curve + early stop"},
+      {value:"log",   label:"Experiment log (reproducibility)"}
+    ],
+    params:[
+      {key:"valEdges", label:"# held-out val edges",min:4,max:30,step:1,value:11,
+       fmt:v=>Math.round(v).toString(),modes:["split"]},
+      {key:"maxEpochs",label:"max epochs",min:50,max:500,step:10,value:300,
+       fmt:v=>Math.round(v).toString(),modes:["curve","split"]},
+      {key:"batchPct", label:"batch / logged (% of nodes·artefacts)",min:5,max:100,step:5,value:100,
+       fmt:v=>Math.round(v)+"%",modes:["batch","log"]},
+      {key:"leak",     label:"split (0=honest 1=leaky)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"honest":"leaky",modes:["split","curve"]}
+    ],
+    metrics:[
+      {key:"splitRatio",label:"train/val/test edges",accent:"cyan"},
+      {key:"leakRisk",  label:"leakage risk",accent:"rose"},
+      {key:"peakAuroc", label:"peak val AUROC",accent:"violet"},
+      {key:"bestEpoch", label:"best epoch / state",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph", label:"GRN graph"},
+      {group:"split", label:"Withheld edges"},
+      {group:"curve", label:"Curve / bars"},
+      {group:"log",   label:"Log manifest"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Honest split",
+      on:api=>{api.setParam("leak",0);}
+    },
+    secondary:{
+      label:"Force leakage",
+      on:api=>{api.setParam("leak",1);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:12.5},
+    hint:'<span style="color:#4dd7ff">cyan</span>=train / message-passing · <span style="color:#34d399">green</span>=val · <span style="color:#fbbf24">amber</span>=test / seed nodes · <span style="color:#a78bfa">violet</span>=best / W&B · <span style="color:#fb7185">rose</span>=leakage / missing log.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="batch") api.frame([0,0.4,-1.4],13);
+      else if(s.mode==="log") api.frame([0,0,0],11.5);
+      else api.frame([0,0.6,0],12);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected("Gene "+d.node.id+(d.node.tf?" · TF":" · target")+(d.node.seed?" · SEED":d.node.inBatch?" · in batch":""));
+      if(d.edge) api.setSelected(d.edge.role+" edge"+(d.edge.leaky?" · LEAKING into message passing":" · withheld"));
+      if(d.pt)   api.setSelected("epoch "+d.pt.epoch+" → AUROC "+(d.pt.auroc*100).toFixed(0)+"%"+(d.pt.best?" · BEST":""));
+      if(d.art)  api.setSelected(d.art.name+" · "+(d.art.logged?"logged":"MISSING"));
+    },
+    build,
+    snapshot(s){
+      const valEdges=Math.round(s.valEdges);
+      const maxEpochs=Math.round(s.maxEpochs);
+      const batch=Math.round(s.batchPct);
+      const leaky=Math.round(s.leak)===1;
+      const pts=curveSamples(maxEpochs,leaky);
+      const bi=bestEpoch(pts);
+      const peak=pts[bi].a;
+      return {
+        mode:s.mode,
+        valEdges,
+        maxEpochs,
+        batchPct:batch,
+        leaky:leaky?1:0,
+        trainEdges:E_TRAIN,
+        testEdges:E_TEST,
+        peakAuroc:+peak.toFixed(3),
+        bestEpoch:pts[bi].e,
+        leakageDetected:peak>F.bandLeak
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C04 · Gauge ideas, local frames, biological context</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG, no clock) ────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── 2×2 linear algebra in the plane (the lesson lives in R^2) ─────────────
+  function rot2(a){const c=Math.cos(a),s=Math.sin(a);return [[c,-s],[s,c]];}
+  function mul2(M,v){return [M[0][0]*v[0]+M[0][1]*v[1], M[1][0]*v[0]+M[1][1]*v[1]];}
+  function matmul2(A,B){return [
+    [A[0][0]*B[0][0]+A[0][1]*B[1][0], A[0][0]*B[0][1]+A[0][1]*B[1][1]],
+    [A[1][0]*B[0][0]+A[1][1]*B[1][0], A[1][0]*B[0][1]+A[1][1]*B[1][1]]];}
+  function transpose2(A){return [[A[0][0],A[1][0]],[A[0][1],A[1][1]]];} // rotation inverse = transpose
+  function sub2(a,b){return [a[0]-b[0],a[1]-b[1]];}
+  function norm2sq(v){return v[0]*v[0]+v[1]*v[1];}
+
+  // Worked example (Section 5): x_A=[1,0], x_B=[0,1], R_BA = rot(90°) = [[0,-1],[1,0]]
+  const X_A=[1,0], X_B=[0,1];
+  const HALF=Math.PI/2;
+
+  let sceneSnap={};
+
+  // ── draw a local 2D frame (e_x white, e_y dim) rotated by `ang` in the XZ plane
+  function drawFrame(api,gGroup,T,cx,cz,ang,len,exCol,eyCol){
+    // primary axis e_x
+    api.arrow([cx,0,cz],[cx+Math.cos(ang)*len,0,cz-Math.sin(ang)*len],{color:exCol,head:0.16,width:0.035,group:gGroup});
+    // secondary axis e_y (perpendicular)
+    api.arrow([cx,0,cz],[cx+Math.cos(ang+HALF)*len*0.78,0,cz-Math.sin(ang+HALF)*len*0.78],{color:eyCol,head:0.13,width:0.028,group:gGroup});
+  }
+
+  // ── build ──────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const domain=Math.round(s.domain);              // 0 protein,1 tissue,2 multiome,3 grn
+    const gauge=s.gauge;                             // local gauge rotation, degrees 0..180
+    const transport=s.transport/100;                // edge transport quality 0..1
+    const context=s.context/100;                    // biological/technical context shift 0..1
+    const nodes=Math.round(s.nodes);                // # of framed entities in invariance scene
+
+    const gFrame =api.group("frames");
+    const gEdge  =api.group("edges");
+    const gVec   =api.group("vectors");
+    const gLabel =api.group("labels");
+
+    const CY=api.col("cyan"), GR=api.col("green"), AM=api.col("amber"),
+          VI=api.col("violet"), RO=api.col("rose"), WH="#e8eef6", SL="#54667c";
+
+    function lbl(txt,cHex,sz,x,y,z){const sp=api.bigLabel(txt,cHex,sz);sp.position.set(x,y,z);gLabel.add(sp);}
+
+    const domLabels=["protein residue","tissue neighborhood","omics modality","GRN context"];
+    const domAccent=[GR,CY,AM,VI];
+    const domNodeA=["residue A","patch A","RNA basis","TF context"];
+    const domNodeB=["residue B","patch B","ATAC basis","target context"];
+    const acc=domAccent[domain];
+
+    // gauge angle applied at node B (the destination frame rotation), radians
+    const gB=gauge*Math.PI/180;
+    // node A keeps a small fixed local tilt so frames are visibly distinct
+    const gA=0;
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 1 — local frames : raw comparison is unfair (Section 5 numbers)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="frames"){
+      const ax=-2.6, bx=2.6;
+      // two entities, each carries its own local frame
+      api.node([ax,0,0],{r:0.34,color:acc,label:domNodeA[domain],group:"frames",pick:{ent:"A"}});
+      api.node([bx,0,0],{r:0.34,color:acc,label:domNodeB[domain],group:"frames",pick:{ent:"B"}});
+      drawFrame(api,"frames",T,ax,0,gA,1.5,WH,SL);
+      drawFrame(api,"frames",T,bx,0,gB,1.5,WH,SL);
+
+      // feature vectors x_A, x_B drawn in each LOCAL frame (so they rotate with the frame)
+      // x_A=[1,0] in A's frame ; x_B=[0,1] in B's frame
+      const RA=rot2(gA), RB=rot2(gB);
+      const xA_w=mul2(RA,X_A);              // world coords of x_A
+      const xB_w=mul2(RB,X_B);              // world coords of x_B
+      api.arrow([ax,0,0],[ax+xA_w[0]*1.5,0,-xA_w[1]*1.5],{color:CY,head:0.18,width:0.05,group:"vectors",label:"x_A",labelColor:CY});
+      api.arrow([bx,0,0],[bx+xB_w[0]*1.5,0,-xB_w[1]*1.5],{color:GR,head:0.18,width:0.05,group:"vectors",label:"x_B",labelColor:GR});
+
+      // RAW (frame-blind) comparison: ||x_A - x_B||^2 using raw coordinates
+      const rawE=norm2sq(sub2(X_A,X_B));           // = 2 (the wrong number)
+      // ghost of x_A placed at B without transport (frame-blind)
+      api.arrow([bx,0,0],[bx+X_A[0]*1.5,0,-X_A[1]*1.5],{color:RO,head:0.15,width:0.035,group:"vectors",label:"x_A (raw)",labelColor:RO});
+      api.edge([bx+X_A[0]*1.5,0,-X_A[1]*1.5],[bx+X_B[0]*1.5,0,-X_B[1]*1.5],{color:RO,width:0.03,dashed:true,group:"edges"});
+
+      lbl("raw mismatch  E="+rawE.toFixed(0),RO,1.1,bx,1.9,1.4);
+      lbl("two local rulers — same object, different coordinates",SL,1.0,0,-2.4,2.4);
+
+      api.setMetric("rawEnergy",rawE.toFixed(2));
+      api.setMetric("transportEnergy","—");
+      api.setMetric("frameGap",(gauge).toFixed(0)+"°");
+      api.setMetric("bioSafety","—");
+
+      sceneSnap={mode,domain,gauge:+gauge.toFixed(1),rawEnergy:+rawE.toFixed(3),transportEnergy:null,frameGapDeg:+gauge.toFixed(1),bioSafety:null};
+
+      return {
+        badge:"Local frames · "+domLabels[domain]+" · raw E="+rawE.toFixed(0),
+        formula:"x_i′ = ρ(g_i)·x_i   ·   raw ‖x_A − x_B‖² = ‖[1,0]−[0,1]‖² = 2",
+        insight:"Each entity carries its own local frame (white = e_x, grey = e_y). x_A=[1,0] in A's ruler; x_B=[0,1] in B's ruler. Comparing the RAW coordinate numbers (rose dashed) invents a disagreement of energy 2 — even though the underlying directions may agree. The frame, not the biology, created the gap.",
+        state:"Raw frame-blind energy ‖x_A−x_B‖² = "+rawE.toFixed(0)+". The gauge slider rotates B's local ruler by "+gauge.toFixed(0)+"°; raw comparison cannot see it. Switch to Edge transport to fix it.",
+        metrics:{rawEnergy:rawE.toFixed(2),transportEnergy:"—",frameGap:gauge.toFixed(0)+"°",bioSafety:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 2 — edge transport : R_BA carries x_A into B's frame
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="transport"){
+      const ax=-2.8, bx=2.8;
+      api.node([ax,0,0],{r:0.34,color:acc,label:domNodeA[domain],group:"frames",pick:{ent:"A"}});
+      api.node([bx,0,0],{r:0.34,color:acc,label:domNodeB[domain],group:"frames",pick:{ent:"B"}});
+      drawFrame(api,"frames",T,ax,0,gA,1.4,WH,SL);
+      drawFrame(api,"frames",T,bx,0,gB,1.4,WH,SL);
+      api.edge([ax,0,0],[bx,0,0],{color:SL,width:0.04,group:"edges"});
+
+      // The transport map R_BA rotates A's frame into B's frame. Ideal = exact frame rotation gB.
+      // Transport QUALITY interpolates the applied transport angle toward the ideal gB.
+      const ideal=gB;                              // exact compensation
+      const applied=ideal*transport;               // partial transport when quality < 1
+      const R_applied=rot2(applied);
+      const xA=X_A;                                // x_A in A's frame
+      const xA_transported=mul2(R_applied,xA);     // R_BA x_A (target frame)
+      const xB=X_B;
+
+      // x_A drawn at A in world
+      const RA=rot2(gA);
+      const xA_w=mul2(RA,xA);
+      api.arrow([ax,0,0],[ax+xA_w[0]*1.5,0,-xA_w[1]*1.5],{color:CY,head:0.18,width:0.05,group:"vectors",label:"x_A",labelColor:CY});
+      // transported source placed at B (rotated into B's world via gB then applied)
+      const tw=mul2(rot2(gB),xA_transported);
+      api.arrow([bx,0,0],[bx+tw[0]*1.5,0,-tw[1]*1.5],{color:CY,head:0.16,width:0.045,group:"vectors",label:"R·x_A",labelColor:CY});
+      // destination feature x_B in B's world
+      const xB_w=mul2(rot2(gB),xB);
+      api.arrow([bx,0,0],[bx+xB_w[0]*1.5,0,-xB_w[1]*1.5],{color:GR,head:0.18,width:0.05,group:"vectors",label:"x_B",labelColor:GR});
+
+      // consistency energy E_AB = || R_BA x_A - x_B ||^2 (computed in B's frame coords)
+      const E=norm2sq(sub2(xA_transported,xB));    // -> 0 at full transport when gauge=90°
+      const consistency=Math.max(0,1-E/2);         // 0..1
+
+      // curved transport ribbon over the edge
+      const segs=14;
+      for(let k=0;k<segs;k++){
+        const t0=k/segs, t1=(k+1)/segs;
+        const y0=0.55*Math.sin(Math.PI*t0), y1=0.55*Math.sin(Math.PI*t1);
+        const p0=[ax+(bx-ax)*t0,y0,0], p1=[ax+(bx-ax)*t1,y1,0];
+        api.edge(p0,p1,{color:api.ramp(consistency,RO,GR),width:0.03,group:"edges"});
+      }
+      lbl("R_BA",AM,1.2,0,0.95,0);
+      lbl("E_AB = "+E.toFixed(2),E<0.05?GR:RO,1.2,bx,2.0,1.4);
+
+      api.setMetric("rawEnergy",norm2sq(sub2(X_A,X_B)).toFixed(2));
+      api.setMetric("transportEnergy",E.toFixed(2));
+      api.setMetric("frameGap",(gauge).toFixed(0)+"°");
+      api.setMetric("bioSafety",(consistency*100).toFixed(0)+"%");
+
+      sceneSnap={mode,domain,gauge:+gauge.toFixed(1),transport:+s.transport.toFixed(1),rawEnergy:2,transportEnergy:+E.toFixed(3),transportConsistency:+consistency.toFixed(3),frameGapDeg:+gauge.toFixed(1),bioSafety:+(consistency).toFixed(3)};
+
+      return {
+        badge:"Edge transport · quality "+(transport*100).toFixed(0)+"% · E_AB="+E.toFixed(2),
+        formula:"R_ij′ = ρ(g_j)·R_ij·ρ(g_i)⁻¹   ·   E_AB = ‖R_BA·x_A − x_B‖²",
+        insight:"The edge carries a transport map R_BA, not a scalar weight. It rotates x_A into B's frame BEFORE comparison. At full transport quality and a 90° gauge, R_BA·x_A = [0,1] = x_B, so the consistency energy E_AB collapses to 0 — the same numbers raw comparison reported as 2. Lower transport quality leaves the map under-compensating (rose ribbon).",
+        state:"Transported energy E_AB = "+E.toFixed(2)+" (raw was 2). Transport consistency "+(consistency*100).toFixed(0)+"%. The ribbon turns green as messages are compared in a compatible frame.",
+        metrics:{rawEnergy:"2.00",transportEnergy:E.toFixed(2),frameGap:gauge.toFixed(0)+"°",bioSafety:(consistency*100).toFixed(0)+"%"},
+        focus:{center:[0,0.4,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 3 — gauge invariance : rotate ALL local rulers, claim survives
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="invariance"){
+      const n=nodes, R=3.4;
+      // a ring of entities; each gets a deterministic per-node base frame + the global gauge
+      const pos=[];
+      for(let i=0;i<n;i++){
+        const a=i/n*Math.PI*2;
+        const px=Math.cos(a)*R, pz=Math.sin(a)*R;
+        pos.push([px,pz]);
+        const base=(prand(i*5+3)-0.5)*1.4;            // deterministic per-node frame
+        const localGauge=base + gB*prand(i*2+1);      // global gauge perturbs each ruler
+        api.node([px,0,pz],{r:0.28,color:acc,group:"frames",pick:{node:i}});
+        drawFrame(api,"frames",T,px,0,localGauge,0.95,WH,SL);
+        // each node's feature, transported into a shared readout frame with quality `transport`
+        const xi=[Math.cos(base*0.5),Math.sin(base*0.5)];      // underlying object (frame-free)
+        const seen=mul2(rot2(localGauge*(1-transport)),xi);    // residual after transport
+        api.arrow([px,0,pz],[px+seen[0]*0.85,0,pz-seen[1]*0.85],{color:CY,head:0.1,width:0.03,group:"vectors"});
+      }
+      // central invariant readout
+      api.node([0,0,0],{r:0.5,color:VI,label:"invariant readout y",group:"frames",pick:{readout:true}});
+      for(let i=0;i<n;i++){api.edge([pos[i][0],0,pos[i][1]],[0,0,0],{color:SL,width:0.022,opacity:0.5,group:"edges"});}
+
+      // gauge error: how much the readout drifts when frames rotate but transport doesn't compensate
+      const gaugeErr=Math.min(1,(gauge/180)*(1-transport));
+      const invariance=1-gaugeErr;
+      lbl("global gauge "+gauge.toFixed(0)+"°  →  y′ = y when transport compensates",SL,1.0,0,-2.0,R+0.6);
+
+      api.setMetric("rawEnergy","—");
+      api.setMetric("transportEnergy",(gaugeErr*2).toFixed(2));
+      api.setMetric("frameGap",gauge.toFixed(0)+"°");
+      api.setMetric("bioSafety",(invariance*100).toFixed(0)+"%");
+
+      sceneSnap={mode,domain,gauge:+gauge.toFixed(1),transport:+s.transport.toFixed(1),nodes:n,gaugeError:+gaugeErr.toFixed(3),invariance:+invariance.toFixed(3),frameGapDeg:+gauge.toFixed(1),bioSafety:+invariance.toFixed(3)};
+
+      return {
+        badge:"Gauge invariance · "+n+" frames · y′=y at "+(invariance*100).toFixed(0)+"%",
+        formula:"g = (g_1,…,g_n)   ·   h_i′ = ρ_i(g_i)·h_i   ·   readout: y′ = y",
+        insight:"A gauge is local: every entity may rotate its own ruler independently (g = (g_1,…,g_n)). A gauge-equivariant layer transforms hidden features by the same local rule; an invariant readout removes the convention entirely, so y′ = y. With transport compensating, the central violet claim does not move when you spin every frame.",
+        state:"Global gauge "+gauge.toFixed(0)+"° applied to all "+n+" rulers. Invariance "+(invariance*100).toFixed(0)+"%. Raise transport quality so the random-gauge test leaves the readout fixed.",
+        metrics:{rawEnergy:"—",transportEnergy:(gaugeErr*2).toFixed(2),frameGap:gauge.toFixed(0)+"°",bioSafety:(invariance*100).toFixed(0)+"%"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 4 — context vs gauge : the dangerous confusion (failure modes)
+    // ════════════════════════════════════════════════════════════════════
+    // context shift is a REAL/technical mechanism change — invariance across it ERASES biology.
+    const ax=-2.8, bx=2.8;
+    api.node([ax,0,0],{r:0.34,color:acc,label:domNodeA[domain],group:"frames",pick:{ent:"A"}});
+    api.node([bx,0,0],{r:0.34,color:RO,label:"context-shifted",group:"frames",pick:{ent:"B"}});
+    drawFrame(api,"frames",T,ax,0,gA,1.4,WH,SL);
+    drawFrame(api,"frames",T,bx,0,gB,1.4,WH,SL);
+    api.edge([ax,0,0],[bx,0,0],{color:SL,width:0.04,group:"edges"});
+
+    // gauge part (coordinate) is compensated by transport; context part is a true mechanism shift
+    const applied=gB*transport;
+    const xA_t=mul2(rot2(applied),X_A);
+    // context shift physically changes the destination feature (not just its coordinates)
+    const xB_ctx=[X_B[0]+context*0.9, X_B[1]-context*0.9];
+    const gaugeResid=norm2sq(sub2(mul2(rot2(gB),xA_t),mul2(rot2(gB),X_B)));   // coordinate residual
+    const contextLeak=Math.min(1,context*0.85+(1-transport)*0.15);            // mistaking context for gauge
+    const bioSafety=Math.max(0,1-contextLeak*0.7-gaugeResid*0.18);
+
+    const RA=rot2(gA), xA_w=mul2(RA,X_A);
+    api.arrow([ax,0,0],[ax+xA_w[0]*1.5,0,-xA_w[1]*1.5],{color:CY,head:0.18,width:0.05,group:"vectors",label:"x_A",labelColor:CY});
+    const xBw=mul2(rot2(gB),xB_ctx);
+    api.arrow([bx,0,0],[bx+xBw[0]*1.5,0,-xBw[1]*1.5],{color:RO,head:0.18,width:0.05,group:"vectors",label:"x_B (shifted)",labelColor:RO});
+    // leakage halo grows with context
+    api.halo([bx,0,0],{r:0.6+context*1.6,color:RO,opacity:0.25,group:"vectors"});
+    lbl("context leakage "+(contextLeak*100).toFixed(0)+"%",RO,1.15,bx,2.1,1.4);
+    lbl("gauge = coordinate (fix with transport) · context = mechanism (do NOT erase)",SL,0.95,0,-2.3,2.6);
+
+    api.setMetric("rawEnergy",gaugeResid.toFixed(2));
+    api.setMetric("transportEnergy",(context*2).toFixed(2));
+    api.setMetric("frameGap",gauge.toFixed(0)+"°");
+    api.setMetric("bioSafety",(bioSafety*100).toFixed(0)+"%");
+
+    sceneSnap={mode,domain,gauge:+gauge.toFixed(1),transport:+s.transport.toFixed(1),context:+s.context.toFixed(1),contextLeak:+contextLeak.toFixed(3),bioSafety:+bioSafety.toFixed(3),frameGapDeg:+gauge.toFixed(1)};
+
+    return {
+      badge:"Context vs gauge · leakage "+(contextLeak*100).toFixed(0)+"% · safety "+(bioSafety*100).toFixed(0)+"%",
+      formula:"gauge: x→ρ(g)x  (harmless, transport) · context: real mechanism shift  (do not force y′=y)",
+      insight:"This is the trap. A gauge change is a coordinate change — transport compensates it. A context shift is a real or technical change in the biology (cell state, condition, batch). Forcing invariance across context ERASES mechanism (context leakage). Biology safety falls when leakage rises: the model must MODEL context explicitly, not call it gauge noise.",
+      state:"Context shift "+(context*100).toFixed(0)+"% → leakage "+(contextLeak*100).toFixed(0)+"%, biology safety "+(bioSafety*100).toFixed(0)+"%. Transport fixes the coordinate part; nothing should silently erase the context part.",
+      metrics:{rawEnergy:gaugeResid.toFixed(2),transportEnergy:(context*2).toFixed(2),frameGap:gauge.toFixed(0)+"°",bioSafety:(bioSafety*100).toFixed(0)+"%"},
+      focus:{center:[0,0,0],radius:11}
+    };
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"c04",
+    kind:"gauge-local-frames-biology",
+    eyebrow:"Block C · Geometric & Topological DL",
+    title:"C04 · Gauge ideas, local frames & biological context",
+    subtitle:"A gauge is a local choice of coordinates. Rotate the rulers, transport across edges, and watch when the biological claim survives — and when context leakage erases it.",
+    selectedLabel:"Element",
+    selectedHint:"Click an entity, frame, or readout.",
+    modes:[
+      {value:"frames",     label:"Local frames (raw E = 2)"},
+      {value:"transport",  label:"Edge transport (E_AB → 0)"},
+      {value:"invariance", label:"Gauge invariance (y′ = y)"},
+      {value:"context",    label:"Context vs gauge (leakage)"}
+    ],
+    params:[
+      {key:"domain",   label:"biological domain",min:0,max:3,step:1,value:0,
+       fmt:v=>["protein residue","spatial tissue","multi-omics","cell GRN"][Math.round(v)]},
+      {key:"gauge",    label:"gauge rotation (local ruler)",min:0,max:180,step:1,value:90,
+       fmt:v=>Math.round(v)+"°"},
+      {key:"transport",label:"transport quality",min:0,max:100,step:1,value:100,
+       fmt:v=>Math.round(v)+"%",modes:["transport","invariance","context"]},
+      {key:"context",  label:"context shift (mechanism)",min:0,max:100,step:1,value:0,
+       fmt:v=>Math.round(v)+"%",modes:["context"]},
+      {key:"nodes",    label:"# framed entities (ring)",min:4,max:12,step:1,value:7,
+       fmt:v=>Math.round(v).toString(),modes:["invariance"]}
+    ],
+    metrics:[
+      {key:"rawEnergy",       label:"Raw ‖x_A−x_B‖²",accent:"rose"},
+      {key:"transportEnergy", label:"Transport energy E_AB",accent:"cyan"},
+      {key:"frameGap",        label:"Frame gauge",accent:"amber"},
+      {key:"bioSafety",       label:"Biology safety",accent:"green"}
+    ],
+    layers:[
+      {group:"frames",  label:"Entities & frames"},
+      {group:"edges",   label:"Edges & transport"},
+      {group:"vectors", label:"Feature vectors"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"Random gauge (rotate rulers)",
+      on:api=>{const g=Math.round(20+frac(Math.sin((api.state.gauge+7)*12.9898)*43758.5453)*150);api.setParam("gauge",g);}
+    },
+    secondary:{
+      label:"Align transport (E_AB → 0)",
+      on:api=>{api.setParam("transport",100);api.setParam("context",Math.max(0,Math.round(api.state.context)-25));}
+    },
+    defaultCam:{theta:-0.5,phi:0.85,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=transported feature · <span style="color:#34d399">green</span>=destination x_B · <span style="color:#fb7185">rose</span>=raw / context leakage · <span style="color:#a78bfa">violet</span>=invariant readout · white/grey=local frame axes.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="invariance") api.frame([0,0,0],12);
+      else if(s.mode==="transport") api.frame([0,0.4,0],11);
+      else api.frame([0,0,0],11);
+    },
+    onSelect(api,d){
+      if(d.ent)     api.setSelected("Entity "+d.ent+" · local frame ρ(g) · feature in its own ruler");
+      if(d.node!=null) api.setSelected("Framed entity "+d.node+" · independent local gauge g_"+d.node);
+      if(d.readout) api.setSelected("Invariant readout y · removes coordinate convention (y′ = y)");
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode, dom=Math.round(s.domain), gauge=+s.gauge;
+      const transport=s.transport/100, context=s.context/100;
+      const gB=gauge*Math.PI/180;
+      const rawE=norm2sq(sub2(X_A,X_B));                       // 2
+      const applied=gB*transport;
+      const xA_t=mul2(rot2(applied),X_A);
+      const E=norm2sq(sub2(xA_t,X_B));                          // transported energy
+      const consistency=Math.max(0,1-E/2);
+      const gaugeErr=Math.min(1,(gauge/180)*(1-transport));
+      const contextLeak=Math.min(1,context*0.85+(1-transport)*0.15);
+      const bioSafety=Math.max(0,1-contextLeak*0.7-(mode==="context"?norm2sq(sub2(mul2(rot2(gB),xA_t),mul2(rot2(gB),X_B)))*0.18:0));
+      return {
+        mode,
+        domain:dom,
+        gauge:+gauge.toFixed(1),
+        transportQuality:+s.transport.toFixed(1),
+        contextShift:+s.context.toFixed(1),
+        rawEnergy:+rawE.toFixed(3),
+        transportEnergy:+E.toFixed(3),
+        transportConsistency:+consistency.toFixed(3),
+        gaugeError:+gaugeErr.toFixed(3),
+        contextLeak:+contextLeak.toFixed(3),
+        invariance:+(1-gaugeErr).toFixed(3),
+        bioSafety:+bioSafety.toFixed(3),
+        transportFixesFrame:(mode!=="frames")&&E<0.05,
+        contextErasesBiology:contextLeak>0.4
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

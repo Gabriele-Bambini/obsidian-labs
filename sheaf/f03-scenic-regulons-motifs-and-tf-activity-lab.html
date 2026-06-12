@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F03 · SCENIC, regulons, motifs, and TF activity</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no rng, no clock) ────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  FACTS — verbatim from the note's Section-5 worked example (GATA1 regulon)
+  // ════════════════════════════════════════════════════════════════════════
+  // 10-gene panel: first 5 = GATA1 regulon, then 5 lineage markers.
+  const GENES=["HBB","GYPA","SLC4A1","AHSP","HBD","CD3E","CD14","LYZ","CD79A","MS4A1"];
+  const REGULON=[0,1,2,3,4];                 // R_GATA1 = {HBB,GYPA,SLC4A1,AHSP,HBD}
+  // 4 cells × 10 genes log-normalized expression (note Section 5)
+  const CELLS=[
+    {name:"Erythroblast",type:"erythroblast",col:"#fb7185",
+     x:[4.2,3.8,3.1,4.5,3.9,0.1,0.1,0.2,0.0,0.1]},
+    {name:"T cell",      type:"T cell",      col:"#4dd7ff",
+     x:[0.1,0.2,0.1,0.1,0.1,5.1,0.1,0.1,0.0,0.0]},
+    {name:"Monocyte",    type:"monocyte",    col:"#fbbf24",
+     x:[0.2,0.1,0.2,0.1,0.1,0.1,4.8,4.5,0.0,0.1]},
+    {name:"B cell",      type:"B cell",      col:"#34d399",
+     x:[0.1,0.1,0.1,0.1,0.2,0.1,0.1,0.1,4.2,3.8]}
+  ];
+  // GRNBoost2 importance S(GATA1,g) for the 7 candidate targets C_GATA1
+  // HBB,GYPA,SLC4A1,AHSP,HBD are real; CD3E,CD14 are spurious co-variation.
+  const CAND=[0,1,2,3,4,5,6];                // C_GATA1 (top-7 by importance)
+  const IMPORT={0:0.34,1:0.27,2:0.21,3:0.31,4:0.24,5:0.12,6:0.10}; // S(GATA1,g)
+  // RcisTarget GATA motif match at TSS ±500bp (reads/bp, note Section 5)
+  const MOTIF={0:45,1:28,2:22,3:51,4:38,5:0.4,6:0.3};
+  const MOTIF_KEEP=g=>MOTIF[g]>=3;           // strong-motif test (CD3E/CD14 fail)
+  const NES_REG=4.2;                         // NES on the erythroid candidates
+  const NES_THR=3.0;                         // significance threshold
+  const K_AUC=5;                             // top-50% of 10 genes (note's K_auc)
+  const AUC_REAL={erythroblast:0.60,"T cell":0.02,monocyte:0.02,"B cell":0.02};
+
+  // ── AUCell: per-cell AUC of the recovery curve for a regulon ─────────────
+  // rank genes by expression descending (deterministic tie-break by index),
+  // RC(k)=|regulon ∩ top-k|/|R|, AUC=(1/K)·Σ RC(k).
+  function rankCell(cell){
+    const idx=GENES.map((_,i)=>i);
+    idx.sort((a,b)=>{
+      const d=cell.x[b]-cell.x[a];
+      if(Math.abs(d)>1e-9) return d>0?1:-1;
+      return a-b; // stable deterministic tie-break (note ranks lower-index first)
+    });
+    return idx;
+  }
+  function aucell(cell,regulon,kAuc){
+    const order=rankCell(cell);
+    const inReg=new Set(regulon);
+    const rc=[]; let count=0;
+    for(let k=0;k<kAuc;k++){
+      if(inReg.has(order[k])) count++;
+      rc.push(count/regulon.length);
+    }
+    const auc=rc.reduce((s,v)=>s+v,0)/kAuc;
+    return {order,rc,auc};
+  }
+
+  // ── RcisTarget recovery curve: fraction of candidates among top-k by motif
+  function motifRecovery(cands){
+    // rank candidates by motif score descending
+    const ranked=cands.slice().sort((a,b)=>MOTIF[b]-MOTIF[a]);
+    const rc=[]; let count=0;
+    ranked.forEach((g)=>{ if(MOTIF_KEEP(g)) count++; rc.push(count/cands.length); });
+    return {ranked,rc};
+  }
+
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const kAuc=Math.max(2,Math.min(8,Math.round(s.kAuc)));
+    const cellIdx=Math.max(0,Math.min(3,Math.round(s.cell)));
+    const nesThr=s.nesThr;                   // 1..6, motif stringency
+    const topK=Math.max(3,Math.min(10,Math.round(s.topK))); // GRNBoost2 candidate count
+
+    const gMain =api.group("network");
+    const gBars =api.group("scores");
+    const gCurve=api.group("recovery");
+    const gLab  =api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);return sp;}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);return sp;}
+
+    const CY=new T.Color("#4dd7ff");  // peaks / pretrained-style
+    const GR=new T.Color("#34d399");  // kept / activation
+    const AM=new T.Color("#fbbf24");  // TF / candidate
+    const VI=new T.Color("#a78bfa");  // regulon / recovery
+    const RO=new T.Color("#fb7185");  // pruned / repressor
+    const SL=new T.Color("#54667c");
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 — GRNBoost2: candidate generation (TF → top-K targets by S)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="grnboost2"){
+      const cands=CAND.slice(0,topK);        // top-K candidates by importance
+      // central GATA1 TF node
+      const tf=new T.Mesh(new T.SphereGeometry(0.62,24,18),
+        new T.MeshStandardMaterial({color:AM,emissive:AM,emissiveIntensity:0.6,roughness:0.3}));
+      tf.position.set(0,0,0); gMain.add(tf);
+      api.pick(tf,{tf:{name:"GATA1"}});
+      L("GATA1 (TF)","#fbbf24",1.5,0,1.15,0);
+
+      // candidate targets around a ring, height ∝ S(GATA1,g)
+      const R=3.7;
+      let spurious=0;
+      cands.forEach((g,i)=>{
+        const ang=i/cands.length*Math.PI*2;
+        const px=Math.cos(ang)*R, pz=Math.sin(ang)*R;
+        const imp=IMPORT[g];
+        const real=REGULON.indexOf(g)>=0;
+        if(!real) spurious++;
+        const col=real?GR.clone():RO.clone();
+        const py=0.2+imp*4.0;
+        const node=new T.Mesh(new T.SphereGeometry(0.22+imp*0.4,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.7),
+            emissiveIntensity:0.55,roughness:0.4}));
+        node.position.set(px,py,pz); gMain.add(node);
+        api.pick(node,{cand:{gene:GENES[g],imp,real}});
+        // edge TF→target, importance-weighted opacity
+        const ep=[new T.Vector3(0,0,0),new T.Vector3(px,py,pz)];
+        gMain.add(new T.Line(new T.BufferGeometry().setFromPoints(ep),
+          new T.LineBasicMaterial({color:real?GR.getHex():RO.getHex(),transparent:true,opacity:0.3+imp*0.9})));
+        l(GENES[g],col.getStyle(),0.4,px,py+0.5,pz);
+        l("S="+imp.toFixed(2),"#8a99ad",0.32,px,py+0.18,pz);
+      });
+
+      L("top-"+topK+" by importance S(GATA1,·)","#8a99ad",1.15,0,-1.4,R+0.6);
+      L(spurious+" spurious (no GATA motif)","#fb7185",1.1,0,-0.4,-(R+0.9));
+
+      sceneSnap={mode,topK,candidates:cands.length,spurious,
+        maxImportance:+IMPORT[3].toFixed(2),cellIdx:cellIdx,
+        aucActive:null,nes:null,regulonSize:null,kAuc};
+
+      return {
+        badge:"GRNBoost2 · top-"+topK+" candidates · "+spurious+" spurious",
+        formula:"S(t,g) = tree-importance of TF_t for gene_g  →  C_t = top-K by S",
+        insight:"GRNBoost2 regresses each gene on TF expression and ranks TFs by importance. For GATA1 the top targets include real erythroid genes (green: HBB, AHSP, GYPA…) but also spurious co-varying genes (rose: CD3E, CD14) driven by cell-type composition, not binding. Bar height = importance S; the network is statistical, not yet mechanistic.",
+        state:"Top-"+topK+" candidates for GATA1. Strongest: AHSP (S=0.31), HBB (S=0.34). "+spurious+" of these have no GATA binding motif and are false positives awaiting the RcisTarget filter.",
+        metrics:{candidates:""+cands.length,nes:"—",regulonSize:"—",aucActive:"—"},
+        focus:{center:[0,1.4,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 — RcisTarget: motif enrichment prunes spurious candidates
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="rcistarget"){
+      const cands=CAND.slice();              // 7 candidates from GRNBoost2
+      const xPos=cands.map((_,i)=>-5.0+i*1.7);
+      let kept=0;
+      cands.forEach((g,i)=>{
+        const x=xPos[i];
+        const ms=MOTIF[g];
+        const h=0.12+Math.min(ms,55)/55*4.0;
+        const keep=MOTIF_KEEP(g) && NES_REG>=nesThr;
+        if(keep) kept++;
+        const col=keep?VI.clone():RO.clone();
+        const bar=new T.Mesh(new T.BoxGeometry(1.05,h,1.05),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(keep?0.8:0.25),
+            emissiveIntensity:keep?0.65:0.2,roughness:0.4,transparent:!keep,opacity:keep?1.0:0.4}));
+        bar.position.set(x,h/2,0); gBars.add(bar);
+        api.pick(bar,{motif:{gene:GENES[g],reads:ms,kept}});
+        l(GENES[g],col.getStyle(),0.36,x,h+0.55,0);
+        l(ms<3?"<1":(ms+""),"#8a99ad",0.32,x,h+0.22,0);
+        // prune marker
+        if(!keep){
+          const xm=new T.Mesh(new T.ConeGeometry(0.16,0.42,8),new T.MeshBasicMaterial({color:RO.getHex()}));
+          xm.rotation.x=Math.PI; xm.position.set(x,h+1.0,0); gBars.add(xm);
+        }
+      });
+      // motif-threshold reference line
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-5.8,0.12+3/55*4.0,0),new T.Vector3(5.8,0.12+3/55*4.0,0)]),
+        new T.LineBasicMaterial({color:0x3a4a5e})));
+
+      // NES gauge bar (enrichment vs threshold)
+      const nesH=NES_REG/6*3.4;
+      const nesBar=new T.Mesh(new T.BoxGeometry(0.9,nesH,0.9),
+        new T.MeshStandardMaterial({color:GR,emissive:GR,emissiveIntensity:0.7,roughness:0.35}));
+      nesBar.position.set(6.7,nesH/2,0); gBars.add(nesBar);
+      const thrY=nesThr/6*3.4;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(6.1,thrY,0),new T.Vector3(7.3,thrY,0)]),
+        new T.LineBasicMaterial({color:RO.getHex()})));
+      L("NES "+NES_REG.toFixed(1),"#34d399",1.2,6.7,nesH+0.55,0);
+      l("thr "+nesThr.toFixed(1),"#fb7185",0.34,6.7,thrY+0.18,0);
+
+      L("GATA motif at TSS ±500bp (reads/bp)","#8a99ad",1.1,0,-0.55,2.6);
+      L("R_GATA1 = "+kept+" genes kept · 2 pruned","#a78bfa",1.2,0,5.0,0);
+
+      const pruned=cands.length-kept;
+      sceneSnap={mode,nesThr:+nesThr.toFixed(1),nes:NES_REG,regulonSize:kept,pruned,
+        topK:cands.length,cellIdx,aucActive:null,kAuc};
+
+      return {
+        badge:"RcisTarget · NES "+NES_REG.toFixed(1)+" · "+kept+" kept / "+pruned+" pruned",
+        formula:"NES = max_k [ RC(k)·√k ]  ;  keep g if NES > "+nesThr.toFixed(1)+" and motif present",
+        insight:"RcisTarget tests whether the candidates' regulatory regions are enriched for the GATA motif (WGATAR). The five erythroid genes carry strong GATA sites (22–51 reads/bp, violet); CD3E and CD14 have none (<1 read/bp, rose) and are pruned. The recovery-curve NES = "+NES_REG.toFixed(1)+" clears the threshold, upgrading the evidence from co-expression to mechanistic binding.",
+        state:"Kept "+kept+" of "+cands.length+" candidates. NES = "+NES_REG.toFixed(1)+(NES_REG>=nesThr?" > ":" < ")+nesThr.toFixed(1)+" threshold. CD3E & CD14 fail the motif filter — spurious GENIE3 edges removed.",
+        metrics:{candidates:""+cands.length,nes:NES_REG.toFixed(1),regulonSize:""+kept,aucActive:"—"},
+        focus:{center:[0.5,2,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 — AUCell: per-cell regulon activity via recovery-curve AUC
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="aucell"){
+      const cell=CELLS[cellIdx];
+      const res=aucell(cell,REGULON,kAuc);
+      // draw the ranked gene column (top-k highlighted), regulon membership
+      const xCol=-4.6, yTop=4.4, dy=0.78;
+      res.order.forEach((g,k)=>{
+        if(k>=GENES.length) return;
+        const y=yTop-k*dy;
+        const inReg=REGULON.indexOf(g)>=0;
+        const inTop=k<kAuc;
+        const col=inReg?(inTop?VI.clone():VI.clone().lerp(SL,0.5)):(inTop?CY.clone():SL.clone());
+        const node=new T.Mesh(new T.SphereGeometry(inReg?0.26:0.18,16,12),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(inTop?0.7:0.25),
+            emissiveIntensity:inTop?0.6:0.2,roughness:0.4}));
+        node.position.set(xCol,y,0); gMain.add(node);
+        api.pick(node,{ranked:{gene:GENES[g],rank:k+1,inReg,expr:cell.x[g]}});
+        l((k+1)+". "+GENES[g],col.getStyle(),0.36,xCol-0.55,y,0);
+        l(cell.x[g].toFixed(1),"#8a99ad",0.3,xCol+0.55,y,0);
+      });
+      // K_auc cutoff line
+      const yCut=yTop-(kAuc-0.5)*dy;
+      gMain.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(xCol-1.3,yCut,0),new T.Vector3(xCol+1.0,yCut,0)]),
+        new T.LineBasicMaterial({color:AM.getHex()})));
+      l("K_auc = "+kAuc,"#fbbf24",0.36,xCol-1.1,yCut-0.35,0);
+
+      // recovery curve RC(k) on the right
+      const xO=1.0,yO=0.2,xS=1.4,yS=4.0;
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(xO,yO,0),new T.Vector3(xO+kAuc*xS*0.8+1.4,yO,0)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(xO,yO,0),new T.Vector3(xO,yO+yS+0.2,0)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+      const cx=k=>xO+(k+0.5)*xS*0.8;
+      const cy=v=>yO+v*yS;
+      const curvePts=res.rc.map((v,k)=>new T.Vector3(cx(k),cy(v),0));
+      curvePts.unshift(new T.Vector3(xO,yO,0));
+      gCurve.add(new T.Line(new T.BufferGeometry().setFromPoints(curvePts),
+        new T.LineBasicMaterial({color:VI.getHex()})));
+      res.rc.forEach((v,k)=>{
+        const m=new T.Mesh(new T.SphereGeometry(0.16,12,12),
+          new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.85,roughness:0.25}));
+        m.position.set(cx(k),cy(v),0.1); gCurve.add(m);
+        api.pick(m,{rc:{k:k+1,rc:v}});
+      });
+      // shaded AUC area (thin boxes under curve)
+      res.rc.forEach((v,k)=>{
+        if(v<=0) return;
+        const h=cy(v)-yO;
+        const fill=new T.Mesh(new T.BoxGeometry(xS*0.8*0.7,h,0.04),
+          new T.MeshBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.16}));
+        fill.position.set(cx(k),yO+h/2,0); gCurve.add(fill);
+      });
+      l("RC(k)","#a78bfa",0.4,xO-0.2,yO+yS+0.5,0);
+      l("AUC = "+res.auc.toFixed(2),"#a78bfa",0.5,xO+kAuc*xS*0.35,yO+yS+0.7,0);
+
+      L(cell.name+" · "+cell.type,cell.col,1.5,0,5.4,0);
+      const realAuc=AUC_REAL[cell.type];
+      L("realistic 15k-gene AUC ≈ "+realAuc.toFixed(2),"#8a99ad",1.05,0,-1.0,0);
+
+      sceneSnap={mode,cellIdx,cellType:cell.type,kAuc,
+        aucActive:+res.auc.toFixed(3),aucRealistic:realAuc,
+        regulonSize:REGULON.length,nes:NES_REG,topK:CAND.length,
+        rcFinal:+res.rc[res.rc.length-1].toFixed(2)};
+
+      const active=res.auc>0.4;
+      return {
+        badge:"AUCell · "+cell.name+" · AUC "+res.auc.toFixed(2)+(active?" · ACTIVE":""),
+        formula:"AUC_t(i) = (1/K_auc)·Σ_{k=1..K} RC_t(i,k)  ,  RC(k)=|R∩top-k|/|R|",
+        insight:"AUCell ranks the cell's genes by expression and measures how early the GATA1 regulon (violet) is recovered in the top K_auc. In the erythroblast all five regulon genes sit at the top → recovery curve climbs to 1.0 → AUC = 0.60: the regulon is active. In a T cell the regulon genes are near-absent, so AUC collapses toward background. This per-cell score, not GATA1 mRNA, defines TF activity.",
+        state:cell.name+": AUC = "+res.auc.toFixed(2)+", final RC = "+res.rc[res.rc.length-1].toFixed(2)+". "+(active?"GATA1 regulon ACTIVE (erythroid identity).":"GATA1 regulon inactive at realistic gene counts (AUC ≈ "+realAuc.toFixed(2)+")."),
+        metrics:{candidates:""+CAND.length,nes:NES_REG.toFixed(1),regulonSize:""+REGULON.length,aucActive:res.auc.toFixed(2)},
+        focus:{center:[-1,2.2,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 4 — Activity matrix: GATA1 AUC across all 4 cell types
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="activity"){
+      const xPos=[-4.5,-1.5,1.5,4.5];
+      const aucs=CELLS.map(c=>aucell(c,REGULON,kAuc).auc);
+      CELLS.forEach((cell,i)=>{
+        const x=xPos[i];
+        const auc=aucs[i];
+        const h=0.12+auc*4.4;
+        const active=auc>0.4;
+        const col=new T.Color(cell.col);
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.4),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(active?0.8:0.3),
+            emissiveIntensity:active?0.7:0.25,roughness:0.4,transparent:!active,opacity:active?1.0:0.55}));
+        bar.position.set(x,h/2,0); gBars.add(bar);
+        api.pick(bar,{cellbar:{name:cell.name,auc,active}});
+        L((auc).toFixed(2),cell.col,1.5,x,h+0.55,0);
+        l(cell.name,cell.col,0.36,x,h+0.2,0);
+        l(cell.type,"#8a99ad",0.3,x,0.05,0);
+        // active marker arrow
+        if(active){
+          const arw=new T.Mesh(new T.ConeGeometry(0.17,0.46,8),new T.MeshBasicMaterial({color:0xfde68a}));
+          arw.position.set(x,h+1.0,0); gBars.add(arw);
+        }
+      });
+      // activity threshold line
+      const thrY=0.12+0.4*4.4;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-5.6,thrY,0),new T.Vector3(5.6,thrY,0)]),
+        new T.LineBasicMaterial({color:RO.getHex()})));
+      l("active threshold","#fb7185",0.34,-5.0,thrY+0.2,0);
+
+      L("A(cell, GATA1) — TF activity matrix row","#a78bfa",1.2,0,5.0,0);
+      L("activity ≠ mRNA: one TF, four cell states","#8a99ad",1.05,0,-1.0,0);
+
+      const activeCount=aucs.filter(a=>a>0.4).length;
+      sceneSnap={mode,kAuc,activeCells:activeCount,
+        aucErythroblast:+aucs[0].toFixed(3),aucTcell:+aucs[1].toFixed(3),
+        aucMonocyte:+aucs[2].toFixed(3),aucBcell:+aucs[3].toFixed(3),
+        aucActive:+aucs[0].toFixed(3),regulonSize:REGULON.length,nes:NES_REG,
+        cellIdx,topK:CAND.length};
+
+      return {
+        badge:"Activity matrix · "+activeCount+" of 4 cells GATA1-active",
+        formula:"A(i,t) = AUC_t(i) ∈ [0,1]  →  cell × TF activity matrix",
+        insight:"The SCENIC deliverable is the cell × TF activity matrix. This is one row: GATA1 activity across four cell types. Only the erythroblast clears the activity threshold (amber arrow). The score is rank-based, so it is robust to dropout and library size — and it reflects regulon activity, not GATA1 mRNA, which can be present in non-erythroid cells without the targets being expressed.",
+        state:activeCount+" of 4 cells call GATA1 active. Erythroblast AUC = "+aucs[0].toFixed(2)+"; the other lineages sit below threshold. This row clusters cells by regulatory state rather than raw expression.",
+        metrics:{candidates:""+CAND.length,nes:NES_REG.toFixed(1),regulonSize:""+REGULON.length,aucActive:aucs[0].toFixed(2)},
+        focus:{center:[0,2,0],radius:14}
+      };
+    }
+
+    return {badge:"F03",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f03",
+    kind:"scenic-regulons-motifs-tf-activity",
+    eyebrow:"Block F · GRN Inference",
+    title:"F03 · SCENIC, regulons, motifs, and TF activity",
+    subtitle:"The 3-step SCENIC pipeline on the GATA1 erythroid regulon: GRNBoost2 candidates → RcisTarget motif filter → AUCell per-cell activity → the cell × TF matrix.",
+    selectedLabel:"Element",
+    selectedHint:"Click a target, bar, ranked gene, or recovery point.",
+    modes:[
+      {value:"grnboost2",  label:"1 · GRNBoost2 (candidate targets)"},
+      {value:"rcistarget", label:"2 · RcisTarget (motif filter)"},
+      {value:"aucell",     label:"3 · AUCell (per-cell activity)"},
+      {value:"activity",   label:"4 · Activity matrix (cell × TF)"}
+    ],
+    params:[
+      {key:"topK",  label:"GRNBoost2 candidates (top-K)",min:3,max:7,step:1,value:7,
+       fmt:v=>"top-"+Math.round(v),modes:["grnboost2"]},
+      {key:"nesThr",label:"NES motif threshold",min:1,max:6,step:0.5,value:3,
+       fmt:v=>v.toFixed(1),modes:["rcistarget"]},
+      {key:"cell",  label:"cell (0=ery 1=T 2=mono 3=B)",min:0,max:3,step:1,value:0,
+       fmt:v=>["erythroblast","T cell","monocyte","B cell"][Math.round(v)],modes:["aucell"]},
+      {key:"kAuc",  label:"K_auc (top-k genes ranked)",min:2,max:8,step:1,value:5,
+       fmt:v=>"top-"+Math.round(v),modes:["aucell","activity"]}
+    ],
+    metrics:[
+      {key:"candidates",  label:"Candidate targets",accent:"amber"},
+      {key:"nes",         label:"RcisTarget NES",   accent:"green"},
+      {key:"regulonSize", label:"Regulon size |R|", accent:"violet"},
+      {key:"aucActive",   label:"AUCell (active cell)",accent:"cyan"}
+    ],
+    layers:[
+      {group:"network", label:"Network / Ranking"},
+      {group:"scores",  label:"Score bars"},
+      {group:"recovery",label:"Recovery curve"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"Erythroblast",
+      on:api=>{api.setParam("cell",0);}
+    },
+    secondary:{
+      label:"T cell",
+      on:api=>{api.setParam("cell",1);}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:13},
+    hint:'<span style="color:#fbbf24">amber</span>=TF / candidate · <span style="color:#34d399">green</span>=real target / NES · <span style="color:#a78bfa">violet</span>=regulon / recovery · <span style="color:#fb7185">rose</span>=spurious / pruned · <span style="color:#4dd7ff">cyan</span>=top-ranked non-regulon.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="grnboost2") api.frame([0,1.4,0],13);
+      else if(s.mode==="rcistarget") api.frame([0.5,2,0],14);
+      else if(s.mode==="aucell") api.frame([-1,2.2,0],14);
+      else api.frame([0,2,0],14);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="grnboost2") api.frame([0,1.4,0],13);
+      else if(s.mode==="rcistarget") api.frame([0.5,2,0],14);
+      else if(s.mode==="aucell") api.frame([-1,2.2,0],14);
+      else api.frame([0,2,0],14);
+    },
+    onSelect(api,d){
+      if(d.tf)      api.setSelected("TF "+d.tf.name+" · drives the regulon");
+      if(d.cand)    api.setSelected(d.cand.gene+" · S="+d.cand.imp.toFixed(2)+" · "+(d.cand.real?"real target":"SPURIOUS"));
+      if(d.motif)   api.setSelected(d.motif.gene+" · GATA motif "+(d.motif.reads<3?"<1":d.motif.reads)+" reads/bp · "+(d.motif.kept?"KEPT":"PRUNED"));
+      if(d.ranked)  api.setSelected("rank "+d.ranked.rank+" · "+d.ranked.gene+" · expr "+d.ranked.expr.toFixed(1)+(d.ranked.inReg?" · in R_GATA1":""));
+      if(d.rc)      api.setSelected("RC("+d.rc.k+") = "+d.rc.rc.toFixed(2));
+      if(d.cellbar) api.setSelected(d.cellbar.name+" · AUC "+d.cellbar.auc.toFixed(2)+" · "+(d.cellbar.active?"ACTIVE":"inactive"));
+    },
+    build,
+    snapshot(s){
+      const kAuc=Math.max(2,Math.min(8,Math.round(s.kAuc)));
+      const cellIdx=Math.max(0,Math.min(3,Math.round(s.cell)));
+      const topK=Math.max(3,Math.min(7,Math.round(s.topK)));
+      const nesThr=s.nesThr;
+      // recompute AUCs deterministically for snapshot fields
+      const aucs=CELLS.map(c=>aucell(c,REGULON,kAuc).auc);
+      const cands=CAND.slice(0,topK);
+      const spurious=cands.filter(g=>REGULON.indexOf(g)<0).length;
+      const keptByMotif=CAND.filter(g=>MOTIF_KEEP(g) && NES_REG>=nesThr).length;
+      return {
+        mode:s.mode,
+        topK,
+        nesThr:+(+nesThr).toFixed(1),
+        cellIdx,
+        kAuc,
+        candidates:cands.length,
+        spurious,
+        nes:NES_REG,
+        nesPass:NES_REG>=nesThr,
+        regulonSize:keptByMotif,
+        aucErythroblast:+aucs[0].toFixed(3),
+        aucTcell:+aucs[1].toFixed(3),
+        aucMonocyte:+aucs[2].toFixed(3),
+        aucBcell:+aucs[3].toFixed(3),
+        aucActive:+aucs[cellIdx].toFixed(3),
+        activeCells:aucs.filter(a=>a>0.4).length
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

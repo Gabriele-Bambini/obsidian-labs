@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H06 · Negative sampling and false negatives in biology</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no clock or RNG calls) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  WORKED EXAMPLE — note Section 5: a 10-gene Ecoli1-topology GRN.
+  //  14 true directed edges, 5 TFs, two pathways A/B.
+  //  Four negative-sampling strategies span 22 AUROC points.
+  // ════════════════════════════════════════════════════════════════════════
+  const N=10;
+  const TRUE_EDGES=[[0,1],[0,5],[1,2],[1,7],[2,3],[2,8],[3,4],[4,5],[4,9],[5,6],[6,7],[7,8],[8,9],[9,0]];
+  const TF=[0,1,2,4,9];                       // genes acting as TFs
+  const PATH_A=[0,1,2,3,4];                    // regulatory pathway A
+  const PATH_B=[5,6,7,8,9];                    // regulatory pathway B
+  const isTF=g=>TF.indexOf(g)>=0;
+  const pathOf=g=>(PATH_A.indexOf(g)>=0?"A":"B");
+  const posSet=new Set(TRUE_EDGES.map(e=>e[0]+"-"+e[1]));
+  const isPos=(i,j)=>posSet.has(i+"-"+j);
+  // all 90 directed non-self pairs; 76 are non-edges
+  const ALL_PAIRS=[];for(let i=0;i<N;i++)for(let j=0;j<N;j++)if(i!==j)ALL_PAIRS.push([i,j]);
+  const ALL_NEGS=ALL_PAIRS.filter(p=>!isPos(p[0],p[1]));   // 76 non-edges
+
+  // headline numbers from the note's worked example (Section 5 table)
+  const STRAT=[
+    {key:"random",  name:"Random",         auroc:0.85, auprc:0.81, drop:0,    accent:"rose",   col:"#f87171"},
+    {key:"tf",      name:"TF-matched",     auroc:0.77, auprc:0.70, drop:0.08, accent:"amber",  col:"#fbbf24"},
+    {key:"pathway", name:"Pathway-matched",auroc:0.69, auprc:0.61, drop:0.16, accent:"cyan",   col:"#4dd7ff"},
+    {key:"motif",   name:"Motif-matched",  auroc:0.63, auprc:0.55, drop:0.22, accent:"green",  col:"#34d399"}
+  ];
+  const RAND_AUPRC=14/(14+14);                // 1:1 sample → 0.50 (note)
+
+  // ── deterministic negative picker per strategy ──────────────────────────────
+  function pickNegatives(stratKey,nNeg,seedShift){
+    const out=[];
+    if(stratKey==="random"){
+      const used=new Set();
+      let k=0,guard=0;
+      while(out.length<nNeg && guard<400){
+        const idx=Math.floor(prand(k*13.3+seedShift*5.1)*ALL_NEGS.length)%ALL_NEGS.length;
+        if(!used.has(idx)){used.add(idx);out.push(ALL_NEGS[idx]);}
+        k++;guard++;
+      }
+    } else {
+      for(let e=0;e<TRUE_EDGES.length && out.length<nNeg;e++){
+        const src=TRUE_EDGES[e][0], tgt=TRUE_EDGES[e][1];
+        let cand=[];
+        if(stratKey==="tf"){
+          // (src,k): k not regulated by src, but regulated by SOME other TF
+          cand=[];for(let k=0;k<N;k++){if(k===src||isPos(src,k))continue;
+            let reg=false;for(let t=0;t<TF.length;t++){if(TF[t]!==src&&isPos(TF[t],k)){reg=true;break;}}
+            if(reg)cand.push([src,k]);}
+        } else if(stratKey==="pathway"){
+          // (src,k): k in same pathway as tgt, not regulated by src
+          const pool=(pathOf(tgt)==="A")?PATH_A:PATH_B;
+          cand=pool.filter(k=>k!==tgt&&k!==src&&!isPos(src,k)).map(k=>[src,k]);
+        } else { // motif: k "promoter-closest" to tgt, not regulated by src
+          cand=[];for(let k=0;k<N;k++){if(k===tgt||k===src||isPos(src,k))continue;cand.push([src,k]);}
+          cand.sort((p,q)=>simHash(tgt,q[1])-simHash(tgt,p[1]));
+        }
+        if(cand.length){
+          const pick=(stratKey==="motif")?cand[0]
+                     :cand[Math.floor(prand(e*7.7+seedShift*3.3)*cand.length)%cand.length];
+          out.push(pick);
+        }
+      }
+    }
+    return out.slice(0,nNeg);
+  }
+  // deterministic "expression-similarity" surrogate for the motif strategy
+  function simHash(a,b){return prand(a*31.1+b*17.7)+prand(b*31.1+a*17.7);}
+
+  // hardness class of a non-edge (note Section 4 typing): 0=easy 1=moderate 2=hard
+  function hardness(i,j){
+    if(!isTF(i)) return 0;                      // non-TF source → trivially easy
+    if(pathOf(i)!==pathOf(j)) return 1;          // cross-pathway → moderate
+    return 2;                                    // same-pathway non-target → hard
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const nNeg=Math.round(s.nNeg);
+    const fnFrac=s.fnFrac;                        // false-negative fraction in N
+    const easyFrac=s.easyFrac;                     // mixture: fraction easy negatives
+    const stratParam=Math.round(s.strategy);       // 0..3
+
+    const gNet  =api.group("net");
+    const gNeg  =api.group("neg");
+    const gBars =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // pathway-matched / true negative
+    const GR=new T.Color("#34d399");   // motif-matched / positive / hard
+    const AM=new T.Color("#fbbf24");   // TF-matched / moderate
+    const RO=new T.Color("#f87171");   // random / false-negative / easy
+    const VI=new T.Color("#a78bfa");   // accent / known positive / gap
+    const SL=new T.Color("#54667c");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const R=3.7;
+    function genePos(g){const a=g/N*Math.PI*2-Math.PI/2;return new T.Vector3(Math.cos(a)*R,0,Math.sin(a)*R);}
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: open-world — gene ring + positives + hidden true edges (FN)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="open-world"){
+      for(let g=0;g<N;g++){
+        const p=genePos(g);
+        const tf=isTF(g);
+        const col=tf?AM.clone():CY.clone();
+        const sph=new T.Mesh(new T.SphereGeometry(tf?0.34:0.27,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        sph.position.copy(p);gNet.add(sph);
+        api.pick(sph,{gene:{id:g,tf,path:pathOf(g)}});
+        addSlbl((tf?"TF":"g")+g,(tf?"#fbbf24":"#4dd7ff"),0.34,p.x,0.5,p.z);
+      }
+      // positive (known) edges — solid violet arrows
+      TRUE_EDGES.forEach(e=>{
+        const a=genePos(e[0]),b=genePos(e[1]);
+        const dir=b.clone().sub(a).normalize();
+        gNet.add(new T.Line(new T.BufferGeometry().setFromPoints([a,b]),
+          new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.75})));
+        const cone=new T.Mesh(new T.ConeGeometry(0.08,0.26,8),new T.MeshBasicMaterial({color:VI.getHex()}));
+        cone.position.copy(b.clone().sub(dir.clone().multiplyScalar(0.42)));
+        cone.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+        gNet.add(cone);
+      });
+      // absent pairs that are really hidden true edges (false negatives), arced above
+      let shownFN=0;const targetFN=Math.round(fnFrac*ALL_NEGS.length);
+      for(let n=0;n<ALL_NEGS.length && shownFN<targetFN;n++){
+        const i=ALL_NEGS[n][0],j=ALL_NEGS[n][1];
+        if(prand(i*9.1+j*4.7)<fnFrac){
+          shownFN++;
+          const a=genePos(i),b=genePos(j);
+          const mid=a.clone().add(b).multiplyScalar(0.5);mid.y=1.1+0.5*prand(n*3.3);
+          const q=new T.QuadraticBezierCurve3(a,mid,b).getPoints(14);
+          gNeg.add(new T.Line(new T.BufferGeometry().setFromPoints(q),
+            new T.LineBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.5})));
+          const dot=new T.Mesh(new T.SphereGeometry(0.1,8,8),new T.MeshBasicMaterial({color:RO.getHex()}));
+          dot.position.copy(mid);gNeg.add(dot);
+          api.pick(dot,{fn:{src:i,tgt:j}});
+        }
+      }
+      const trueNegN=ALL_NEGS.length-shownFN;
+      const fpr_meas=14/ALL_NEGS.length;          // FPR with contaminated N=76
+      const fpr_true=14/Math.max(1,trueNegN);      // FPR with genuine negatives
+      addLbl("known edges (positives)","#a78bfa",1.2,0,2.6,0);
+      addLbl("hidden true edges = false negatives","#f87171",1.15,0,-2.7,0);
+
+      sceneSnap={mode,nNeg,fnFrac:+fnFrac.toFixed(2),falseNegatives:shownFN,
+        genuineNegatives:trueNegN,fprMeasured:+fpr_meas.toFixed(3),fprTrue:+fpr_true.toFixed(3),
+        aurocInflation:+(fpr_true-fpr_meas).toFixed(3)};
+
+      api.setMetric("auroc","—");
+      api.setMetric("auprc","—");
+      api.setMetric("negCount",""+ALL_NEGS.length);
+      api.setMetric("falseNeg",""+shownFN);
+
+      return {
+        badge:"Open-world · "+shownFN+" / "+ALL_NEGS.length+" non-edges are hidden positives",
+        formula:"absent in D  ⇏  biologically absent   (open-world assumption)",
+        insight:"Each gene pair NOT in the database may be a genuine true negative OR an undiscovered real edge — a study-bias false negative. Rose arcs are the hidden true edges contaminating the negative set N. With "+shownFN+" of "+ALL_NEGS.length+" negatives false, the measured FPR denominator (N="+ALL_NEGS.length+") is inflated vs the genuine N="+trueNegN+", optimistically shifting the ROC curve. Drag the false-negative rate to watch contamination grow.",
+        state:"P=14 positives · N="+ALL_NEGS.length+" measured negatives, of which "+shownFN+" are false negatives → genuine N="+trueNegN+". Measured FPR@14TP = "+fpr_meas.toFixed(3)+" vs true "+fpr_true.toFixed(3)+".",
+        metrics:{auroc:"—",auprc:"—",negCount:""+ALL_NEGS.length,falseNeg:""+shownFN},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: strategies — one strategy's negatives on the ring + its bars
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="strategies"){
+      const sk=STRAT[stratParam].key;
+      const negs=pickNegatives(sk,nNeg,0);
+      for(let g=0;g<N;g++){
+        const p=genePos(g);const tf=isTF(g);
+        const col=tf?AM.clone():CY.clone();
+        const sph=new T.Mesh(new T.SphereGeometry(tf?0.26:0.2,14,12),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.45,roughness:0.5}));
+        sph.position.copy(p);gNet.add(sph);
+        api.pick(sph,{gene:{id:g,tf,path:pathOf(g)}});
+        addSlbl((tf?"TF":"g")+g,(tf?"#fbbf24":"#4dd7ff"),0.28,p.x,0.42,p.z);
+      }
+      TRUE_EDGES.forEach(e=>{
+        const a=genePos(e[0]),b=genePos(e[1]);
+        gNet.add(new T.Line(new T.BufferGeometry().setFromPoints([a,b]),
+          new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.45})));
+      });
+      const hcol=[RO,AM,GR];   // easy, moderate, hard
+      let cEasy=0,cMod=0,cHard=0;
+      negs.forEach((e,k)=>{
+        const i=e[0],j=e[1];const h=hardness(i,j);
+        if(h===0)cEasy++;else if(h===1)cMod++;else cHard++;
+        const a=genePos(i),b=genePos(j);
+        const mid=a.clone().add(b).multiplyScalar(0.5);mid.y=0.6+0.7*prand(k*5.1);
+        const q=new T.QuadraticBezierCurve3(a,mid,b).getPoints(12);
+        gNeg.add(new T.Line(new T.BufferGeometry().setFromPoints(q),
+          new T.LineBasicMaterial({color:hcol[h].getHex(),transparent:true,opacity:0.7})));
+        const dot=new T.Mesh(new T.SphereGeometry(0.11,8,8),
+          new T.MeshStandardMaterial({color:hcol[h],emissive:hcol[h],emissiveIntensity:0.7,roughness:0.4}));
+        dot.position.copy(mid);gNeg.add(dot);
+        api.pick(dot,{neg:{src:i,tgt:j,hard:["easy","moderate","hard"][h]}});
+      });
+      const au=STRAT[stratParam].auroc, ap=STRAT[stratParam].auprc;
+      const sc=STRAT[stratParam].col;
+      function bar(val,x,lab){
+        const h=0.15+val*3.6;
+        const m=new T.Mesh(new T.BoxGeometry(1.0,h,1.0),
+          new T.MeshStandardMaterial({color:new T.Color(sc),emissive:new T.Color(sc),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.set(x,h/2,-5.0);gBars.add(m);
+        api.pick(m,{metricBar:{kind:lab,val}});
+        addLbl(val.toFixed(2),sc,1.4,x,h+0.5,-5.0);
+        addSlbl(lab,sc,0.4,x,0.05,-5.0);
+      }
+      bar(au,-1.0,"AUROC");
+      bar(ap, 1.0,"AUPRC");
+      addLbl(STRAT[stratParam].name,sc,1.5,0,3.0,-5.0);
+      // hardness-mix mini bars
+      const hc=[cEasy,cMod,cHard];const hx=[-1.3,0,1.3];
+      hc.forEach((c,idx)=>{
+        const h=0.1+c*0.3;
+        const m=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),
+          new T.MeshStandardMaterial({color:hcol[idx],emissive:hcol[idx],emissiveIntensity:0.5,roughness:0.5}));
+        m.position.set(hx[idx],h/2,5.0);gBars.add(m);
+        addLbl(""+c,hcol[idx].getStyle(),1.1,hx[idx],h+0.4,5.0);
+        addSlbl(["easy","mod","hard"][idx],hcol[idx].getStyle(),0.32,hx[idx],0.05,5.0);
+      });
+      addLbl("negative hardness mix","#8a99ad",1.0,0,1.6,5.0);
+
+      sceneSnap={mode,strategy:stratParam,strategyKey:sk,nNeg:negs.length,
+        auroc:au,auprc:ap,easy:cEasy,moderate:cMod,hard:cHard,
+        dropVsRandom:+STRAT[stratParam].drop.toFixed(2)};
+
+      api.setMetric("auroc",au.toFixed(2));
+      api.setMetric("auprc",ap.toFixed(2));
+      api.setMetric("negCount",""+negs.length);
+      api.setMetric("falseNeg",cHard+" hard");
+
+      return {
+        badge:STRAT[stratParam].name+" · AUROC "+au.toFixed(2)+" · "+cHard+"/"+negs.length+" hard",
+        formula:"AUROC = P( score(pos) > score(neg) )   — harder neg ⇒ lower AUROC",
+        insight:STRAT[stratParam].name+" negatives sample "+negs.length+" non-edges under the strategy's constraint. Hardness mix: "+cEasy+" easy / "+cMod+" moderate / "+cHard+" hard. Easy negatives (rose: non-TF source or cross-pathway) are trivially separable and inflate AUROC; hard negatives (green: same-pathway non-targets) force the model to learn real regulatory specificity. Same classifier, same 14 positives — only the negative set changed.",
+        state:STRAT[stratParam].name+": AUROC "+au.toFixed(2)+", AUPRC "+ap.toFixed(2)+" (random AUPRC "+RAND_AUPRC.toFixed(2)+"). Drop vs random: "+(STRAT[stratParam].drop*100).toFixed(0)+"pp.",
+        metrics:{auroc:au.toFixed(2),auprc:ap.toFixed(2),negCount:""+negs.length,falseNeg:cHard+" hard"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: inflation — all four strategies, the 22-point spread
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="inflation"){
+      const xPos=[-4.2,-1.4,1.4,4.2];
+      const yS=4.4;
+      const trueAb=STRAT[3].auroc;
+      STRAT.forEach((st,idx)=>{
+        const x=xPos[idx];
+        const active=(idx===stratParam);
+        const col=new T.Color(st.col);
+        const hA=0.12+st.auroc*yS;
+        const bA=new T.Mesh(new T.BoxGeometry(1.0,hA,1.1),
+          new T.MeshStandardMaterial({color:col.clone(),emissive:col.clone().multiplyScalar(active?0.9:0.25),
+            emissiveIntensity:active?0.75:0.2,roughness:0.4,transparent:!active,opacity:active?1:0.55}));
+        bA.position.set(x-0.62,hA/2,0);gBars.add(bA);
+        api.pick(bA,{stratBar:{name:st.name,kind:"AUROC",val:st.auroc,active}});
+        addLbl(st.auroc.toFixed(2),st.col,1.3,x-0.62,hA+0.42,0);
+        const hP=0.12+st.auprc*yS;
+        const bP=new T.Mesh(new T.BoxGeometry(0.7,hP,0.7),
+          new T.MeshStandardMaterial({color:col.clone(),emissive:col.clone().multiplyScalar(0.25),
+            emissiveIntensity:0.2,roughness:0.5,transparent:true,opacity:active?0.7:0.35}));
+        bP.position.set(x+0.55,hP/2,-1.3);gBars.add(bP);
+        api.pick(bP,{stratBar:{name:st.name,kind:"AUPRC",val:st.auprc,active}});
+        addSlbl(st.auprc.toFixed(2),st.col,0.42,x+0.55,hP+0.3,-1.3);
+        addSlbl(st.name,st.col,0.4,x,0.06,1.3);
+      });
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-6,0,0),new T.Vector3(6,0,0)]),new T.LineBasicMaterial({color:0x223347})));
+      const refY=0.12+trueAb*yS;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-6,refY,0),new T.Vector3(6,refY,0)]),
+        new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.6})));
+      addLbl("true ability ≈ "+trueAb.toFixed(2),"#a78bfa",1.05,-4.6,refY+0.35,0);
+      const yR=0.12+STRAT[0].auroc*yS, yM=0.12+STRAT[3].auroc*yS;
+      const fill=new T.Mesh(new T.BoxGeometry(0.18,yR-yM,0.18),
+        new T.MeshBasicMaterial({color:RO.getHex(),transparent:true,opacity:0.5}));
+      fill.position.set(5.4,(yR+yM)/2,0);gBars.add(fill);
+      const spread=STRAT[0].auroc-STRAT[3].auroc;
+      addLbl("+"+(spread*100).toFixed(0)+"pp inflation","#f87171",1.2,5.0,yR+0.4,0);
+      addLbl("AUROC (tall) · AUPRC (short, behind)","#8a99ad",1.0,0,yS+0.9,0);
+
+      sceneSnap={mode,strategy:stratParam,spreadAUROC:+spread.toFixed(2),
+        randomAUROC:STRAT[0].auroc,motifAUROC:STRAT[3].auroc,
+        activeAUROC:STRAT[stratParam].auroc,activeAUPRC:STRAT[stratParam].auprc,
+        trueAbility:trueAb};
+
+      api.setMetric("auroc",STRAT[stratParam].auroc.toFixed(2));
+      api.setMetric("auprc",STRAT[stratParam].auprc.toFixed(2));
+      api.setMetric("negCount","14");
+      api.setMetric("falseNeg","+"+(spread*100).toFixed(0)+"pp");
+
+      return {
+        badge:"Inflation ladder · random "+STRAT[0].auroc.toFixed(2)+" → motif "+STRAT[3].auroc.toFixed(2),
+        formula:"AUROC_random − AUROC_motif = 0.85 − 0.63 = 0.22  (22 pp)",
+        insight:"Four negative-sampling strategies, one classifier, the same 14 positive edges — four AUROC values spanning 22 percentage points. Random negatives (0.85) reward trivial TF-identity and pathway-distance shortcuts; motif-matched negatives (0.63) approximate the model's TRUE regulatory-discrimination ability (violet line). The rose ribbon is the inflation a paper banks by reporting random negatives. Switch the active strategy to read its AUROC/AUPRC pair.",
+        state:"Active: "+STRAT[stratParam].name+" · AUROC "+STRAT[stratParam].auroc.toFixed(2)+", AUPRC "+STRAT[stratParam].auprc.toFixed(2)+". Spread random→motif = "+(spread*100).toFixed(0)+"pp.",
+        metrics:{auroc:STRAT[stratParam].auroc.toFixed(2),auprc:STRAT[stratParam].auprc.toFixed(2),
+          negCount:"14",falseNeg:"+"+(spread*100).toFixed(0)+"pp"},
+        focus:{center:[0,2.2,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: mixture — Section 4 mechanism AUROC = e·0.90 + (1−e)·0.60
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="mixture"){
+      const Peasy=0.90, Phard=0.60;
+      const e=easyFrac;
+      const aMix=e*Peasy+(1-e)*Phard;
+      const nDots=40;
+      const nEasy=Math.round(e*nDots);
+      for(let d=0;d<nDots;d++){
+        const easy=d<nEasy;
+        const col=easy?RO.clone():GR.clone();
+        const ang=d/nDots*Math.PI*2;
+        const rr=easy?2.4:3.4;
+        const dot=new T.Mesh(new T.SphereGeometry(0.13,8,8),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.6,roughness:0.4}));
+        dot.position.set(Math.cos(ang)*rr,(prand(d*3.1)-0.5)*0.8,Math.sin(ang)*rr);
+        gNeg.add(dot);
+      }
+      addLbl("easy negatives  P(sep)=0.90","#f87171",1.15,0,2.0,2.6);
+      addLbl("hard negatives  P(sep)=0.60","#34d399",1.15,0,2.0,-3.8);
+      const h=0.15+aMix*4.2;
+      const col=api.ramp((aMix-Phard)/(Peasy-Phard),"#34d399","#f87171");
+      const bar=new T.Mesh(new T.BoxGeometry(1.4,h,1.4),
+        new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.7,roughness:0.35}));
+      bar.position.set(0,h/2,0);gBars.add(bar);
+      api.pick(bar,{mixBar:{auroc:aMix,easyFrac:e}});
+      addLbl("AUROC "+aMix.toFixed(2),"#"+col.getHexString(),1.6,0,h+0.6,0);
+      [["#34d399",Phard,"100% hard"],["#f87171",Peasy,"100% easy"]].forEach(rf=>{
+        const yy=0.15+rf[1]*4.2;
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+          [new T.Vector3(-2.2,yy,0),new T.Vector3(2.2,yy,0)]),
+          new T.LineBasicMaterial({color:new T.Color(rf[0]).getHex(),transparent:true,opacity:0.5})));
+        addSlbl(rf[2],rf[0],0.36,2.7,yy,0);
+      });
+
+      sceneSnap={mode,easyFrac:+e.toFixed(2),aurocMix:+aMix.toFixed(3),
+        pEasy:Peasy,pHard:Phard,inflationVsHard:+(aMix-Phard).toFixed(3)};
+
+      api.setMetric("auroc",aMix.toFixed(2));
+      api.setMetric("auprc","—");
+      api.setMetric("negCount",nEasy+" easy");
+      api.setMetric("falseNeg","+"+((aMix-Phard)*100).toFixed(0)+"pp");
+
+      return {
+        badge:"Mixture · "+(e*100).toFixed(0)+"% easy → AUROC "+aMix.toFixed(2),
+        formula:"AUROC = e·0.90 + (1−e)·0.60   (e = easy fraction)",
+        insight:"AUROC is the probability a positive outscores a negative. Easy negatives separate with P=0.90, hard ones with only P=0.60. A negative set that is "+(e*100).toFixed(0)+"% easy yields AUROC "+aMix.toFixed(2)+" — inflated by "+((aMix-Phard)*100).toFixed(0)+"pp over the all-hard value 0.60. At e=0.60 you recover the note's worked 0.78; at e=0 you reach true ability 0.60.",
+        state:"easy fraction e = "+e.toFixed(2)+" → AUROC = "+e.toFixed(2)+"·0.90 + "+(1-e).toFixed(2)+"·0.60 = "+aMix.toFixed(2)+". Inflation vs all-hard: "+((aMix-Phard)*100).toFixed(0)+"pp.",
+        metrics:{auroc:aMix.toFixed(2),auprc:"—",negCount:nEasy+" easy",falseNeg:"+"+((aMix-Phard)*100).toFixed(0)+"pp"},
+        focus:{center:[0,1.6,0],radius:12}
+      };
+    }
+
+    return {badge:"H06",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"h06",
+    kind:"negative-sampling-false-negatives",
+    eyebrow:"Block H · Benchmarks and Datasets",
+    title:"H06 · Negative sampling and false negatives in biology",
+    subtitle:"A 10-gene GRN, 14 true edges, four ways to draw negatives. The open-world assumption makes \"absent\" mean \"unstudied\" — and the negative set you pick decides your AUROC.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, a negative arc, or a bar.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"open-world",  label:"Open-world (false negatives in N)"},
+      {value:"strategies",  label:"Four sampling strategies"},
+      {value:"inflation",   label:"AUROC inflation ladder"},
+      {value:"mixture",     label:"Easy/hard mixture mechanism"}
+    ],
+    params:[
+      {key:"strategy", label:"strategy (0=rand 1=TF 2=path 3=motif)",min:0,max:3,step:1,value:0,
+       fmt:v=>["Random","TF-matched","Pathway","Motif"][Math.round(v)],modes:["strategies","inflation"]},
+      {key:"nNeg",     label:"# negatives sampled",min:6,max:30,step:1,value:14,
+       fmt:v=>Math.round(v).toString(),modes:["open-world","strategies"]},
+      {key:"fnFrac",   label:"false-negative rate in N",min:0,max:0.7,step:0.05,value:0.3,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["open-world"]},
+      {key:"easyFrac", label:"fraction easy negatives (mixture)",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["mixture"]}
+    ],
+    metrics:[
+      {key:"auroc",    label:"AUROC",accent:"cyan"},
+      {key:"auprc",    label:"AUPRC",accent:"green"},
+      {key:"negCount", label:"# negatives",accent:"amber"},
+      {key:"falseNeg", label:"hard / FN / inflation",accent:"rose"}
+    ],
+    layers:[
+      {group:"net",   label:"Gene network"},
+      {group:"neg",   label:"Negatives / FN"},
+      {group:"bars",  label:"Metric bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Random negatives",
+      on:api=>{if(api.state.mode==="mixture")api.setParam("easyFrac",0.6);else api.setParam("strategy",0);}
+    },
+    secondary:{
+      label:"Hard (motif) negatives",
+      on:api=>{if(api.state.mode==="mixture")api.setParam("easyFrac",0);else api.setParam("strategy",3);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:13},
+    hint:'<span style="color:#a78bfa">violet</span>=known positive · <span style="color:#f87171">rose</span>=easy / false-negative · <span style="color:#fbbf24">amber</span>=TF / moderate · <span style="color:#4dd7ff">cyan</span>=pathway / true-neg · <span style="color:#34d399">green</span>=motif / hard.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="inflation") api.frame([0,2.2,0],14);
+      else if(s.mode==="mixture") api.frame([0,1.6,0],12);
+      else api.frame([0,0,0],s.mode==="strategies"?13:12);
+    },
+    onSelect(api,d){
+      if(d.gene)      api.setSelected((d.gene.tf?"TF":"gene")+" "+d.gene.id+" · pathway "+d.gene.path);
+      if(d.fn)        api.setSelected("Hidden true edge "+d.fn.src+"→"+d.fn.tgt+" · FALSE NEGATIVE in N");
+      if(d.neg)       api.setSelected("Negative "+d.neg.src+"→"+d.neg.tgt+" · "+d.neg.hard);
+      if(d.metricBar) api.setSelected(d.metricBar.kind+" = "+d.metricBar.val.toFixed(2));
+      if(d.stratBar)  api.setSelected(d.stratBar.name+" · "+d.stratBar.kind+" "+d.stratBar.val.toFixed(2)+(d.stratBar.active?" · ACTIVE":""));
+      if(d.mixBar)    api.setSelected("AUROC "+d.mixBar.auroc.toFixed(2)+" at "+(d.mixBar.easyFrac*100).toFixed(0)+"% easy");
+    },
+    build,
+    snapshot(s){
+      const strat=Math.round(s.strategy||0);
+      const out={
+        mode:s.mode,
+        strategy:strat,
+        strategyName:STRAT[strat]?STRAT[strat].name:"",
+        nNeg:Math.round(s.nNeg),
+        fnFrac:+(+s.fnFrac).toFixed(2),
+        easyFrac:+(+s.easyFrac).toFixed(2),
+        totalNegatives:ALL_NEGS.length,
+        positives:14,
+        randomAUPRC:+RAND_AUPRC.toFixed(2)
+      };
+      if(s.mode==="strategies"||s.mode==="inflation"){
+        out.auroc=STRAT[strat].auroc;
+        out.auprc=STRAT[strat].auprc;
+        out.dropVsRandom=+STRAT[strat].drop.toFixed(2);
+        out.spreadRandomMotif=+(STRAT[0].auroc-STRAT[3].auroc).toFixed(2);
+      }
+      if(s.mode==="mixture"){
+        const e=+s.easyFrac;const a=e*0.90+(1-e)*0.60;
+        out.aurocMix=+a.toFixed(3);
+        out.inflationVsHard=+(a-0.60).toFixed(3);
+      }
+      if(s.mode==="open-world"){
+        out.fprMeasured=+(14/ALL_NEGS.length).toFixed(3);
+      }
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

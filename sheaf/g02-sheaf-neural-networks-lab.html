@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G02 · Sheaf Neural Networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic hashing only; engine/figure-kit forbid stochastic calls ─
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const hash1=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── canonical Section-5 worked example (THE lesson's tiny model) ─────────
+  // 3 nodes: TF1(0), GeneA(1), GeneB(2). Stalk dim d=2.
+  const X0={ TF:[2.0,1.5], A:[1.6,1.2], B:[0.5,0.8] };   // layer-0 features
+  // restriction maps are scalar·I on R^2:
+  //   e1=(TF1,GeneA) ACTIVATION conf c1: F(TF,e1)=c1·I, F(A,e1)=I
+  //   e2=(TF1,GeneB) REPRESSION conf c2: F(TF,e2)=−c2·I, F(B,e2)=I
+  const sub=(a,b)=>[a[0]-b[0],a[1]-b[1]];
+  const sc =(s,a)=>[s*a[0],s*a[1]];
+  const add=(a,b)=>[a[0]+b[0],a[1]+b[1]];
+  const n2 =a=>a[0]*a[0]+a[1]*a[1];
+
+  // per-edge coboundary (δx)_e = F(head,e)x_head − F(tail,e)x_tail  (tail=TF)
+  function coboundary(cAct,cRep){
+    const d1=sub(X0.A, sc(cAct,  X0.TF));   // e1: xA − cAct·xTF
+    const d2=sub(X0.B, sc(-cRep, X0.TF));   // e2: xB + cRep·xTF   (repression sign)
+    return {d1,d2,E1:n2(d1),E2:n2(d2)};
+  }
+  // sheaf gradient (L_F x)_v = F(v,e)^T (δx)_e  (here F(v,e)=I at gene heads)
+  function gradients(cAct,cRep){
+    const {d1,d2}=coboundary(cAct,cRep);
+    const gA=d1;                                       // gradient at GeneA
+    const gB=d2;                                       // gradient at GeneB
+    // gradient at TF1: sum over incident edges of F(TF,e)^T(F(TF,e)xTF − F(head)x_head)
+    const gTF1=sc(cAct,  sub(sc(cAct, X0.TF), X0.A));
+    const gTF2=sc(-cRep, sub(sc(-cRep,X0.TF), X0.B));
+    return {gTF:add(gTF1,gTF2), gA, gB};
+  }
+  // one SNN propagation step  x ← x − (α/λmax)·(L_F x),  applied L layers
+  function propagate(cAct,cRep,alpha,lmax,layers){
+    let TF=X0.TF.slice(), A=X0.A.slice(), B=X0.B.slice();
+    const step=alpha/Math.max(0.01,lmax);
+    for(let l=0;l<layers;l++){
+      const g=gradients(cAct,cRep);                    // gradient frozen at x0 maps; recompute on x
+      // recompute coboundary on CURRENT features
+      const d1=sub(A, sc(cAct,TF));
+      const d2=sub(B, sc(-cRep,TF));
+      const gA=d1, gB=d2;
+      const gTF1=sc(cAct,  sub(sc(cAct,TF), A));
+      const gTF2=sc(-cRep, sub(sc(-cRep,TF),B));
+      const gTF=add(gTF1,gTF2);
+      TF=sub(TF, sc(step,gTF));
+      A =sub(A,  sc(step,gA));
+      B =sub(B,  sc(step,gB));
+    }
+    return {TF,A,B};
+  }
+  // restriction-map-consistent targets (global section): A=cAct·xTF, B=−cRep·xTF
+  function targets(cAct,cRep){ return {A:sc(cAct,X0.TF), B:sc(-cRep,X0.TF)}; }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const cAct=s.cAct, cRep=s.cRep, alpha=s.alpha, lmax=s.lambdaMax, layer=Math.round(s.layer);
+
+    const gNet  =api.group("net");
+    const gFlow =api.group("flow");
+    const gBars =api.group("bars");
+    const gLbl  =api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // TF / structure
+    const GR=new T.Color("#34d399");   // activation (+)
+    const RO=new T.Color("#fb7185");   // repression (−)
+    const AM=new T.Color("#fbbf24");   // energy / GCN-blind
+    const VI=new T.Color("#a78bfa");   // sheaf gradient / spectral
+    const SL=new T.Color("#54667c");
+
+    const big=(txt,col,sz,x,y,z)=>{const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);};
+    const sml=(txt,col,sz,x,y,z)=>{const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);};
+
+    // node anchor positions (the worked-example triangle: TF on top, A,B below)
+    const P={ TF:new T.Vector3(0,2.4,0), A:new T.Vector3(-3.0,-1.4,0), B:new T.Vector3(3.0,-1.4,0) };
+
+    const cob=coboundary(cAct,cRep);
+    const Etot=cob.E1+cob.E2;
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE 1 — sheaf-diffusion : the SNN propagation on the 3-gene GRN
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="sheaf-diffusion"){
+      const prop=propagate(cAct,cRep,alpha,lmax,layer);
+      const tgt=targets(cAct,cRep);
+
+      // restriction-map edges (signed): green=activation, rose=repression, width ~ confidence
+      api.edge(P.TF,P.A,{color:"#34d399",width:0.04+0.06*cAct,group:"net",opacity:0.95});
+      api.edge(P.TF,P.B,{color:"#fb7185",width:0.04+0.06*cRep,group:"net",opacity:0.95});
+      api.arrow(P.TF.clone().lerp(P.A,0.30),P.TF.clone().lerp(P.A,0.62),{color:"#34d399",head:0.20,width:0.03,group:"net"});
+      api.arrow(P.TF.clone().lerp(P.B,0.30),P.TF.clone().lerp(P.B,0.62),{color:"#fb7185",head:0.20,width:0.03,group:"net"});
+      sml("F(TF,e1)="+cAct.toFixed(2)+"·I","#34d399",0.40,-1.9,0.9,0);
+      sml("F(TF,e2)=−"+cRep.toFixed(2)+"·I","#fb7185",0.40,1.9,0.9,0);
+
+      // nodes
+      api.node(P.TF,{r:0.46,color:"#4dd7ff",label:"TF1",pick:{node:"TF1",x:prop.TF}});
+      api.node(P.A ,{r:0.40,color:"#34d399",label:"GeneA",pick:{node:"GeneA",x:prop.A,tgt:tgt.A}});
+      api.node(P.B ,{r:0.40,color:"#fb7185",label:"GeneB",pick:{node:"GeneB",x:prop.B,tgt:tgt.B}});
+
+      // sheaf-gradient arrows: ghost targets show where diffusion pulls each gene
+      function pullArrow(P0,xcur,xtgt,col){
+        // map 2D stalk delta to a small world offset (x=expr→world.x, y=access→world.z)
+        const d=sub(xtgt,xcur);
+        const tip=P0.clone().add(new T.Vector3(d[0]*0.55,0,d[1]*0.55));
+        api.arrow(P0.clone().add(new T.Vector3(0,-0.55,0)),tip.clone().add(new T.Vector3(0,-0.55,0)),
+          {color:col,head:0.16,width:0.03,group:"flow"});
+        // ghost target marker
+        const m=new T.Mesh(new T.SphereGeometry(0.14,12,10),new T.MeshBasicMaterial({color:col,transparent:true,opacity:0.5}));
+        m.position.copy(tip).add(new T.Vector3(0,-0.55,0)); gFlow.add(m);
+      }
+      pullArrow(P.A,prop.A,tgt.A,"#a78bfa");
+      pullArrow(P.B,prop.B,tgt.B,"#a78bfa");
+
+      // per-edge energy bars (front)
+      function bar(x,val,col,name){
+        const h=0.2+Math.min(val,8)*0.42;
+        const b=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),
+          new T.MeshStandardMaterial({color:col,emissive:new T.Color(col).multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        b.position.set(x,h/2-2.9,3.4); gBars.add(b);
+        api.pick(b,{edge:name,energy:val});
+        big(val.toFixed(2),"#"+new T.Color(col).getHexString(),0.95,x,h-2.5,3.4);
+        sml(name,"#9fb4cc",0.36,x,-3.0,3.4);
+      }
+      bar(-1.1,cob.E1,"#34d399","e1 ‖δx‖²");
+      bar( 1.1,cob.E2,"#fb7185","e2 ‖δx‖²");
+      big("per-edge sheaf energy","#8a99ad",0.5,0,-3.5,3.4);
+
+      // current feature readouts at nodes
+      sml("x="+prop.A.map(v=>v.toFixed(2)).join(", "),"#9fb4cc",0.34,-3.0,-2.1,0);
+      sml("x="+prop.B.map(v=>v.toFixed(2)).join(", "),"#9fb4cc",0.34,3.0,-2.1,0);
+
+      const conv=1-Math.min(1,(n2(sub(prop.A,tgt.A))+n2(sub(prop.B,tgt.B)))/Math.max(1e-6,Etot));
+      api.setMetric("sheafEnergy",Etot.toFixed(2));
+      api.setMetric("e2Share",(100*cob.E2/Math.max(1e-6,Etot)).toFixed(0)+"%");
+      api.setMetric("layer",""+layer);
+      api.setMetric("convergence",(conv*100).toFixed(0)+"%");
+
+      sceneSnap={mode,cAct:+cAct.toFixed(3),cRep:+cRep.toFixed(3),alpha:+alpha.toFixed(3),layer,
+        E1:+cob.E1.toFixed(3),E2:+cob.E2.toFixed(3),sheafEnergy:+Etot.toFixed(3),
+        e2Share:+(cob.E2/Math.max(1e-6,Etot)).toFixed(3),convergence:+conv.toFixed(3),
+        xA1:+prop.A[0].toFixed(4),xB1:+prop.B[0].toFixed(4)};
+
+      return {
+        badge:"Sheaf diffusion · layer "+layer+" · α="+alpha.toFixed(2),
+        formula:"x<sup>l+1</sup> = σ( (I − α·L<sub>F</sub>/λ<sub>max</sub>) x<sup>l</sup> W<sup>l</sup> )",
+        insight:"Each layer takes a gradient step on the sheaf energy E_F = Σ_e ‖δx_e‖². The violet arrows are the sheaf gradient (L_F x)_v — they pull GeneA toward "+cAct.toFixed(2)+"·x_TF and GeneB toward −"+cRep.toFixed(2)+"·x_TF, the restriction-map-consistent (global-section) targets. The repressive edge e2 carries almost all the energy because GeneB's raw state disagrees with the −"+cRep.toFixed(2)+" prior.",
+        state:"E_F="+Etot.toFixed(2)+" (e1="+cob.E1.toFixed(2)+", e2="+cob.E2.toFixed(2)+"). After "+layer+" layer(s): x_GeneA="+prop.A.map(v=>v.toFixed(3)).join(", ")+"; x_GeneB="+prop.B.map(v=>v.toFixed(3)).join(", ")+". Inconsistent modes shrink by (1−α)^l per layer.",
+        metrics:{sheafEnergy:Etot.toFixed(2),e2Share:(100*cob.E2/Math.max(1e-6,Etot)).toFixed(0)+"%",layer:""+layer,convergence:(conv*100).toFixed(0)+"%"},
+        focus:{center:[0,0,1.2],radius:13}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE 2 — gcn-vs-sheaf : GCN is the degenerate (d=1, identity-map) case
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="gcn-vs-sheaf"){
+      // sheaf side: signed maps keep repression -> E2 large
+      const sheafE2=cob.E2;
+      // GCN side: scalar Laplacian, all maps = +1 (sign-blind) -> e2 looks consistent
+      const gcnD2=sub(X0.B,X0.TF);           // identity, positive: xB − xTF
+      const gcnE2=n2(gcnD2);
+      const gcnD1=sub(X0.A,X0.TF);
+      const gcnE1=n2(gcnD1);
+
+      // LEFT column = scalar GCN (amber), RIGHT column = sheaf (cyan)
+      // draw two mini graphs side by side
+      function miniGraph(ox,signed,col){
+        const tf=new T.Vector3(ox,2.0,0), a=new T.Vector3(ox-1.7,-1.0,0), b=new T.Vector3(ox+1.7,-1.0,0);
+        const eCol2=signed?"#fb7185":"#fbbf24";
+        api.edge(tf,a,{color:signed?"#34d399":"#fbbf24",width:0.05,group:"net"});
+        api.edge(tf,b,{color:eCol2,width:0.05,group:"net"});
+        api.node(tf,{r:0.34,color:"#4dd7ff",label:"TF1",pick:{node:"TF1"}});
+        api.node(a ,{r:0.30,color:signed?"#34d399":"#fbbf24"});
+        api.node(b ,{r:0.30,color:signed?"#fb7185":"#fbbf24"});
+        sml(signed?"sheaf L_F (signed)":"scalar GCN L (sign-blind)","#"+new T.Color(col).getHexString(),0.42,ox,2.9,0);
+        sml(signed?"−"+cRep.toFixed(2)+"·I on e2":"+1 on every edge","#9fb4cc",0.34,ox,-1.7,0);
+      }
+      miniGraph(-3.4,false,AM.getHex());
+      miniGraph( 3.4,true ,CY.getHex());
+
+      // energy bars for e2 under each model (the headline contrast)
+      function ebar(x,val,col,name){
+        const h=0.2+Math.min(val,8)*0.42;
+        const b=new T.Mesh(new T.BoxGeometry(1.0,h,1.0),
+          new T.MeshStandardMaterial({color:col,emissive:new T.Color(col).multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        b.position.set(x,h/2-3.2,3.0); gBars.add(b);
+        api.pick(b,{model:name,e2energy:val});
+        big(val.toFixed(2),"#"+new T.Color(col).getHexString(),1.0,x,h-2.7,3.0);
+        sml(name,"#9fb4cc",0.36,x,-3.4,3.0);
+      }
+      ebar(-1.4,gcnE2,"#fbbf24","GCN e2 energy");
+      ebar( 1.4,sheafE2,"#fb7185","sheaf e2 energy");
+      big("repressor e2: how much inconsistency does each model see?","#8a99ad",0.46,0,-3.9,3.0);
+
+      api.setMetric("sheafEnergy",sheafE2.toFixed(2));
+      api.setMetric("e2Share",(sheafE2>gcnE2?"+"+((sheafE2-gcnE2)).toFixed(2):"—"));
+      api.setMetric("layer","d="+1+" vs "+2);
+      api.setMetric("convergence",(gcnE2<sheafE2?"sign hidden":"ok"));
+
+      sceneSnap={mode,cAct:+cAct.toFixed(3),cRep:+cRep.toFixed(3),
+        gcnE2:+gcnE2.toFixed(3),sheafE2:+sheafE2.toFixed(3),
+        signGapE2:+(sheafE2-gcnE2).toFixed(3),signHidden:gcnE2<sheafE2?1:0};
+
+      return {
+        badge:"GCN vs Sheaf · degenerate d=1 case",
+        formula:"GCN: L = D − A (scalar)   ⊂   Sheaf: L<sub>F</sub> = δ<sub>F</sub><sup>T</sup>δ<sub>F</sub>  (block, signed)",
+        insight:"GCN is the special case d=1, F(v,e)=1/√d_v on every edge — every restriction map is a non-negative scalar, so the repressive edge e2 is treated like an activator. A scalar GCN sees only ‖x_B − x_TF‖²="+gcnE2.toFixed(2)+" on e2, while the signed sheaf map −"+cRep.toFixed(2)+"·I exposes the true inconsistency ‖x_B + "+cRep.toFixed(2)+"·x_TF‖²="+sheafE2.toFixed(2)+". The sign the GCN throws away is exactly what a signed GRN needs.",
+        state:"e2 energy — GCN(identity, +): "+gcnE2.toFixed(2)+" vs sheaf(−"+cRep.toFixed(2)+"·I): "+sheafE2.toFixed(2)+". Gap = "+(sheafE2-gcnE2).toFixed(2)+". The GCN "+(gcnE2<sheafE2?"HIDES":"matches")+" the repressor; the sheaf keeps it.",
+        metrics:{sheafEnergy:sheafE2.toFixed(2),e2Share:"Δ"+(sheafE2-gcnE2).toFixed(2),layer:"d=1 ⊂ d=2",convergence:gcnE2<sheafE2?"sign hidden":"ok"},
+        focus:{center:[0,0,1.0],radius:13}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE 3 — spectral : energy/spectral view — eigenmode damping per layer
+    // ══════════════════════════════════════════════════════════════════════
+    {
+      // spectral view of (I − α·L_F/λmax): each eigenmode i multiplied by (1 − α·λ_i/λmax)
+      // sample eigenvalues across the spectrum of the worked-example L_F
+      // diag blocks: TF=cAct²+cRep², A=1, B=1 ; trace = 2(cAct²+cRep²+2)
+      const trace=2*(cAct*cAct+cRep*cRep+2);
+      // 6 eigenvalues spanning 0 (global section) .. lmax (most inconsistent)
+      const eig=[0,0.18*lmax,0.40*lmax,0.62*lmax,0.84*lmax,lmax];
+      const xS=1.5, xOff=-3.8;
+      // axis
+      gFlow.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff-0.4,-2.6,0),new T.Vector3(xOff+6*xS,-2.6,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gFlow.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff-0.4,-2.6,0),new T.Vector3(xOff-0.4,3.2,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      big("retained fraction (1−α·λ/λmax)^l","#8a99ad",0.46,xOff+3*xS,3.0,0);
+      sml("λ_i  (0 = global section → λmax = most inconsistent)","#8a99ad",0.34,xOff+3*xS,-3.0,0);
+
+      let dampedSum=0, kernelDim=0;
+      eig.forEach((lam,i)=>{
+        const factor=Math.max(0,1-alpha*lam/Math.max(0.01,lmax));
+        const retained=Math.pow(factor,layer);
+        if(lam<1e-6) kernelDim++;
+        const x=xOff+i*xS;
+        const h=0.05+retained*4.8;
+        const isKernel=lam<1e-6;
+        const col=isKernel?GR:(retained>0.5?CY:VI);
+        const b=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        b.position.set(x,-2.6+h/2,0); gBars.add(b);
+        api.pick(b,{eigenvalue:+lam.toFixed(3),retained:+retained.toFixed(3),kernel:isKernel});
+        big((retained*100).toFixed(0)+"%","#"+col.getHexString(),0.5,x,-2.6+h+0.4,0);
+        sml("λ"+i,"#9fb4cc",0.34,x,-2.95,0);
+        if(!isKernel) dampedSum+=retained;
+      });
+      // global-section marker
+      big("global section (kept)","#34d399",0.44,xOff,3.0,0);
+
+      const avgDamp=dampedSum/5;
+      api.setMetric("sheafEnergy",Etot.toFixed(2));
+      api.setMetric("e2Share","ker dim "+kernelDim);
+      api.setMetric("layer",""+layer);
+      api.setMetric("convergence",(avgDamp*100).toFixed(0)+"%");
+
+      sceneSnap={mode,cAct:+cAct.toFixed(3),cRep:+cRep.toFixed(3),alpha:+alpha.toFixed(3),layer,
+        lambdaMax:+lmax.toFixed(3),kernelDim,
+        inconsistentRetained:+Math.pow(1-alpha,layer).toFixed(4),avgDamp:+avgDamp.toFixed(3)};
+
+      return {
+        badge:"Spectral view · "+layer+" layers · ker dim "+kernelDim,
+        formula:"(I − α·L<sub>F</sub>/λ<sub>max</sub>) ↦ multiply mode i by (1 − α·λ<sub>i</sub>/λ<sub>max</sub>)<sup>l</sup>",
+        insight:"Each SNN layer multiplies eigenmode i by (1 − α·λ_i/λ_max). The λ=0 mode (green) is a global section — a perfectly consistent regulatory state — and survives unchanged (kernel dim "+kernelDim+"). High-λ modes (violet) are biologically inconsistent and are damped: with α="+alpha.toFixed(2)+" the most inconsistent mode retains (1−α)^l = "+Math.pow(1-alpha,layer).toFixed(3)+" after "+layer+" layer(s). This is why multi-layer SNNs reinforce the prior without oversmoothing.",
+        state:"λmax="+lmax.toFixed(2)+", trace(L_F)="+trace.toFixed(2)+", kernel dim "+kernelDim+". Most-inconsistent mode retained = (1−"+alpha.toFixed(2)+")^"+layer+" = "+Math.pow(1-alpha,layer).toFixed(3)+". Mean retained over non-kernel modes "+(avgDamp*100).toFixed(0)+"%.",
+        metrics:{sheafEnergy:Etot.toFixed(2),e2Share:"ker "+kernelDim,layer:""+layer,convergence:(avgDamp*100).toFixed(0)+"%"},
+        focus:{center:[0,0,0],radius:13}
+      };
+    }
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g02",
+    kind:"sheaf-neural-networks",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G02 · Sheaf Neural Networks",
+    subtitle:"A fixed sheaf Laplacian L_F replaces the scalar GCN Laplacian. Three views on the Section-5 GRN (TF1→GeneA +0.9, TF1→GeneB −0.7): sheaf diffusion, GCN as the degenerate case, and the spectral damping picture.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge bar, or eigenmode.",
+    modes:[
+      {value:"sheaf-diffusion", label:"Sheaf diffusion (the SNN layer)"},
+      {value:"gcn-vs-sheaf",    label:"GCN vs sheaf (degenerate d=1)"},
+      {value:"spectral",        label:"Spectral view (eigenmode damping)"}
+    ],
+    params:[
+      {key:"alpha",     label:"α  diffusion step",min:0.05,max:1.0,step:0.05,value:0.5,
+       fmt:v=>v.toFixed(2)},
+      {key:"cAct",      label:"c₁  activation conf (e1)",min:0.1,max:1.5,step:0.05,value:0.9,
+       fmt:v=>v.toFixed(2),modes:["sheaf-diffusion","gcn-vs-sheaf"]},
+      {key:"cRep",      label:"c₂  repression conf (e2)",min:0.1,max:1.5,step:0.05,value:0.7,
+       fmt:v=>v.toFixed(2),modes:["sheaf-diffusion","gcn-vs-sheaf"]},
+      {key:"layer",     label:"l  propagation layers",min:0,max:8,step:1,value:1,
+       fmt:v=>Math.round(v).toString(),modes:["sheaf-diffusion","spectral"]},
+      {key:"lambdaMax", label:"λmax  spectral norm",min:0.5,max:4.0,step:0.25,value:2.0,
+       fmt:v=>v.toFixed(2),modes:["sheaf-diffusion","spectral"]}
+    ],
+    metrics:[
+      {key:"sheafEnergy", label:"Sheaf energy E_F",accent:"violet"},
+      {key:"e2Share",     label:"repressor e2 / kernel",accent:"rose"},
+      {key:"layer",       label:"layer / depth",accent:"amber"},
+      {key:"convergence", label:"convergence / retained",accent:"cyan"}
+    ],
+    layers:[
+      {group:"net",   label:"GRN / restriction maps"},
+      {group:"flow",  label:"Sheaf gradient / spectrum"},
+      {group:"bars",  label:"Energy bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Layer 0 (raw x)",
+      on:api=>{api.setParam("layer",0);}
+    },
+    secondary:{
+      label:"Converge (8 layers)",
+      on:api=>{api.setParam("layer",8);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF / structure · <span style="color:#34d399">green</span>=activation (+) / global section · <span style="color:#fb7185">rose</span>=repression (−) · <span style="color:#fbbf24">amber</span>=scalar-GCN (sign-blind) · <span style="color:#a78bfa">violet</span>=sheaf gradient / damped mode.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="spectral") api.frame([0,0,0],13);
+      else api.frame([0,0,1.1],13);
+    },
+    onSelect(api,d){
+      if(d.node)       api.setSelected(d.node+(d.x?" · x=["+d.x.map(v=>v.toFixed(2)).join(", ")+"]"+(d.tgt?" → tgt ["+d.tgt.map(v=>v.toFixed(2)).join(", ")+"]":""):""));
+      if(d.edge)       api.setSelected(d.edge+" · ‖δx‖² = "+d.energy.toFixed(3));
+      if(d.model)      api.setSelected(d.model+" = "+d.e2energy.toFixed(3));
+      if(d.eigenvalue!=null) api.setSelected("λ = "+d.eigenvalue.toFixed(3)+" · retained "+(d.retained*100).toFixed(0)+"%"+(d.kernel?" · GLOBAL SECTION":""));
+    },
+    build,
+    snapshot(s){
+      const cAct=s.cAct, cRep=s.cRep, alpha=s.alpha, layer=Math.round(s.layer), lmax=s.lambdaMax;
+      const cob=coboundary(cAct,cRep);
+      const Etot=cob.E1+cob.E2;
+      const gcnE2=n2(sub(X0.B,X0.TF));
+      const prop=propagate(cAct,cRep,alpha,lmax,layer);
+      return {
+        mode:s.mode,
+        cAct:+cAct.toFixed(3),
+        cRep:+cRep.toFixed(3),
+        alpha:+alpha.toFixed(3),
+        layer:layer,
+        lambdaMax:+lmax.toFixed(3),
+        E1:+cob.E1.toFixed(3),
+        E2:+cob.E2.toFixed(3),
+        sheafEnergy:+Etot.toFixed(3),
+        e2Share:+(cob.E2/Math.max(1e-6,Etot)).toFixed(3),
+        gcnE2:+gcnE2.toFixed(3),
+        signGapE2:+(cob.E2-gcnE2).toFixed(3),
+        inconsistentRetained:+Math.pow(1-alpha,layer).toFixed(4),
+        xA1:+prop.A[0].toFixed(4),
+        xB1:+prop.B[0].toFixed(4),
+        isGlobalSection:Etot<0.02?1:0
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

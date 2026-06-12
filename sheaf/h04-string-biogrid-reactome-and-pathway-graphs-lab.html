@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H04 · STRING, BioGRID, Reactome and pathway graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random helper (no nondeterministic calls) ───────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+  void prand; // available for deterministic jitter; scene uses fixed FACTS
+
+  // ── FACTS: the note's Section-5 worked example ───────────────────────────
+  // TP53 5-node PPI subgraph from STRING experimental channel (>= 700).
+  const NODES=["TP53","MDM2","MDM4","ATM","CHEK2"];
+  // experimental-channel STRING scores for the TP53 pairs (note §5)
+  const EXP={ "TP53-MDM2":998, "TP53-MDM4":882, "TP53-ATM":712,
+              "TP53-CHEK2":701, "MDM2-MDM4":890 };
+  // CDKN1A is the leakage exemplar: combined 890 but experimental < 700
+  const CDKN1A_COMBINED=890, CDKN1A_EXP=0;
+  // adjacency for the 5-node experimental-only subgraph (note §5)
+  const ADJ=[
+    [0,1,1,1,1],   // TP53
+    [1,0,1,0,0],   // MDM2
+    [1,1,0,0,0],   // MDM4
+    [1,0,0,0,1],   // ATM
+    [1,0,0,1,0]    // CHEK2
+  ];
+  // 5-d GO node features [DNA_bind, ubiq_ligase, chk_kinase, tumor_supp, DDR]
+  const FEAT=[
+    [1,0,0,1,1],   // TP53
+    [0,1,0,1,1],   // MDM2
+    [0,1,0,0,0],   // MDM4
+    [0,0,1,0,1],   // ATM
+    [0,0,1,0,1]    // CHEK2
+  ];
+  const FDIM=["DNA-bind","ubiq-ligase","chk-kinase","tumor-supp","DDR"];
+  // PCNA-MCM2 channel decomposition (note §4 — co-expression dominance)
+  const PCNA_CH={ neighbor:0, fusion:0, cooccur:180, coexpr:820, exp:350, db:480, text:610 };
+  const CH_MAX ={ neighbor:250, fusion:200, cooccur:250, coexpr:900, exp:900, db:900, text:900 };
+  // STRING prior correction (note §3)
+  const P_PRIOR=0.041;
+  // database scale facts (note §3) for the three-database contrast
+  const DB={
+    string:{ edges:11.0, label:"STRING v12", claim:"functional assoc.", col:"cyan" },   // ~11M human
+    biogrid:{ edges:0.85, label:"BioGRID v4.4", claim:"physical only", col:"green" },     // ~850k human physical
+    reactome:{ pathways:2518, label:"Reactome v87", claim:"mechanistic", col:"amber" }
+  };
+  // experimental-channel coverage collapse (note §6 diagnostic, in millions)
+  const COVER={ combined700:1.40, exp700:0.095, exp900:0.021 };
+
+  // STRING Bayesian channel combination (note §3 formula)
+  function combinedScore(channels){          // channels: array of raw [0..1000]
+    let prod=1;
+    for(let k=0;k<channels.length;k++) prod*=(1-channels[k]/1000);
+    let pC=1-prod;
+    const pF=(pC*(1-P_PRIOR))/(pC*(1-P_PRIOR)+P_PRIOR*(1-pC));
+    return Math.round(pF*1000);
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const thr=Math.round(s.threshold);          // STRING experimental threshold 150..900
+    const channel=Math.round(s.channel);        // 0=combined 1=experimental-only
+    const coexpr=Math.round(s.coexpr);          // raw co-expression channel score 0..900
+    const hop=Math.round(s.hops);               // GCN message-passing hops 0..2
+
+    const gGraph =api.group("graph");
+    const gMsg   =api.group("message");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+
+    // node ring positions shared by modes that draw the TP53 subgraph
+    function ringPos(i,R){
+      if(i===0) return new T.Vector3(0,0,0);                 // TP53 hub at centre
+      const ang=(i-1)/(NODES.length-1)*Math.PI*2 - Math.PI/2;
+      return new T.Vector3(Math.cos(ang)*R,0,Math.sin(ang)*R);
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: channels — STRING 7-channel evidence + co-expression leakage
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="channels"){
+      // build the 7-channel bar chart for the PCNA-MCM2 example, with the
+      // user-tunable co-expression channel (slider) overriding ch4.
+      const order=["neighbor","fusion","cooccur","coexpr","exp","db","text"];
+      const labels=["nbr","fus","cooc","COEXP","EXP","db","text"];
+      const cols=[SL,SL,SL,RO,GR,CY,AM];
+      const vals=order.map(k=> k==="coexpr"?coexpr:PCNA_CH[k]);
+      const xS=1.25, x0=-3.7, yS=4.2/900;
+      vals.forEach((v,i)=>{
+        const h=Math.max(0.04,v*yS);
+        const x=x0+i*xS;
+        const isCE=(order[i]==="coexpr");
+        const isExp=(order[i]==="exp");
+        const c=cols[i];
+        const bar=new T.Mesh(new T.BoxGeometry(0.78,h,0.78),
+          api.mat(c,{emissive:isCE?0.85:0.3}));
+        bar.material.transparent=true;
+        bar.material.opacity=(channel===1 && !isExp)?0.30:1.0;   // exp-only dims others
+        bar.position.set(x,h/2,0);
+        gBars.add(bar);
+        api.pick(bar,{ch:{name:labels[i],raw:v,max:CH_MAX[order[i]]}});
+        L(""+v,c,1.05,x,h+0.34,0);
+        l(labels[i],c,0.34,x,0.04,0.62);
+      });
+      // baseline + threshold plane
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(x0-0.6,0,0),new T.Vector3(x0+7*xS,0,0)]),
+        new T.LineBasicMaterial({color:0x1e3046})));
+      const thrY=thr*yS;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(x0-0.6,thrY,0),new T.Vector3(x0+7*xS-0.4,thrY,0)]),
+        new T.LineBasicMaterial({color:0xa78bfa,transparent:true,opacity:0.8})));
+      L("threshold "+thr,VI,1.0,x0+7*xS-0.2,thrY+0.18,0);
+
+      // recompute combined score with the slider co-expression value
+      const chArr=[PCNA_CH.neighbor,PCNA_CH.fusion,PCNA_CH.cooccur,coexpr,
+                   PCNA_CH.exp,PCNA_CH.db,PCNA_CH.text];
+      const comb=combinedScore(chArr);
+      const expPass=(PCNA_CH.exp>=thr);
+      const combPass=(comb>=thr);
+
+      L("STRING combined "+comb,channel===0?CY:SL,1.35,0,4.55,0);
+      L("co-expr "+coexpr+" dominates",RO,1.0,0,4.05,0);
+
+      api.setMetric("combinedScore",""+comb);
+      api.setMetric("expScore",""+PCNA_CH.exp);
+      api.setMetric("dominantChannel",coexpr>=PCNA_CH.exp?"co-expr":"exper.");
+      api.setMetric("passFilter",(channel===0?combPass:expPass)?"included":"EXCLUDED");
+
+      sceneSnap={mode,threshold:thr,channel,coexpr,hops:hop,
+        combinedScore:comb,expScore:PCNA_CH.exp,
+        coexprDominates:coexpr>PCNA_CH.exp,
+        includedAtFilter:(channel===0?combPass:expPass)?1:0};
+
+      return {
+        badge:"STRING channels · "+(channel===0?"combined":"experimental-only")+" · thr "+thr,
+        formula:"p_comb = 1 − Π_k (1 − s_k/1000) ;  p_final = prior-corrected(p_comb)",
+        insight:"STRING fuses seven evidence channels into one Bayesian combined score. For PCNA–MCM2 the co-expression channel (rose, "+coexpr+") dominates — combined score "+comb+" passes a 700 filter, but the experimental channel (green, "+PCNA_CH.exp+") does not. Using combined-score edges to evaluate an expression-based GRN is circular: you predict co-expression from co-expression. Switch the channel filter to experimental-only and raise the co-expression slider to watch the gap.",
+        state:"Combined "+comb+" vs experimental "+PCNA_CH.exp+". Dominant channel: "+(coexpr>=PCNA_CH.exp?"co-expression":"experimental")+". At threshold "+thr+": combined "+(combPass?"INCLUDED":"excluded")+", experimental-only "+(expPass?"INCLUDED":"EXCLUDED")+".",
+        metrics:{combinedScore:""+comb,expScore:""+PCNA_CH.exp,
+                 dominantChannel:coexpr>=PCNA_CH.exp?"co-expr":"exper.",
+                 passFilter:(channel===0?combPass:expPass)?"included":"EXCLUDED"},
+        focus:{center:[0,2,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: databases — STRING vs BioGRID vs Reactome evidence models
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="databases"){
+      // three stacked "lenses" over the same TP53 subgraph; the active channel
+      // filter decides which TP53 edges survive in the STRING lens.
+      const R=3.4;
+      const pos=NODES.map((_,i)=>ringPos(i,R));
+      const nodeCols=[CY,GR,VI,AM,RO];
+      // draw nodes
+      pos.forEach((p,i)=>{
+        const sp=new T.Mesh(new T.SphereGeometry(i===0?0.42:0.30,24,18),
+          api.mat(nodeCols[i],{emissive:0.6}));
+        sp.position.copy(p); gGraph.add(sp);
+        api.pick(sp,{node:{id:i,name:NODES[i]}});
+        L(NODES[i],nodeCols[i],1.1,p.x,p.y+(i===0?0.85:0.62),p.z);
+      });
+      // TP53 experimental edges + their scores; thickness ~ score
+      const pairs=[["TP53","MDM2"],["TP53","MDM4"],["TP53","ATM"],["TP53","CHEK2"],["MDM2","MDM4"]];
+      pairs.forEach(pr=>{
+        const a=NODES.indexOf(pr[0]), b=NODES.indexOf(pr[1]);
+        const sc=EXP[pr[0]+"-"+pr[1]];
+        const survives=(channel===0)|| (sc>=thr);
+        const c=survives?CY:SL;
+        const pa=pos[a].clone().setY(0.02), pb=pos[b].clone().setY(0.02);
+        const len=pa.distanceTo(pb);
+        const w=survives?(0.03+0.07*sc/1000):0.02;
+        const geo=new T.CylinderGeometry(w,w,len,10,1,true);
+        const m=new T.MeshStandardMaterial({color:c,emissive:new T.Color(c).multiplyScalar(0.25),
+          roughness:0.5,transparent:true,opacity:survives?0.95:0.22});
+        const e=new T.Mesh(geo,m);
+        e.position.copy(pa).add(pb).multiplyScalar(0.5);
+        const up=new T.Vector3(0,1,0),d=pb.clone().sub(pa).normalize(),q=new T.Quaternion();
+        q.setFromUnitVectors(up,d); e.quaternion.copy(q);
+        gGraph.add(e);
+        if(survives) L(""+sc,CY,0.85,(pa.x+pb.x)/2,0.5,(pa.z+pb.z)/2);
+      });
+      // the leakage exemplar: CDKN1A as a ghost node (combined high, exp 0)
+      const cd=new T.Vector3(R+1.8,0,-0.4);
+      const ghost=new T.Mesh(new T.SphereGeometry(0.30,20,14),
+        new T.MeshStandardMaterial({color:0x1e2d45,emissive:0x111e30,emissiveIntensity:0.2,roughness:0.6,transparent:true,opacity:0.55}));
+      ghost.position.copy(cd); gGraph.add(ghost);
+      api.pick(ghost,{node:{id:99,name:"CDKN1A"}});
+      L("CDKN1A",SL,1.0,cd.x,cd.y+0.62,cd.z);
+      l("comb "+CDKN1A_COMBINED+" · exp "+CDKN1A_EXP,SL,0.34,cd.x,cd.y-0.5,cd.z);
+      // dashed (excluded transcriptional) link TP53--CDKN1A
+      const dl=new T.Line(new T.BufferGeometry().setFromPoints([pos[0].clone().setY(0.02),cd.clone().setY(0.02)]),
+        new T.LineDashedMaterial({color:0xfb7185,dashSize:0.22,gapSize:0.16,transparent:true,opacity:0.7}));
+      dl.computeLineDistances(); gGraph.add(dl);
+
+      // three database lens cards floating above
+      const lens=[
+        {x:-4.2,col:CY,t:"STRING",sub:"~11M · functional"},
+        {x:0,   col:GR,t:"BioGRID",sub:"~0.85M · physical"},
+        {x:4.2, col:AM,t:"Reactome",sub:DB.reactome.pathways+" pw · mechanistic"}
+      ];
+      lens.forEach(le=>{
+        L(le.t,le.col,1.5,le.x,4.6,0);
+        l(le.sub,le.col,0.4,le.x,4.0,0.3);
+        const card=new T.Mesh(new T.PlaneGeometry(2.6,0.16),
+          new T.MeshBasicMaterial({color:le.col,transparent:true,opacity:0.5}));
+        card.position.set(le.x,3.7,0); gGraph.add(card);
+      });
+
+      // count surviving STRING edges under the active filter
+      let kept=0; pairs.forEach(pr=>{ if(channel===0||EXP[pr[0]+"-"+pr[1]]>=thr)kept++; });
+      const total=pairs.length;
+      api.setMetric("combinedScore",channel===0?"all "+total:kept+"/"+total);
+      api.setMetric("expScore",""+EXP["TP53-MDM2"]);
+      api.setMetric("dominantChannel","physical");
+      api.setMetric("passFilter",kept+" edges");
+
+      sceneSnap={mode,threshold:thr,channel,coexpr,hops:hop,
+        edgesKept:kept,edgesTotal:total,
+        cdkn1aExcluded:1,
+        physicalClaim:channel===1?1:0};
+
+      return {
+        badge:"Three databases · STRING / BioGRID / Reactome · "+(channel===0?"combined":"exp-only "+thr),
+        formula:"STRING: functional assoc.   BioGRID: physical only   Reactome: typed reactions",
+        insight:"Same TP53 module, three evidence models. STRING combined edges (~11M human) mix co-expression and text-mining with physical evidence. BioGRID (~0.85M physical) keeps only experimentally validated binding. Reactome encodes typed biochemical reactions (catalyst/input/output/regulator) and is orthogonal to expression — safe as node features. CDKN1A (grey) has combined "+CDKN1A_COMBINED+" but experimental "+CDKN1A_EXP+": its TP53 link is transcriptional, not physical, so the experimental filter drops it (dashed rose).",
+        state:"Filter "+(channel===0?"combined (all "+total+" edges)":"experimental >= "+thr+" ("+kept+"/"+total+" kept)")+". CDKN1A excluded by experimental channel — combined "+CDKN1A_COMBINED+", experimental "+CDKN1A_EXP+".",
+        metrics:{combinedScore:channel===0?"all "+total:kept+"/"+total,
+                 expScore:""+EXP["TP53-MDM2"],dominantChannel:"physical",passFilter:kept+" edges"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: gcn — one GCN message-passing step over the TP53 subgraph
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="gcn"){
+      const R=3.4;
+      const pos=NODES.map((_,i)=>ringPos(i,R));
+      const nodeCols=[CY,GR,VI,AM,RO];
+
+      // compute mean-aggregation features after `hop` GCN steps (note §5)
+      function meanAgg(H){
+        const out=H.map(()=>[0,0,0,0,0]);
+        for(let i=0;i<NODES.length;i++){
+          let deg=0;
+          for(let j=0;j<NODES.length;j++){
+            if(ADJ[i][j]){ deg++; for(let d=0;d<5;d++) out[i][d]+=H[j][d]; }
+          }
+          if(deg>0) for(let d=0;d<5;d++) out[i][d]/=deg;
+        }
+        return out;
+      }
+      let H=FEAT.map(r=>r.slice());
+      for(let s2=0;s2<hop;s2++) H=meanAgg(H);
+
+      // draw edges first
+      for(let i=0;i<NODES.length;i++)for(let j=i+1;j<NODES.length;j++){
+        if(!ADJ[i][j])continue;
+        const pa=pos[i].clone().setY(0.02), pb=pos[j].clone().setY(0.02);
+        const len=pa.distanceTo(pb);
+        const geo=new T.CylinderGeometry(0.04,0.04,len,8,1,true);
+        const e=new T.Mesh(geo,new T.MeshStandardMaterial({color:0x2a4258,emissive:0x0f2030,roughness:0.6,transparent:true,opacity:0.85}));
+        e.position.copy(pa).add(pb).multiplyScalar(0.5);
+        const up=new T.Vector3(0,1,0),d=pb.clone().sub(pa).normalize(),q=new T.Quaternion();
+        q.setFromUnitVectors(up,d); e.quaternion.copy(q); gGraph.add(e);
+      }
+      // animated message flow into TP53 when hop>0 (cones along neighbour edges)
+      if(hop>0){
+        for(let j=1;j<NODES.length;j++){
+          if(!ADJ[0][j])continue;
+          const cone=new T.Mesh(new T.ConeGeometry(0.12,0.34,10),new T.MeshBasicMaterial({color:0xa78bfa}));
+          const a=pos[j].clone().setY(0.02), b=pos[0].clone().setY(0.02);
+          const mid=a.clone().lerp(b,0.62);
+          cone.position.copy(mid);
+          const up=new T.Vector3(0,1,0),dir=b.clone().sub(a).normalize(),q=new T.Quaternion();
+          q.setFromUnitVectors(up,dir); cone.quaternion.copy(q);
+          gMsg.add(cone);
+        }
+      }
+      // draw nodes + a small 5-d feature bar stack beside each
+      pos.forEach((p,i)=>{
+        const sp=new T.Mesh(new T.SphereGeometry(i===0?0.46:0.32,24,18),
+          api.mat(nodeCols[i],{emissive:i===0&&hop>0?0.85:0.55}));
+        sp.position.copy(p); gGraph.add(sp);
+        api.pick(sp,{node:{id:i,name:NODES[i],feat:H[i].map(v=>+v.toFixed(2))}});
+        L(NODES[i],nodeCols[i],1.0,p.x,p.y+(i===0?0.9:0.66),p.z);
+        // feature micro-bars
+        for(let d=0;d<5;d++){
+          const v=H[i][d];
+          const h=0.04+v*0.9;
+          const bx=p.x-0.4+d*0.20, bz=p.z+(i===0?1.1:0.95);
+          const fb=new T.Mesh(new T.BoxGeometry(0.13,h,0.13),
+            api.mat(v>0.001?CY:SL,{emissive:0.4}));
+          fb.material.transparent=true; fb.material.opacity=v>0.001?0.95:0.3;
+          fb.position.set(bx,h/2+0.0,bz); gGraph.add(fb);
+        }
+      });
+
+      // big readout of TP53's aggregated vector
+      const tv=H[0].map(v=>v.toFixed(2)).join("  ");
+      L("h(TP53) = ["+tv+"]",CY,1.2,0,4.3,0);
+      l("[DNA-bind, ubiq-ligase, chk-kinase, tumor-supp, DDR]",SL,0.42,0,3.8,0.3);
+
+      // metrics: TP53's dominant aggregated dimension + DDR signal
+      const ddr=H[0][4], ubiq=H[0][1], kin=H[0][2];
+      api.setMetric("combinedScore",hop+" hop");
+      api.setMetric("expScore",ddr.toFixed(2));
+      api.setMetric("dominantChannel",ddr>=Math.max(ubiq,kin)?"DDR":"mixed");
+      api.setMetric("passFilter",H[0].map(v=>v.toFixed(2)).join(","));
+
+      sceneSnap={mode,threshold:thr,channel,coexpr,hops:hop,
+        tp53_ddr:+ddr.toFixed(3),tp53_ubiq:+ubiq.toFixed(3),tp53_kinase:+kin.toFixed(3),
+        tp53_dnabind:+H[0][0].toFixed(3)};
+
+      return {
+        badge:"GCN step · TP53 subgraph · "+hop+" hop"+(hop===1?"":"s"),
+        formula:"h_TP53^(1) = mean( x_MDM2, x_MDM4, x_ATM, x_CHEK2 ) = [0, 0.5, 0.5, 0.25, 0.75]",
+        insight:"One mean-aggregation GCN step replaces each node's GO feature vector with the average of its neighbours. TP53 (4 neighbours) becomes [0, 0.5, 0.5, 0.25, 0.75]: zero DNA-binding (its neighbours aren't DNA binders), 0.5 ubiquitin-ligase (MDM2, MDM4 degrade it), 0.5 checkpoint-kinase (ATM, CHEK2 activate it), 0.75 DDR. The representation now encodes that TP53 sits between its degradation and activation machinery — a biologically meaningful summary. Reactome pathway membership can be appended as orthogonal, leakage-free node features.",
+        state:hop===0?"0 hops: raw GO features. TP53 = [1,0,0,1,1]. Increase hops to aggregate neighbours.":
+              "After "+hop+" hop"+(hop===1?"":"s")+": h(TP53) = ["+tv+"]. DDR dimension "+ddr.toFixed(2)+" (3 of 4 neighbours in DNA-damage response).",
+        metrics:{combinedScore:hop+" hop",expScore:ddr.toFixed(2),
+                 dominantChannel:ddr>=Math.max(ubiq,kin)?"DDR":"mixed",
+                 passFilter:"["+H[0].map(v=>v.toFixed(1)).join(",")+"]"},
+        focus:{center:[0,1.6,0.4],radius:12}
+      };
+    }
+
+    return {badge:"H04",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"h04",
+    kind:"string-biogrid-reactome",
+    eyebrow:"Block H · Benchmarks and Datasets",
+    title:"H04 · STRING, BioGRID, Reactome and pathway graphs",
+    subtitle:"Three evidence models for the same TP53 module. STRING's combined score hides a co-expression leakage trap; experimental-channel filtering and a GCN step recover a clean physical prior.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, channel bar, or edge.",
+    modes:[
+      {value:"channels",  label:"STRING channels (co-expression leakage)"},
+      {value:"databases", label:"Three databases (STRING / BioGRID / Reactome)"},
+      {value:"gcn",       label:"GCN step (TP53 subgraph)"}
+    ],
+    params:[
+      {key:"threshold",label:"confidence threshold",min:150,max:900,step:50,value:700,
+       fmt:v=>Math.round(v).toString(),modes:["channels","databases"]},
+      {key:"channel",  label:"filter (0=combined 1=experimental)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"combined":"experimental",modes:["channels","databases"]},
+      {key:"coexpr",   label:"co-expression channel (raw)",min:0,max:900,step:30,value:820,
+       fmt:v=>Math.round(v).toString(),modes:["channels"]},
+      {key:"hops",     label:"GCN message-passing hops",min:0,max:2,step:1,value:1,
+       fmt:v=>Math.round(v).toString(),modes:["gcn"]}
+    ],
+    metrics:[
+      {key:"combinedScore",  label:"Combined / state",accent:"cyan"},
+      {key:"expScore",       label:"Experimental ch.",accent:"green"},
+      {key:"dominantChannel",label:"Dominant channel",accent:"rose"},
+      {key:"passFilter",     label:"Filter result",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph",  label:"Graph / edges"},
+      {group:"message",label:"Message flow"},
+      {group:"bars",   label:"Channel bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Experimental >= 700",
+      on:api=>{api.setParam("channel",1);api.setParam("threshold",700);}
+    },
+    secondary:{
+      label:"Combined score",
+      on:api=>{api.setParam("channel",0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=STRING/combined · <span style="color:#34d399">green</span>=experimental/BioGRID · <span style="color:#fbbf24">amber</span>=Reactome/threshold · <span style="color:#fb7185">rose</span>=co-expression (leakage) · <span style="color:#a78bfa">violet</span>=message/threshold · grey=excluded.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="channels") api.frame([0,2,0],12);
+      else if(s.mode==="databases") api.frame([0,2,0],13);
+      else api.frame([0,1.6,0.4],12);
+    },
+    onSelect(api,d){
+      if(d.node){
+        if(d.node.feat) api.setSelected(d.node.name+" · h = ["+d.node.feat.join(", ")+"]");
+        else api.setSelected("Node "+d.node.name);
+      }
+      if(d.ch) api.setSelected("channel "+d.ch.name+" · raw "+d.ch.raw+" / max "+d.ch.max);
+    },
+    build,
+    snapshot(s){
+      const thr=Math.round(s.threshold);
+      const channel=Math.round(s.channel);
+      const coexpr=Math.round(s.coexpr);
+      const hop=Math.round(s.hops);
+      // recompute the PCNA-MCM2 combined score deterministically
+      const chArr=[0,0,180,coexpr,350,480,610];
+      let prod=1; for(let k=0;k<chArr.length;k++) prod*=(1-chArr[k]/1000);
+      const pC=1-prod;
+      const pF=(pC*(1-0.041))/(pC*(1-0.041)+0.041*(1-pC));
+      const comb=Math.round(pF*1000);
+      return {
+        mode:s.mode,
+        threshold:thr,
+        channel:channel,
+        coexpr:coexpr,
+        hops:hop,
+        combinedScore:comb,
+        expScore:350,
+        coexprDominates:coexpr>350,
+        includedExpOnly:(350>=thr)?1:0,
+        includedCombined:(comb>=thr)?1:0
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

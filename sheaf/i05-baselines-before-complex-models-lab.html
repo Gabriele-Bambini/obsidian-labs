@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I05 · Baselines before complex models</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ─────────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── DREAM4 Ecoli1 worked example (note Section 5) ──────────────────────────
+  // 10 genes, 14 directed gold-standard edges.
+  const GENES=["lexA","recA","ssB","uvrA","uvrB","uvrC","uvrD","polA","dinB","ruvA"];
+  const SRC=[0,0,1,1,2,2,3,4,4,5,6,7,8,9];
+  const DST=[1,5,2,7,3,8,4,5,9,6,7,8,9,0];
+  const N=GENES.length;            // 10
+  const E=SRC.length;              // 14
+
+  // out/in degree for the degree baseline + message-passing illustration
+  const OUTDEG=new Array(N).fill(0), INDEG=new Array(N).fill(0);
+  for(let e=0;e<E;e++){OUTDEG[SRC[e]]++;INDEG[DST[e]]++;}
+
+  // ── canonical AUROC table (note Section 6 expected hierarchy + Misc.8) ──────
+  // baseline ladder, low -> high. AUROC is the published worked-example reading.
+  const LADDER=[
+    {key:"random", name:"Random",     auroc:0.50, params:0,     gnn:false, accent:"rose"},
+    {key:"degree", name:"Degree",     auroc:0.58, params:0,     gnn:false, accent:"rose"},
+    {key:"expr",   name:"Expression", auroc:0.61, params:0,     gnn:false, accent:"amber"},
+    {key:"prior",  name:"Prior only", auroc:0.73, params:0,     gnn:false, accent:"amber"},
+    {key:"gcn",    name:"GCN",        auroc:0.71, params:5000,  gnn:true,  accent:"cyan"},
+    {key:"sage",   name:"GraphSAGE",  auroc:0.72, params:10000, gnn:true,  accent:"cyan"},
+    {key:"gat",    name:"GAT",        auroc:0.74, params:15000, gnn:true,  accent:"green"},
+    {key:"gin",    name:"GIN",        auroc:0.72, params:10000, gnn:true,  accent:"violet"}
+  ];
+  const byKey=k=>LADDER.find(d=>d.key===k);
+  const EXPR=byKey("expr").auroc;     // 0.61 expression floor
+  const PRIOR=byKey("prior").auroc;   // 0.73 prior-only floor
+
+  // four GNN message-passing rules (note Section 6 aggregation table)
+  const GNN={
+    gcn: {name:"GCN",       agg:"degree-normalized sum", self:"self-loop",      norm:true,  rule:"hᵢ = Σ (1/√(dᵢdⱼ))·W·hⱼ",        accent:"cyan"},
+    sage:{name:"GraphSAGE", agg:"mean + concat self",    self:"concatenate",    norm:false, rule:"hᵢ = W·[hᵢ ‖ meanⱼ hⱼ]",          accent:"cyan"},
+    gat: {name:"GAT",       agg:"attention-weighted sum",self:"self-loop",      norm:true,  rule:"hᵢ = Σ αᵢⱼ·W·hⱼ",                 accent:"green"},
+    gin: {name:"GIN",       agg:"injective sum",         self:"(1+ε)·self",     norm:false, rule:"hᵢ = MLP((1+ε)·hᵢ + Σⱼ hⱼ)",      accent:"violet"}
+  };
+  const GNN_KEYS=["gcn","sage","gat","gin"];
+
+  let sceneSnap={};
+
+  // ── 3D layout of the 10-gene network (deterministic ring + radial jitter) ──
+  function nodePos(i){
+    const ang=i/N*Math.PI*2 - Math.PI/2;
+    const rr=3.4 + (prand(i*3+1)-0.5)*0.55;
+    return [Math.cos(ang)*rr, (prand(i*7+2)-0.5)*0.7, Math.sin(ang)*rr];
+  }
+
+  // ── build ───────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const gnnIdx=Math.round(s.gnnModel);          // 0..3 -> gcn/sage/gat/gin
+    const gnnKey=GNN_KEYS[gnnIdx];
+    const gnn=GNN[gnnKey];
+    const seeds=Math.round(s.seeds);              // 1..5
+    const focusGene=Math.round(s.focusGene);      // 0..9 (message mode)
+    const threshold=s.threshold;                  // 0.50..0.80 decision floor
+
+    const gNet =api.group("net");
+    const gBars=api.group("bars");
+    const gMsg =api.group("msg");
+    const gLbl =api.group("labels");
+    const addBig=(t,c,sz,x,y,z)=>{const sp=api.bigLabel(t,c,sz);sp.position.set(x,y,z);gLbl.add(sp);};
+    const addSm =(t,c,sz,x,y,z)=>{const sp=api.label(t,c,sz);sp.position.set(x,y,z);gLbl.add(sp);};
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+
+    // seeds shrink the AUROC spread (5 seeds -> tighter std). Deterministic.
+    const stdAt=base=>{const raw=0.06*(1-(seeds-1)/8);return Math.max(0.012,raw)*(0.6+base*0.4);};
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: ladder — the baseline hierarchy as AUROC bars (Levels 0..7)
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="ladder"){
+      const x0=-5.0, dx=1.42, base=0, yS=9.0;   // AUROC 0.5..0.8 mapped tall
+      // floor lines: random 0.5 and prior 0.73
+      [{a:0.50,c:RO,t:"random 0.50"},{a:PRIOR,c:AM,t:"prior 0.73"}].forEach(fl=>{
+        const y=(fl.a-0.45)*yS;
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0-0.7,y,0),new T.Vector3(x0+LADDER.length*dx,y,0)]),new T.LineBasicMaterial({color:new T.Color(fl.c).getHex(),transparent:true,opacity:0.5})));
+        addSm(fl.t,fl.c,0.34,x0+LADDER.length*dx+0.05,y,0);
+      });
+
+      LADDER.forEach((d,i)=>{
+        const x=x0+i*dx;
+        const h=Math.max(0.1,(d.auroc-0.45)*yS);
+        const isGnn=d.gnn;
+        const col=api.col(d.accent);
+        const beatsPrior=d.auroc>PRIOR+0.005;
+        const bar=new T.Mesh(new T.BoxGeometry(0.92,h,0.92),
+          new T.MeshStandardMaterial({color:col,emissive:new T.Color(col).multiplyScalar(beatsPrior?0.8:0.28),emissiveIntensity:beatsPrior?0.75:0.3,roughness:0.4,transparent:!isGnn,opacity:isGnn?1.0:0.78}));
+        bar.position.set(x,base+h/2,0);
+        gBars.add(bar);
+        api.pick(bar,{ladder:{name:d.name,auroc:d.auroc,gnn:isGnn,params:d.params}});
+        addBig(d.auroc.toFixed(2),col,0.95,x,base+h+0.5,0);
+        addSm(d.name,isGnn?col:SL,0.32,x,-0.45,0);
+        // error whisker for GNN bars (5-seed std)
+        if(isGnn){
+          const sd=stdAt(d.auroc)*yS;
+          gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x,base+h-sd,0),new T.Vector3(x,base+h+sd,0)]),new T.LineBasicMaterial({color:0xdfe9f2})));
+        }
+      });
+      // GNN / non-GNN divider
+      const divX=x0+3.5*dx;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(divX,0,0),new T.Vector3(divX,5.6,0)]),new T.LineBasicMaterial({color:0x44627e,transparent:true,opacity:0.7})));
+      addSm("non-GNN",AM,0.34,x0+1.5*dx,5.4,0);
+      addSm("GNN",CY,0.34,x0+5.5*dx,5.4,0);
+
+      const best=LADDER.reduce((a,b)=>b.auroc>a.auroc?b:a);
+      const gnnsBeatPrior=LADDER.filter(d=>d.gnn&&d.auroc>PRIOR).length;
+      sceneSnap={mode,gnnModel:gnnIdx,seeds,bestAuroc:best.auroc,bestMethod:best.name,gnnsBeatPrior,gnnGainOverExpr:+(byKey(gnnKey).auroc-EXPR).toFixed(3),gnnGainOverPrior:+(byKey(gnnKey).auroc-PRIOR).toFixed(3)};
+      return {
+        badge:"Baseline ladder · best "+best.name+" "+best.auroc.toFixed(2)+" AUROC",
+        formula:"credible(M) ⟺ AUROC(M) &gt; AUROC(prior) &gt; AUROC(expr) &gt; 0.50",
+        insight:"DREAM4 Ecoli1 (10 genes, 14 edges). Every level above your claimed method must be documented. Here the prior-only floor (0.73, amber line) is the bar to beat — only GAT (0.74) clears it. GCN/SAGE/GIN match expression+graph but do NOT surpass the database prior, so graph architecture is not yet justified.",
+        state:"Best: "+best.name+" "+best.auroc.toFixed(2)+". GNNs above prior-only: "+gnnsBeatPrior+"/4. Expression floor 0.61, prior floor 0.73. Whiskers = "+seeds+"-seed std.",
+        metrics:{best:best.name+" "+best.auroc.toFixed(2),vsExpr:"+"+(byKey(gnnKey).auroc-EXPR).toFixed(2),vsPrior:(byKey(gnnKey).auroc-PRIOR>=0?"+":"")+(byKey(gnnKey).auroc-PRIOR).toFixed(2),verdict:gnnsBeatPrior>0?"some beat prior":"none beat prior"},
+        focus:{center:[0,2.6,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: network — the DREAM4 Ecoli1 GRN, 10 genes / 14 directed edges
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="network"){
+      const pos=GENES.map((_,i)=>nodePos(i));
+      // directed gold-standard edges
+      for(let e=0;e<E;e++){
+        const a=pos[SRC[e]], b=pos[DST[e]];
+        api.arrow(a,b,{color:"#2f4a63",width:0.035,head:0.26,group:"net"});
+      }
+      // nodes sized by out-degree (TF-ness); colored cyan, hubs greener
+      GENES.forEach((g,i)=>{
+        const isHub=OUTDEG[i]>=2;
+        const r=0.30+OUTDEG[i]*0.07;
+        const col=isHub?GR:CY;
+        const m=new T.Mesh(new T.SphereGeometry(r,24,18),new T.MeshStandardMaterial({color:col,emissive:new T.Color(col).multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.set(pos[i][0],pos[i][1],pos[i][2]);
+        gNet.add(m);
+        api.pick(m,{gene:{name:g,outdeg:OUTDEG[i],indeg:INDEG[i],hub:isHub}});
+        addBig(g,isHub?GR:"#cfe0f0",0.95,pos[i][0],pos[i][1]+r+0.42,pos[i][2]);
+      });
+      addSm(N+" genes · "+E+" gold edges",CY,0.4,0,-2.7,0);
+      addSm("green = TF hub (out-deg ≥ 2)",GR,0.32,0,-3.25,0);
+
+      const hubs=OUTDEG.filter(d=>d>=2).length;
+      const density=+(E/(N*(N-1))).toFixed(3);
+      sceneSnap={mode,gnnModel:gnnIdx,seeds,nGenes:N,nEdges:E,hubCount:hubs,density};
+      return {
+        badge:"DREAM4 Ecoli1 · "+N+" genes · "+E+" directed edges",
+        formula:"data = Data(x:[10×100], edge_index:[2×14], edge_attr:[14×1])",
+        insight:"The same fixed graph feeds every baseline: identical RandomLinkSplit seed, identical negative sampling, identical Adam(lr=0.005). Only the message-passing rule varies. Node size ∝ out-degree; the few hub TFs (green) regulate most targets — sum-aggregators like GIN will be dominated by their degree.",
+        state:N+" genes, "+E+" gold-standard edges, density "+density+". Hub TFs (out-deg ≥ 2): "+hubs+". Directed arrows = TF → target.",
+        metrics:{best:N+" genes",vsExpr:E+" edges",vsPrior:hubs+" hubs",verdict:"density "+density},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: message — the four message-passing rules on one focal node
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="message"){
+      // pick focal gene; show it + its in-neighbours (regulators) being aggregated
+      const fi=focusGene;
+      const regs=[]; for(let e=0;e<E;e++){ if(DST[e]===fi) regs.push(SRC[e]); }
+      // fallback: if a leaf with no regulators, show out-neighbours instead
+      const usingOut=regs.length===0;
+      if(usingOut){ for(let e=0;e<E;e++){ if(SRC[e]===fi) regs.push(DST[e]); } }
+
+      const center=[0,0.4,0];
+      // focal node
+      const fcol=api.col(gnn.accent);
+      const fm=new T.Mesh(new T.SphereGeometry(0.55,28,20),new T.MeshStandardMaterial({color:fcol,emissive:new T.Color(fcol).multiplyScalar(0.8),emissiveIntensity:0.8,roughness:0.3}));
+      fm.position.set(center[0],center[1],center[2]); gMsg.add(fm);
+      api.pick(fm,{focal:{name:GENES[fi],rule:gnn.rule,agg:gnn.agg}});
+      addBig(GENES[fi],fcol,1.25,center[0],center[1]+1.0,center[2]);
+      // self-loop indicator for GCN/GAT (self), and (1+ε) ring for GIN
+      if(gnn.self!=="concatenate"){
+        const ring=new T.Mesh(new T.TorusGeometry(0.78,0.04,10,40),new T.MeshBasicMaterial({color:new T.Color(fcol).getHex(),transparent:true,opacity:0.7}));
+        ring.rotation.x=Math.PI/2; ring.position.set(center[0],center[1],center[2]); gMsg.add(ring);
+        addSm(gnn.self,fcol,0.32,center[0],center[1]-1.0,center[2]);
+      } else {
+        addSm("concat self ‖ mean(N)",fcol,0.32,center[0],center[1]-1.0,center[2]);
+      }
+
+      // neighbour regulators on a ring; weight bar above each = contribution
+      const nR=regs.length;
+      // deterministic per-edge "feature magnitude" so weights differ by rule
+      const featMag=j=>0.5+0.5*prand(regs[j]*5+fi*3+7);
+      // attention scores (GAT) deterministic softmax over a leaky term
+      const attRaw=regs.map((r,j)=>0.3+prand(r*11+fi*4+1));
+      const attSum=attRaw.reduce((a,b)=>a+b,0);
+      regs.forEach((r,j)=>{
+        const ang=j/Math.max(1,nR)*Math.PI*2 - Math.PI/2;
+        const rad=3.0, px=Math.cos(ang)*rad, pz=Math.sin(ang)*rad, py=0.2;
+        const m=new T.Mesh(new T.SphereGeometry(0.34,20,16),new T.MeshStandardMaterial({color:CY,emissive:new T.Color(CY).multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+        m.position.set(px,py,pz); gMsg.add(m);
+        addSm(GENES[r],"#cfe0f0",0.3,px,py+0.62,pz);
+
+        // weight by aggregation rule
+        let w;
+        if(gnnKey==="gcn"){ w=1/Math.sqrt(Math.max(1,(usingOut?OUTDEG[fi]:INDEG[fi])+1)*Math.max(1,(usingOut?INDEG[r]:OUTDEG[r])+1)); }
+        else if(gnnKey==="sage"){ w=1/nR; }                 // mean
+        else if(gnnKey==="gat"){ w=attRaw[j]/attSum; }      // attention softmax
+        else { w=1.0; }                                     // gin: raw sum (each weight 1)
+        const contribH=Math.max(0.08,w*featMag(j)*2.4);
+        // edge from regulator to focal, thickness ∝ weight
+        api.edge([px,py,pz],center,{color:api.col(gnn.accent),width:0.02+w*0.10,opacity:0.9,group:"msg"});
+        // contribution bar above neighbour
+        const bar=new T.Mesh(new T.BoxGeometry(0.16,contribH,0.16),new T.MeshStandardMaterial({color:api.col(gnn.accent),emissive:new T.Color(api.col(gnn.accent)).multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        bar.position.set(px,py+0.62+contribH/2+0.25,pz); gMsg.add(bar);
+        addSm("w="+w.toFixed(2),api.col(gnn.accent),0.26,px,py+0.62+contribH+0.5,pz);
+      });
+
+      addBig(gnn.name,fcol,1.45,0,4.4,0);
+      addSm(gnn.agg,fcol,0.38,0,3.85,0);
+
+      // effective normalization sum = total weight applied
+      let totW;
+      if(gnnKey==="sage") totW=1.0;
+      else if(gnnKey==="gat") totW=1.0;
+      else if(gnnKey==="gcn"){ totW=regs.reduce((acc,r,j)=>acc+1/Math.sqrt(Math.max(1,(usingOut?OUTDEG[fi]:INDEG[fi])+1)*Math.max(1,(usingOut?INDEG[r]:OUTDEG[r])+1)),0); }
+      else totW=nR;   // gin raw sum
+      totW=+totW.toFixed(3);
+
+      sceneSnap={mode,gnnModel:gnnIdx,seeds,focusGene:fi,nRegulators:nR,totalWeight:totW,gnnAuroc:byKey(gnnKey).auroc};
+      const expl={
+        gcn:"GCN normalizes each neighbour by 1/√(dᵢdⱼ): hub regulators are damped, total weight ≈1 but degree-aware.",
+        sage:"GraphSAGE takes the MEAN of neighbours (each w=1/k) and keeps the self-feature SEPARATE via concatenation — inductive.",
+        gat:"GAT LEARNS a softmax weight αᵢⱼ per edge: important regulators get more weight. Needs enough edges to learn reliably.",
+        gin:"GIN SUMS neighbours raw (each w=1) plus (1+ε)·self, then an MLP: maximally expressive but the sum scales with degree."
+      };
+      return {
+        badge:gnn.name+" · "+GENES[fi]+" ← "+nR+" "+(usingOut?"targets":"regulators"),
+        formula:gnn.rule,
+        insight:expl[gnnKey],
+        state:GENES[fi]+" aggregates "+nR+" "+(usingOut?"targets":"regulators")+" via "+gnn.agg+". Total applied weight = "+totW+". Bar height = each neighbour's contribution.",
+        metrics:{best:gnn.name,vsExpr:nR+" inputs",vsPrior:"Σw="+totW,verdict:gnn.self},
+        focus:{center:[0,1.2,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: decision — is the GNN justified? compare vs expr & prior floors
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="decision"){
+      const a=byKey(gnnKey).auroc;
+      const items=[
+        {name:"expression",val:EXPR,col:AM,tag:"floor"},
+        {name:"prior-only",val:PRIOR,col:AM,tag:"floor"},
+        {name:gnn.name,    val:a,    col:api.col(gnn.accent),tag:"GNN"}
+      ];
+      const x0=-3.4, dx=3.4, yS=9.0;
+      // user-set decision threshold plane
+      const ty=(threshold-0.45)*yS;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0-1.2,ty,0),new T.Vector3(x0+items.length*dx-1.0,ty,0)]),new T.LineBasicMaterial({color:0xfde68a})));
+      addSm("threshold "+threshold.toFixed(2),"#fde68a",0.36,x0+items.length*dx-1.0,ty+0.2,0);
+
+      items.forEach((it,i)=>{
+        const x=x0+i*dx;
+        const h=Math.max(0.1,(it.val-0.45)*yS);
+        const pass=it.val>=threshold;
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.5),new T.MeshStandardMaterial({color:it.col,emissive:new T.Color(it.col).multiplyScalar(pass?0.8:0.25),emissiveIntensity:pass?0.7:0.25,roughness:0.4,transparent:!pass,opacity:pass?1.0:0.55}));
+        bar.position.set(x,h/2,0); gBars.add(bar);
+        api.pick(bar,{decision:{name:it.name,auroc:it.val,pass:pass}});
+        addBig(it.val.toFixed(2),it.col,1.05,x,h+0.5,0);
+        addSm(it.name,it.col,0.34,x,-0.45,0);
+        addSm(it.tag,SL,0.28,x,-0.95,0);
+      });
+
+      const beatsExpr=a>EXPR+0.005;
+      const beatsPrior=a>PRIOR+0.005;
+      const justified=beatsExpr&&beatsPrior;
+      const verdict=justified?"JUSTIFIED":(beatsExpr?"replicates prior":"adds nothing");
+      const vcol=justified?GR:(beatsExpr?AM:RO);
+      addBig(verdict,vcol,1.4,x0+dx,6.1,0);
+
+      sceneSnap={mode,gnnModel:gnnIdx,seeds,threshold:+threshold.toFixed(3),gnnAuroc:a,beatsExpr,beatsPrior,justified};
+      return {
+        badge:"Verdict · "+gnn.name+" "+a.toFixed(2)+" → "+verdict,
+        formula:"justified ⟺ AUROC(GNN) &gt; AUROC(prior 0.73) and &gt; AUROC(expr 0.61)",
+        insight:justified
+          ?gnn.name+" beats BOTH the expression floor (0.61) and the prior-only floor (0.73). Real graph learning is happening — the architecture earns its complexity, and a sheaf GNN can now be justified by ablation."
+          :gnn.name+" beats expression (0.61) but only "+(beatsPrior?"clears":"matches/replicates")+" the prior-only floor (0.73). Per Misconception 4 & the Section-6 readout, the GNN is mostly replicating database confidence — extra architecture (incl. sheaf) is NOT yet justified.",
+        state:gnn.name+" = "+a.toFixed(2)+". vs expr "+(a-EXPR>=0?"+":"")+(a-EXPR).toFixed(2)+", vs prior "+(a-PRIOR>=0?"+":"")+(a-PRIOR).toFixed(2)+". Verdict: "+verdict+".",
+        metrics:{best:gnn.name+" "+a.toFixed(2),vsExpr:"+"+(a-EXPR).toFixed(2),vsPrior:(a-PRIOR>=0?"+":"")+(a-PRIOR).toFixed(2),verdict:verdict},
+        focus:{center:[x0+dx,2.6,0],radius:13}
+      };
+    }
+
+    return {badge:"I05",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i05",
+    kind:"baselines-before-complex-models",
+    eyebrow:"Block I · Implementation",
+    title:"I05 · Baselines before complex models",
+    subtitle:"Before a sheaf GNN, beat the floors. On DREAM4 Ecoli1 (10 genes, 14 edges) compare Random, Expression, Prior-only, and four GNN message-passing rules — then decide if the GNN is justified.",
+    selectedLabel:"Element",
+    selectedHint:"Click a bar, gene, or neighbour.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"ladder",   label:"Baseline ladder (AUROC hierarchy)"},
+      {value:"network",  label:"DREAM4 Ecoli1 network (10 genes)"},
+      {value:"message",  label:"Message-passing rule (GCN/SAGE/GAT/GIN)"},
+      {value:"decision", label:"Is the GNN justified? (vs floors)"}
+    ],
+    params:[
+      {key:"gnnModel", label:"GNN model (0=GCN 1=SAGE 2=GAT 3=GIN)",min:0,max:3,step:1,value:2,
+       fmt:v=>["GCN","GraphSAGE","GAT","GIN"][Math.round(v)],modes:["ladder","message","decision"]},
+      {key:"seeds",    label:"random seeds",min:1,max:5,step:1,value:5,
+       fmt:v=>Math.round(v)+" seed"+(Math.round(v)>1?"s":""),modes:["ladder"]},
+      {key:"focusGene",label:"focal gene (message mode)",min:0,max:9,step:1,value:8,
+       fmt:v=>GENES[Math.round(v)],modes:["message"]},
+      {key:"threshold",label:"decision threshold (AUROC)",min:0.50,max:0.80,step:0.01,value:0.73,
+       fmt:v=>v.toFixed(2),modes:["decision"]}
+    ],
+    metrics:[
+      {key:"best",   label:"Best / active method",accent:"cyan"},
+      {key:"vsExpr", label:"GNN − expression (0.61)",accent:"amber"},
+      {key:"vsPrior",label:"GNN − prior (0.73)",accent:"violet"},
+      {key:"verdict",label:"Verdict",accent:"green"}
+    ],
+    layers:[
+      {group:"net",   label:"Network"},
+      {group:"bars",  label:"AUROC bars"},
+      {group:"msg",   label:"Aggregation"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Set GAT",
+      on:api=>{api.setParam("gnnModel",2);}
+    },
+    secondary:{
+      label:"Set prior floor",
+      on:api=>{api.setParam("threshold",0.73);}
+    },
+    defaultCam:{theta:-0.5,phi:0.78,r:13},
+    hint:'<span style="color:#fb7185">rose</span>=random/floor · <span style="color:#fbbf24">amber</span>=expression/prior floor · <span style="color:#4dd7ff">cyan</span>=GCN/SAGE · <span style="color:#34d399">green</span>=GAT/hub · <span style="color:#a78bfa">violet</span>=GIN. Beat the prior (0.73) to justify the GNN.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="ladder") api.frame([0,2.6,0],13);
+      else if(s.mode==="network") api.frame([0,0,0],12);
+      else if(s.mode==="message") api.frame([0,1.2,0],11);
+      else api.frame([0,2.6,0],13);
+    },
+    onSelect(api,d){
+      if(d.ladder)   api.setSelected(d.ladder.name+" · AUROC "+d.ladder.auroc.toFixed(2)+" · "+(d.ladder.gnn?d.ladder.params+" params":"0 params, non-GNN"));
+      if(d.gene)     api.setSelected(d.gene.name+" · out-deg "+d.gene.outdeg+" · in-deg "+d.gene.indeg+(d.gene.hub?" · HUB TF":""));
+      if(d.focal)    api.setSelected(d.focal.name+" · "+d.focal.agg);
+      if(d.decision) api.setSelected(d.decision.name+" · AUROC "+d.decision.auroc.toFixed(2)+" · "+(d.decision.pass?"≥ threshold":"below threshold"));
+    },
+    build,
+    snapshot(s){
+      const gi=Math.round(s.gnnModel);
+      const gnnKey=GNN_KEYS[gi];
+      const a=byKey(gnnKey).auroc;
+      const seeds=Math.round(s.seeds);
+      const thr=+(s.threshold).toFixed(3);
+      const beatsExpr=a>EXPR+0.005;
+      const beatsPrior=a>PRIOR+0.005;
+      return {
+        mode:s.mode,
+        gnnModel:gi,
+        gnnName:GNN[gnnKey].name,
+        seeds,
+        focusGene:Math.round(s.focusGene),
+        threshold:thr,
+        nGenes:N,
+        nEdges:E,
+        gnnAuroc:a,
+        exprFloor:EXPR,
+        priorFloor:PRIOR,
+        gnnMinusExpr:+(a-EXPR).toFixed(3),
+        gnnMinusPrior:+(a-PRIOR).toFixed(3),
+        beatsExpr,
+        beatsPrior,
+        justified:beatsExpr&&beatsPrior
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

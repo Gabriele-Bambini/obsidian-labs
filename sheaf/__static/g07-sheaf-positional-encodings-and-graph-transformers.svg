@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure G07 — A d-vector block keeps the sign a scalar LapPE throws away</title>
+<desc id="d">Four-panel captioned figure: A d-vector block keeps the sign a scalar LapPE throws away</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE G07 · BLOCK G · SHEAF GNN FOR BIOLOGY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="22" font-weight="700">A d-vector block keeps the sign a scalar LapPE throws away</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The 4-node signed GRN</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">nodes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">TF1 TF2 GeneA GeneB</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">e1+ e2+ e3−</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">stalk d</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">2 (expr, ATAC)</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">L_F dim</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">8×8</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">SheafPE = eigvec block u₁[v]</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">L_F u₁ = λ₁ u₁,  λ₁≈0.20</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">SheafPE(v) = u₁[v] ∈ ℝ²</text>
+<text x="502" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">u₁[GeneA]</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">+0.51</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">u₁[GeneB]</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">-0.47</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Scalar LapPE erases the sign</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">A scalar Laplacian gives one number per node. By</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">magnitude GeneB (0.47) ties TF2 (0.47), so the repressed</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">gene is indistinguishable from its repressor.</text>
+<text x="56" y="369.5" fill="#fbbf24" font-size="11.5" font-weight="700">LapPE TF2</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.47</text>
+<text x="56" y="389.5" fill="#fbbf24" font-size="11.5" font-weight="700">LapPE GeneB</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">0.47</text>
+<rect x="56" y="410" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="86" y="431" fill="#e8eef6" font-size="12" text-anchor="middle">0.51</text>
+<rect x="120" y="410" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="150" y="431" fill="#e8eef6" font-size="12" text-anchor="middle">-0.47</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Restriction-map attention bias</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">A_bias e1</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">+0.55</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">A_bias e3</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">+0.031</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">e3 sign</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">repression</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">yet bias</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">positive = consistent</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure G07. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">Section-5 </text>
+<text x="258.36" y="538" fill="#c7d2dd" font-size="13">GRN: </text>
+<text x="302.29" y="538" fill="#c7d2dd" font-size="13">TF1, </text>
+<text x="345.01" y="538" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="379.66" y="538" fill="#c7d2dd" font-size="13">activate </text>
+<text x="452.2" y="538" fill="#c7d2dd" font-size="13">GeneA </text>
+<text x="502.98" y="538" fill="#c7d2dd" font-size="13">(e1,e2); </text>
+<text x="575.52" y="538" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="610.18" y="538" fill="#c7d2dd" font-size="13">represses </text>
+<text x="690.78" y="538" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="741.56" y="538" fill="#c7d2dd" font-size="13">(e3); </text>
+<text x="789.92" y="538" fill="#c7d2dd" font-size="13">d=2 </text>
+<text x="822.16" y="538" fill="#c7d2dd" font-size="13">stalks.</text>
+<text x="40" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="73.53" y="559" fill="#c7d2dd" font-size="13">Three </text>
+<text x="123.1" y="559" fill="#c7d2dd" font-size="13">signed </text>
+<text x="179.52" y="559" fill="#c7d2dd" font-size="13">edges </text>
+<text x="227.88" y="559" fill="#c7d2dd" font-size="13">over </text>
+<text x="268.18" y="559" fill="#c7d2dd" font-size="13">four </text>
+<text x="308.48" y="559" fill="#c7d2dd" font-size="13">nodes, </text>
+<text x="364.9" y="559" fill="#c7d2dd" font-size="13">L_F </text>
+<text x="399.56" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="423.74" y="559" fill="#c7d2dd" font-size="13">8×8. </text>
+<text x="470.48" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="504.01" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="537.46" y="559" fill="#c7d2dd" font-size="13">first </text>
+<text x="585.82" y="559" fill="#c7d2dd" font-size="13">eigenvector </text>
+<text x="682.54" y="559" fill="#c7d2dd" font-size="13">block </text>
+<text x="730.9" y="559" fill="#c7d2dd" font-size="13">gives </text>
+<text x="779.26" y="559" fill="#c7d2dd" font-size="13">SheafPE:</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">GeneA </text>
+<text x="90.78" y="580" fill="#c7d2dd" font-size="13">+0.51, </text>
+<text x="147.2" y="580" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="197.98" y="580" fill="#c7d2dd" font-size="13">-0.47 </text>
+<text x="246.34" y="580" fill="#c7d2dd" font-size="13">(negative </text>
+<text x="326.94" y="580" fill="#c7d2dd" font-size="13">= </text>
+<text x="343.06" y="580" fill="#c7d2dd" font-size="13">repressed), </text>
+<text x="439.78" y="580" fill="#c7d2dd" font-size="13">λ₁≈0.20. </text>
+<text x="518.76" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="552.29" y="580" fill="#c7d2dd" font-size="13">Scalar </text>
+<text x="609.92" y="580" fill="#c7d2dd" font-size="13">LapPE </text>
+<text x="661.91" y="580" fill="#c7d2dd" font-size="13">ties </text>
+<text x="702.21" y="580" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="752.99" y="580" fill="#c7d2dd" font-size="13">and </text>
+<text x="785.23" y="580" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="819.89" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="844.07" y="580" fill="#c7d2dd" font-size="13">0.47,</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">erasing </text>
+<text x="104.48" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="136.72" y="601" fill="#c7d2dd" font-size="13">sign. </text>
+<text x="185.08" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="218.61" y="601" fill="#c7d2dd" font-size="13">The </text>
+<text x="252.06" y="601" fill="#c7d2dd" font-size="13">signed </text>
+<text x="308.48" y="601" fill="#c7d2dd" font-size="13">attention </text>
+<text x="389.08" y="601" fill="#c7d2dd" font-size="13">bias </text>
+<text x="429.38" y="601" fill="#c7d2dd" font-size="13">is </text>
+<text x="453.56" y="601" fill="#c7d2dd" font-size="13">+0.55 </text>
+<text x="501.92" y="601" fill="#c7d2dd" font-size="13">on </text>
+<text x="526.1" y="601" fill="#c7d2dd" font-size="13">e1 </text>
+<text x="550.28" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="582.52" y="601" fill="#c7d2dd" font-size="13">+0.031 </text>
+<text x="638.94" y="601" fill="#c7d2dd" font-size="13">on </text>
+<text x="663.12" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="695.36" y="601" fill="#c7d2dd" font-size="13">repressor </text>
+<text x="775.96" y="601" fill="#c7d2dd" font-size="13">e3 </text>
+<text x="800.14" y="601" fill="#c7d2dd" font-size="13">— </text>
+<text x="822.71" y="601" fill="#c7d2dd" font-size="13">positive</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">means </text>
+<text x="88.36" y="622" fill="#c7d2dd" font-size="13">a </text>
+<text x="104.48" y="622" fill="#c7d2dd" font-size="13">consistent </text>
+<text x="193.14" y="622" fill="#c7d2dd" font-size="13">low-low </text>
+<text x="257.62" y="622" fill="#c7d2dd" font-size="13">state.</text>
+</svg>

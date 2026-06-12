@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D08 · Causality, interventions, and biological claims</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no nondeterministic calls) ──────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  let sceneSnap={};
+
+  // ── lesson FACTS (Section 5 worked example: NR3C1 → GILZ) ───────────────
+  // The causal claim hierarchy and its claim-strength scores (0..1).
+  const LADDER=[
+    {key:"corr",   name:"L1 correlation",       sub:"PBMC bulk r=0.72",          strength:0.20, stat:0.72, statLbl:"r"},
+    {key:"partial",name:"L2 partial corr",      sub:"T-cell only r=0.48",        strength:0.42, stat:0.48, statLbl:"r|T"},
+    {key:"temporal",name:"L3 temporal",         sub:"dex: 2–4 h precedence",     strength:0.58, stat:3.0,  statLbl:"Δt h"},
+    {key:"crispri",name:"L4 intervention",      sub:"CRISPRi −68% (3 guides)",   strength:0.82, stat:0.68, statLbl:"|ΔE|"},
+    {key:"chip",   name:"L5 mechanism",         sub:"ChIP-seq GRE −800 bp",      strength:0.96, stat:0.80, statLbl:"bind"}
+  ];
+
+  // ── do-operator confounder model ────────────────────────────────────────
+  // Observational P(GILZ|NR3C1=x): contaminated by a backdoor path
+  //   NR3C1 <- batch -> GILZ.  do(NR3C1=x) surgically cuts batch->NR3C1,
+  //   so only the TRUE causal slope survives.
+  // betaCausal = true direct effect; betaBackdoor = confounder leak.
+  function effects(batchStrength){
+    const betaCausal   = 0.62;                 // true NR3C1→GILZ direct effect
+    const betaBackdoor = 0.55*batchStrength;   // spurious correlation via batch
+    const obs = betaCausal + betaBackdoor;     // what correlation reports
+    const doE = betaCausal;                    // what intervention reports
+    const bias= obs>0 ? betaBackdoor/obs : 0;  // fraction of obs that is confound
+    return {betaCausal,betaBackdoor,obs,doE,bias};
+  }
+
+  // ── d-separation: which paths between GILZ and FKBP5 are OPEN ────────────
+  // Path 1: GILZ <- NR3C1 -> FKBP5  (fork at NR3C1)  → blocked iff cond on NR3C1
+  // Path 2: GILZ <- batch -> NR3C1 -> FKBP5          → needs batch in adj set too
+  // condSet: 0 = {} , 1 = {NR3C1} , 2 = {NR3C1, batch}
+  function dsep(condSet){
+    const forkOpen = condSet<1;            // NR3C1 fork still open if not conditioned
+    const batchOpen= condSet<2;            // batch path open until batch conditioned
+    const open = forkOpen || batchOpen;    // d-connected if ANY path open
+    // residual partial correlation GILZ⊥FKBP5 grows with # open paths
+    const residual = (forkOpen?0.51:0) + (batchOpen?0.23:0);
+    return {forkOpen,batchOpen,open,residual:+residual.toFixed(2),
+            sep:!open, nOpen:(forkOpen?1:0)+(batchOpen?1:0)};
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+
+    const gGraph =api.group("graph");
+    const gFlow  =api.group("flow");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // observation / receptor
+    const GR=new T.Color("#34d399");   // causal / true edge
+    const AM=new T.Color("#fbbf24");   // intervention / do
+    const VI=new T.Color("#a78bfa");   // confounder / open path
+    const RO=new T.Color("#fb7185");   // spurious / blind
+    const SL=new T.Color("#54667c");
+
+    function sphere(pos,r,col,emi){
+      const m=new T.Mesh(new T.SphereGeometry(r,18,14),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(emi==null?0.55:emi),emissiveIntensity:0.7,roughness:0.4}));
+      m.position.set(pos[0],pos[1],pos[2]); return m;
+    }
+    function edge(a,b,col,op){
+      return new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(a[0],a[1],a[2]),new T.Vector3(b[0],b[1],b[2])]),
+        new T.LineBasicMaterial({color:col,transparent:true,opacity:op==null?0.7:op}));
+    }
+    function arrowTo(a,b,col){
+      const dir=new T.Vector3(b[0]-a[0],b[1]-a[1],b[2]-a[2]);
+      const len=dir.length(); dir.normalize();
+      const cone=new T.Mesh(new T.ConeGeometry(0.13,0.4,10),new T.MeshBasicMaterial({color:col}));
+      const tip=[b[0]-dir.x*0.28,b[1]-dir.y*0.28,b[2]-dir.z*0.28];
+      cone.position.set(tip[0],tip[1],tip[2]);
+      cone.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+      return {line:edge(a,b,col,0.85),cone:cone,len:len};
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: evidence-ladder — climb correlation → CRISPRi → ChIP-seq
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="evidence-ladder"){
+      const upto=Math.round(s.evLevel);         // 1..5 : how far up we trust
+      const n=LADDER.length;
+      const xs=-4.4, dx=2.2;
+
+      // baseline + acceptance threshold (claim "strong" at strength>=0.7)
+      gBars.add(edge([xs-0.6,0,0],[xs+n*dx-1.0,0,0],0x223247,0.9));
+      const thY=0.15+0.70*4.6;
+      gBars.add(edge([xs-0.6,thY,1.0],[xs+n*dx-1.0,thY,1.0],0xfde68a,0.5));
+      l("strong-claim threshold","#fbbf24",0.42,xs+n*dx-2.4,thY+0.28,1.0);
+
+      let trusted=0, topStrength=0;
+      LADDER.forEach((lv,i)=>{
+        const x=xs+i*dx;
+        const active=(i+1)<=upto;
+        const h=0.15+lv.strength*4.6;
+        const strong=lv.strength>=0.70;
+        const col=active?(strong?GR.clone():CY.clone()):SL.clone();
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.2),
+          new T.MeshStandardMaterial({color:col,
+            emissive:col.clone().multiplyScalar(active?0.7:0.12),emissiveIntensity:active?0.7:0.16,
+            roughness:0.4,transparent:!active,opacity:active?1.0:0.34}));
+        bar.position.set(x,h/2,0);
+        gBars.add(bar);
+        api.pick(bar,{rung:{name:lv.name,sub:lv.sub,strength:lv.strength,active:active,stat:lv.stat,statLbl:lv.statLbl}});
+        if(active){trusted++; topStrength=lv.strength;}
+        L((lv.strength*100).toFixed(0),col.getStyle(),1.45,x,h+0.5,0);
+        l(lv.name,active?col.getStyle():"#5a6b7e",0.40,x,-0.42,0);
+        l(lv.sub,active?"#9fb2c6":"#48586a",0.34,x,-0.82,0);
+        l(lv.statLbl+"="+lv.stat,active?"#cfe0ee":"#48586a",0.34,x,-1.18,0);
+        // rising connector showing the climb
+        if(i>0){
+          const px=xs+(i-1)*dx, ph=0.15+LADDER[i-1].strength*4.6;
+          gBars.add(edge([px,ph,0.7],[x,h,0.7], active?0x34d399:0x2a3d52, active?0.8:0.4));
+        }
+        // intervention marker at L4 (the qualitative jump)
+        if(lv.key==="crispri" && active){
+          const c=new T.Mesh(new T.ConeGeometry(0.16,0.46,8),new T.MeshBasicMaterial({color:AM}));
+          c.rotation.x=Math.PI; c.position.set(x,h+1.05,0); gBars.add(c);
+          l("do(NR3C1=0)","#fbbf24",0.42,x,h+1.5,0);
+        }
+      });
+
+      L("NR3C1 → GILZ : causal claim strength climbs with evidence type","#cfe0ee",0.5,-0.4,5.6,0);
+      const strongEnough=topStrength>=0.70;
+      sceneSnap={mode,evLevel:upto,levelsTrusted:trusted,topStrength:+topStrength.toFixed(2),
+        strongClaim:strongEnough,bias:0,obsEffect:0,doEffect:0,dResidual:0,dSeparated:false};
+
+      return {
+        badge:"Evidence ladder · L1→L"+upto+" · top strength "+(topStrength*100).toFixed(0)+"%",
+        formula:"correlation ⊂ partial corr ⊂ temporal ⊂ <b>do(NR3C1=0)</b> ⊂ ChIP-seq",
+        insight:"A GRN edge NR3C1→GILZ is only a statistical association until intervention closes the gap. Each rung adds evidence: bulk correlation (r=0.72) is confounded by cell-type composition; partial correlation within T cells (r=0.48) removes it; temporal precedence (2–4 h) is suggestive; the qualitative jump is CRISPRi knockdown (−68%, 3 guides), which is interventional do-calculus data; ChIP-seq (GRE 800 bp upstream) adds direct mechanism.",
+        state:"Trusting L1–L"+upto+" → claim strength "+(topStrength*100).toFixed(0)+"%. "+(strongEnough?"Reaches strong-claim threshold (interventional evidence present).":"Below strong-claim threshold — still observational, Markov-equivalence not broken."),
+        metrics:{topStrength:(topStrength*100).toFixed(0)+"%",confounderBias:"—",effectGap:"—",dSep:"—"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: do-operator — observation vs intervention (backdoor cut)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="do-operator"){
+      const batchStrength=s.batch;             // 0..1 confounder strength
+      const intervene=Math.round(s.intervene); // 0=observe, 1=do()
+      const E=effects(batchStrength);
+
+      const pNR3C1=[0,0.4,0], pGILZ=[3.4,0.4,0], pBatch=[-1.4,3.0,0];
+
+      // nodes
+      const nNR=sphere(pNR3C1,0.55,CY,0.6); gGraph.add(nNR);
+      api.pick(nNR,{node:{id:"NR3C1",role:"transcription factor (do target)"}});
+      const nGI=sphere(pGILZ,0.55,GR,0.6); gGraph.add(nGI);
+      api.pick(nGI,{node:{id:"GILZ",role:"readout target gene"}});
+      const batchDim=intervene?0.12:0.55;
+      const nBA=sphere(pBatch,0.46,VI,batchDim); gGraph.add(nBA);
+      api.pick(nBA,{node:{id:"batch",role:"confounder (cell-cycle / batch)"}});
+
+      L("NR3C1","#4dd7ff",1.0,pNR3C1[0],pNR3C1[1]+1.0,0);
+      L("GILZ","#34d399",1.0,pGILZ[0],pGILZ[1]+1.0,0);
+      L("batch / cell-cycle","#a78bfa",0.85,pBatch[0],pBatch[1]+0.95,0);
+
+      // causal edge NR3C1 -> GILZ (always present, green = true effect)
+      const aC=arrowTo(pNR3C1,pGILZ,GR.getHex()); gFlow.add(aC.line); gFlow.add(aC.cone);
+      l("β=0.62 (causal)","#34d399",0.42,(pNR3C1[0]+pGILZ[0])/2,0.0,0);
+
+      // backdoor: batch -> NR3C1  (CUT by do())  and batch -> GILZ
+      if(intervene){
+        // scissors: the do-operator severs incoming arrows into NR3C1
+        const sevA=[pBatch[0],pBatch[1],pBatch[2]], sevB=[pNR3C1[0],pNR3C1[1]+0.3,0];
+        const mid=[(sevA[0]+sevB[0])/2,(sevA[1]+sevB[1])/2,0];
+        gFlow.add(edge(sevA,mid,0x2a3d52,0.35));
+        // red X marking the cut
+        const xs2=0.28;
+        gFlow.add(edge([mid[0]-xs2,mid[1]-xs2,0],[mid[0]+xs2,mid[1]+xs2,0],RO.getHex(),0.95));
+        gFlow.add(edge([mid[0]-xs2,mid[1]+xs2,0],[mid[0]+xs2,mid[1]-xs2,0],RO.getHex(),0.95));
+        l("do(): cut backdoor","#fb7185",0.46,mid[0]-0.2,mid[1]+0.55,0);
+      } else {
+        const aB=arrowTo(pBatch,[pNR3C1[0],pNR3C1[1]+0.3,0],VI.getHex()); gFlow.add(aB.line); gFlow.add(aB.cone);
+      }
+      // batch -> GILZ (the leak that contaminates observation)
+      if(!intervene){
+        const aG=arrowTo(pBatch,[pGILZ[0],pGILZ[1]+0.3,0],VI.getHex()); gFlow.add(aG.line); gFlow.add(aG.cone);
+        l("backdoor leak "+E.betaBackdoor.toFixed(2),"#a78bfa",0.40,(pBatch[0]+pGILZ[0])/2+0.3,2.0,0);
+      }
+
+      // measured-effect bars: observational vs interventional vs truth
+      const bx=-3.6, by=-2.6, bw=1.3, bs=2.0, hs=3.6;
+      const reported = intervene? E.doE : E.obs;
+      const bars=[
+        {v:E.obs, c:intervene?SL:RO, lab:"P(G|NR3C1)",  sub:"observe"},
+        {v:E.doE, c:intervene?AM:SL, lab:"P(G|do)",     sub:"intervene"},
+        {v:E.betaCausal, c:GR,       lab:"true β",       sub:"causal"}
+      ];
+      bars.forEach((b,i)=>{
+        const x=bx+i*bs, h=0.1+b.v*hs;
+        const m=new T.Mesh(new T.BoxGeometry(bw,h,1.0),
+          new T.MeshStandardMaterial({color:b.c,emissive:b.c.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.set(x,by+h/2,0); gBars.add(m);
+        api.pick(m,{bar:{name:b.lab,value:+b.v.toFixed(2)}});
+        L(b.v.toFixed(2),b.c.getStyle(),1.1,x,by+h+0.4,0);
+        l(b.lab,b.c.getStyle(),0.40,x,by-0.35,0);
+        l(b.sub,"#8a99ad",0.34,x,by-0.72,0);
+      });
+      gBars.add(edge([bx-0.9,by,0],[bx+2*bs+0.9,by,0],0x223247,0.9));
+
+      L(intervene?"do(NR3C1=x): backdoor cut → measured = true effect":"observe: correlation = causal + confounder leak","#cfe0ee",0.5,-0.4,5.4,0);
+
+      sceneSnap={mode,batch:+batchStrength.toFixed(2),intervene,obsEffect:+E.obs.toFixed(2),
+        doEffect:+E.doE.toFixed(2),causalEffect:+E.betaCausal.toFixed(2),bias:+E.bias.toFixed(2),
+        reported:+reported.toFixed(2),evLevel:4,dResidual:0,dSeparated:false};
+
+      return {
+        badge:"do-operator · "+(intervene?"intervention":"observation")+" · bias "+(E.bias*100).toFixed(0)+"%",
+        formula:intervene
+          ? "P(GILZ | do(NR3C1=x)) = Σ_c P(GILZ | NR3C1=x, c)·P(c)"
+          : "P(GILZ | NR3C1=x) = Σ_c P(GILZ | NR3C1=x, c)·P(c | NR3C1=x)",
+        insight:"Observation conditions on NR3C1 but the backdoor path NR3C1 ← batch → GILZ stays open, so the measured association (β="+E.obs.toFixed(2)+") mixes the true causal effect (0.62) with a confounder leak. The do-operator surgically deletes every arrow INTO NR3C1 (red cut), closing the backdoor, so the interventional estimate equals the true effect. Backdoor adjustment recovers do() from observational data by averaging over the MARGINAL P(c), not P(c|NR3C1).",
+        state:(intervene
+          ? "do(NR3C1=x): reported effect "+E.doE.toFixed(2)+" = true 0.62. Confounder eliminated."
+          : "observe: reported "+E.obs.toFixed(2)+" = causal 0.62 + leak "+E.betaBackdoor.toFixed(2)+". Bias "+(E.bias*100).toFixed(0)+"% of the number is confounding."),
+        metrics:{topStrength:intervene?"82%":"20%",confounderBias:(E.bias*100).toFixed(0)+"%",
+          effectGap:(E.obs-E.doE).toFixed(2),dSep:"—"},
+        focus:{center:[0,1.4,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: d-separation — GILZ ⊥ FKBP5 ? open paths & adjustment set
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="d-separation"){
+      const condSet=Math.round(s.condSet);     // 0={}, 1={NR3C1}, 2={NR3C1,batch}
+      const D=dsep(condSet);
+
+      const pNR=[0,0.4,0], pGI=[-3.4,0.4,0], pFK=[3.4,0.4,0], pBA=[0,3.4,0];
+
+      const condNR=condSet>=1, condBA=condSet>=2;
+      function condCol(base,isCond){return isCond?AM.clone():base.clone();}
+
+      const nNR=sphere(pNR,0.55,condCol(CY,condNR),condNR?0.85:0.5); gGraph.add(nNR);
+      api.pick(nNR,{node:{id:"NR3C1",role:condNR?"conditioned (fork blocker)":"fork center (unconditioned)"}});
+      const nGI=sphere(pGI,0.5,GR,0.55); gGraph.add(nGI); api.pick(nGI,{node:{id:"GILZ",role:"endpoint X"}});
+      const nFK=sphere(pFK,0.5,GR,0.55); gGraph.add(nFK); api.pick(nFK,{node:{id:"FKBP5",role:"endpoint Y"}});
+      const nBA=sphere(pBA,0.5,condCol(VI,condBA),condBA?0.85:0.5); gGraph.add(nBA);
+      api.pick(nBA,{node:{id:"batch",role:condBA?"conditioned (backdoor blocker)":"confounder (unconditioned)"}});
+
+      L(condNR?"NR3C1 ✓":"NR3C1","#4dd7ff",0.95,pNR[0],pNR[1]-1.0,0);
+      L("GILZ","#34d399",0.9,pGI[0],pGI[1]-1.0,0);
+      L("FKBP5","#34d399",0.9,pFK[0],pFK[1]-1.0,0);
+      L(condBA?"batch ✓":"batch","#a78bfa",0.85,pBA[0],pBA[1]+0.95,0);
+
+      // Path 1 (fork at NR3C1): GILZ <- NR3C1 -> FKBP5
+      const forkCol=D.forkOpen?VI.getHex():0x2a3d52, forkOp=D.forkOpen?0.9:0.4;
+      const a1=arrowTo(pNR,pGI,forkCol); a1.line.material.opacity=forkOp; a1.cone.material.color.setHex(forkCol); gFlow.add(a1.line); gFlow.add(a1.cone);
+      const a2=arrowTo(pNR,pFK,forkCol); a2.line.material.opacity=forkOp; a2.cone.material.color.setHex(forkCol); gFlow.add(a2.line); gFlow.add(a2.cone);
+      l(D.forkOpen?"fork OPEN":"fork blocked",D.forkOpen?"#a78bfa":"#5a6b7e",0.42,0,1.1,0);
+
+      // Path 2 (backdoor via batch): batch -> NR3C1 -> FKBP5  and  batch -> GILZ
+      const bdCol=D.batchOpen?RO.getHex():0x2a3d52, bdOp=D.batchOpen?0.9:0.4;
+      const b1=arrowTo(pBA,[pNR[0],pNR[1]+0.4,0],bdCol); b1.line.material.opacity=bdOp; b1.cone.material.color.setHex(bdCol); gFlow.add(b1.line); gFlow.add(b1.cone);
+      const b2=arrowTo(pBA,[pGI[0],pGI[1]+0.35,0.6],bdCol); b2.line.material.opacity=bdOp; b2.cone.material.color.setHex(bdCol); gFlow.add(b2.line); gFlow.add(b2.cone);
+      l(D.batchOpen?"backdoor OPEN":"backdoor blocked",D.batchOpen?"#fb7185":"#5a6b7e",0.42,-1.7,2.3,0.6);
+
+      // residual partial-correlation bar GILZ⊥FKBP5
+      const rh=0.1+D.residual*4.2, rx=0, ry=-2.4;
+      const rcol=D.sep?GR.clone():RO.clone();
+      const rb=new T.Mesh(new T.BoxGeometry(1.4,rh,1.1),
+        new T.MeshStandardMaterial({color:rcol,emissive:rcol.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+      rb.position.set(rx,ry+rh/2,0); gBars.add(rb);
+      api.pick(rb,{bar:{name:"partial corr(GILZ,FKBP5|cond)",value:D.residual}});
+      L(D.residual.toFixed(2),rcol.getStyle(),1.2,rx,ry+rh+0.4,0);
+      l("partial corr GILZ⊥FKBP5","#9fb2c6",0.40,rx,ry-0.35,0);
+      gBars.add(edge([rx-2.2,ry,0],[rx+2.2,ry,0],0x223247,0.9));
+
+      const condTxt=condSet===0?"{ }":condSet===1?"{NR3C1}":"{NR3C1, batch}";
+      L("d-separation of GILZ and FKBP5 given "+condTxt,"#cfe0ee",0.5,-0.4,5.6,0);
+
+      sceneSnap={mode,condSet,openPaths:D.nOpen,dResidual:D.residual,dSeparated:D.sep,
+        forkOpen:D.forkOpen,batchOpen:D.batchOpen,evLevel:4,bias:0,obsEffect:0,doEffect:0};
+
+      return {
+        badge:"d-separation · cond "+condTxt+" · "+D.nOpen+" open path"+(D.nOpen===1?"":"s"),
+        formula:"GILZ ⊥ FKBP5 | { NR3C1, batch }  ⇔  every path blocked",
+        insight:"Are GILZ and FKBP5 independent? Two paths connect them. Path 1 is the fork GILZ ← NR3C1 → FKBP5: conditioning on NR3C1 blocks it. Path 2 is the backdoor GILZ ← batch → NR3C1 → FKBP5: conditioning on NR3C1 does NOT block batch → GILZ, so a second confounder path stays open. Only the adjustment set {NR3C1, batch} d-separates the pair. In practice: add batch as a covariate, then partial corr(GILZ, FKBP5 | NR3C1, batch) → 0.",
+        state:condSet===0?"Condition on { }: both paths open — strongly d-connected (residual "+D.residual.toFixed(2)+")."
+              :condSet===1?"Condition on {NR3C1}: fork blocked but backdoor via batch still open — NOT d-separated (residual "+D.residual.toFixed(2)+")."
+              :"Condition on {NR3C1, batch}: all paths blocked — d-SEPARATED (residual "+D.residual.toFixed(2)+" ≈ 0).",
+        metrics:{topStrength:"—",confounderBias:"—",effectGap:"—",dSep:D.sep?"YES":"no ("+D.nOpen+" open)"},
+        focus:{center:[0,1,0],radius:13}
+      };
+    }
+
+    return {badge:"D08",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d08",
+    kind:"causality-interventions",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D08 · Causality, interventions, and biological claims",
+    subtitle:"A GRN edge is a causal claim, not a correlation. Climb the evidence ladder for NR3C1→GILZ, cut a backdoor with the do-operator, and d-separate GILZ from FKBP5.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, rung, or bar.",
+    modes:[
+      {value:"evidence-ladder", label:"Evidence ladder (corr → CRISPRi → ChIP)"},
+      {value:"do-operator",     label:"do-operator (observe vs intervene)"},
+      {value:"d-separation",    label:"d-separation (GILZ ⊥ FKBP5 ?)"}
+    ],
+    params:[
+      {key:"evLevel",  label:"trust up to level (L1..L5)",min:1,max:5,step:1,value:3,
+       fmt:v=>"L"+Math.round(v),modes:["evidence-ladder"]},
+      {key:"batch",    label:"confounder strength (batch/cell-cycle)",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["do-operator"]},
+      {key:"intervene",label:"regime (0=observe 1=do)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"observe":"do()",modes:["do-operator"]},
+      {key:"condSet",  label:"adjustment set ( {} / {NR3C1} / {NR3C1,batch} )",min:0,max:2,step:1,value:1,
+       fmt:v=>["{ }","{NR3C1}","{NR3C1,batch}"][Math.round(v)],modes:["d-separation"]}
+    ],
+    metrics:[
+      {key:"topStrength",    label:"Causal claim strength",accent:"green"},
+      {key:"confounderBias", label:"Confounder bias",      accent:"violet"},
+      {key:"effectGap",      label:"Obs − do() gap",       accent:"amber"},
+      {key:"dSep",           label:"GILZ ⊥ FKBP5",         accent:"cyan"}
+    ],
+    layers:[
+      {group:"graph",  label:"Causal nodes"},
+      {group:"flow",   label:"Edges / paths"},
+      {group:"bars",   label:"Bars / ladder"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Intervene: do()",
+      on:api=>{api.setMode("do-operator"); api.setParam("intervene",1);}
+    },
+    secondary:{
+      label:"Adjust {NR3C1,batch}",
+      on:api=>{api.setMode("d-separation"); api.setParam("condSet",2);}
+    },
+    defaultCam:{theta:-0.42,phi:0.62,r:13},
+    hint:'<span style="color:#34d399">green</span>=true causal effect · <span style="color:#4dd7ff">cyan</span>=observation/receptor · <span style="color:#fbbf24">amber</span>=intervention/conditioned · <span style="color:#a78bfa">violet</span>=confounder/fork · <span style="color:#fb7185">rose</span>=spurious/backdoor.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="evidence-ladder") api.frame([0,2,0],13);
+      else api.frame([0,1.2,0],13);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node.id+" · "+d.node.role);
+      if(d.rung) api.setSelected(d.rung.name+" · "+d.rung.sub+" · strength "+(d.rung.strength*100).toFixed(0)+"%"+(d.rung.active?"":" (not trusted)"));
+      if(d.bar)  api.setSelected(d.bar.name+" = "+d.bar.value);
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const out={mode};
+      if(mode==="evidence-ladder"){
+        const up=Math.round(s.evLevel);
+        const top=LADDER[up-1].strength;
+        out.evLevel=up; out.topStrength=+top.toFixed(2);
+        out.strongClaim=top>=0.70; out.levelsTrusted=up;
+      } else if(mode==="do-operator"){
+        const E=effects(s.batch); const iv=Math.round(s.intervene);
+        out.batch=+(+s.batch).toFixed(2); out.intervene=iv;
+        out.obsEffect=+E.obs.toFixed(2); out.doEffect=+E.doE.toFixed(2);
+        out.causalEffect=+E.betaCausal.toFixed(2); out.bias=+E.bias.toFixed(2);
+        out.reported=+(iv?E.doE:E.obs).toFixed(2);
+        out.effectGap=+(E.obs-E.doE).toFixed(2);
+      } else if(mode==="d-separation"){
+        const cs=Math.round(s.condSet); const D=dsep(cs);
+        out.condSet=cs; out.openPaths=D.nOpen; out.dResidual=D.residual;
+        out.dSeparated=D.sep; out.forkOpen=D.forkOpen; out.batchOpen=D.batchOpen;
+      }
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

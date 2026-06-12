@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C01 · The geometric deep learning blueprint</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no wall-clock, no rng) ─────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── snapshot scratch ──────────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // CANONICAL WORKED EXAMPLE (Section 5 of the note)
+  //   Heterogeneous GRN:  nodes = TF, GeneA, GeneB, Peak1, CellState
+  //   Numerical toy:      path A--B--C with x_A=1, x_B=2, x_C=10
+  //   radius-1 average at B:  h_B' = (1+2+10)/3 = 4.333…
+  // ════════════════════════════════════════════════════════════════════════
+  const HET = {
+    // id, label, type, position (xz plane), feature label, accent
+    nodes:[
+      {id:"TF",        type:"TF",        pos:[-3.4, 0.0,  2.2], feat:"[expr, motif]",        col:"violet"},
+      {id:"Peak1",     type:"peak",      pos:[-0.4, 0.0,  3.4], feat:"[accessibility]",      col:"amber" },
+      {id:"GeneA",     type:"gene",      pos:[ 0.6, 0.0,  0.2], feat:"[expr, pert]",         col:"cyan"  },
+      {id:"GeneB",     type:"gene",      pos:[ 3.4, 0.0,  0.9], feat:"[expr]",               col:"cyan"  },
+      {id:"CellState", type:"cellstate", pos:[-1.2, 0.0, -2.8], feat:"[state prob]",         col:"green" }
+    ],
+    // directed (regulatory / evidence) + undirected (co-expression) edges
+    edges:[
+      {a:"TF",        b:"Peak1", kind:"motif",      dir:true },
+      {a:"Peak1",     b:"GeneA", kind:"access",     dir:true },
+      {a:"TF",        b:"GeneA", kind:"candidate",  dir:true },
+      {a:"CellState", b:"GeneA", kind:"context",    dir:true },
+      {a:"GeneA",     b:"GeneB", kind:"coexpr",     dir:false}
+    ]
+  };
+  const nodeById=id=>HET.nodes.find(n=>n.id===id);
+
+  // The three-node numeric path  A(1) -- B(2) -- C(10)
+  const PATH = {x:[1,2,10], ids:["A","B","C"]};
+
+  // radius-r local average of node B in the path (B is the centre, index 1).
+  // radius 1 → {A,B,C}; radius 2 in a longer chain pulls in two virtual far
+  // neighbours (echoes of A and C) that pull h_B toward the global mean.
+  function localAverage(radius){
+    const xs=PATH.x.slice();                 // base 3-node neighbourhood of B
+    // virtual extension of the chain: …, A2, A1, [A B C], C1, C2, …
+    // far echoes are deterministic, decaying copies of the endpoints.
+    const far=[];
+    for(let r=2;r<=radius;r++){
+      const wk=1/r;                           // weight shrinks with distance
+      far.push(PATH.x[0]*wk + (1-wk)*5.5);    // echo of the low end, drifting to mid
+      far.push(PATH.x[2]*wk + (1-wk)*5.5);    // echo of the high end, drifting to mid
+    }
+    const all=xs.concat(far);
+    const sum=all.reduce((s,v)=>s+v,0);
+    return {hB:sum/all.length, n:all.length, far};
+  }
+  // global mean of the path — the oversmoothing limit
+  const PATH_MEAN=PATH.x.reduce((s,v)=>s+v,0)/PATH.x.length; // 4.333…
+
+  // ── build ──────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+
+    const gMain  =api.group("structure");
+    const gOps   =api.group("operator");
+    const gAudit =api.group("audit");
+    const gLabels=api.group("labels");
+
+    const CY="#4dd7ff", VI="#a78bfa", AM="#fbbf24", GR="#34d399", RO="#fb7185", SL="#54667c";
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE 1 — BLUEPRINT: domain → signal → symmetry → operator → scale → claim
+    //   Heterogeneous GRN drawn as a 3D evidence graph; the six blueprint
+    //   stages rise as a vertical ladder. symStrength controls how many edge
+    //   attributes (direction / type) the operator is allowed to respect.
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="blueprint"){
+      const symStrength=s.symStrength;          // 0..1  how much typed structure is kept
+      const evNoise=s.evNoise;                  // 0..1  evidence noise
+      const colMap={violet:VI,amber:AM,cyan:CY,green:GR};
+
+      // node spheres (heterogeneous types, distinct colours)
+      HET.nodes.forEach(n=>{
+        const c=colMap[n.col];
+        api.node(n.pos,{color:c,r:0.40,label:n.id,labelColor:"#e8eef6",group:"structure",
+          pick:{het:{id:n.id,type:n.type,feat:n.feat}}});
+        slbl(n.feat,"#8aa0b4",0.30,n.pos[0],0.02,n.pos[2]+0.62);
+      });
+
+      // edges — directed regulatory edges are arrows; co-expression is a plain edge.
+      // symStrength fades the *type colour* toward grey: low symmetry = the model
+      // treats every edge as one generic undirected relation (the lesson's warning).
+      HET.edges.forEach(e=>{
+        const A=nodeById(e.a), B=nodeById(e.b);
+        const pa=[A.pos[0],0,A.pos[2]], pb=[B.pos[0],0,B.pos[2]];
+        const typed=(e.kind==="coexpr")?GR:(e.kind==="context")?AM:VI;
+        const c=api.ramp(symStrength,SL,typed);      // grey→typed as symmetry rises
+        const cHex="#"+c.getHexString();
+        if(e.dir && symStrength>0.5){
+          api.arrow(pa,pb,{color:cHex,width:0.05,head:0.30,group:"structure"});
+        }else{
+          api.edge(pa,pb,{color:cHex,width:0.05,group:"structure",opacity:0.9});
+        }
+      });
+
+      // blueprint ladder — six stages, lifting from the graph plane upward
+      const stages=["domain","signal","symmetry","operator","scale","claim"];
+      const sx=5.2;
+      stages.forEach((st,i)=>{
+        const y=0.6+i*0.95;
+        const lit=(i<=Math.round(symStrength*5));   // how far down the checklist we got
+        const c=lit?CY:"#34516a";
+        const bar=new T.Mesh(new T.BoxGeometry(0.34,0.34,0.34),
+          new T.MeshStandardMaterial({color:c,emissive:new T.Color(c).multiplyScalar(lit?0.7:0.2),emissiveIntensity:lit?0.8:0.2,roughness:0.4}));
+        bar.position.set(sx,y,-1.5);
+        gOps.add(bar);
+        api.pick(bar,{stage:{name:st,filled:lit}});
+        slbl(st,lit?"#bfe6ff":"#5f7589",0.34,sx+0.9,y,-1.5);
+      });
+      lbl("blueprint","#4dd7ff",1.0,sx,0.6+6*0.95,-1.5);
+
+      // honesty gauge: how many of {direction, type, context} survived
+      const kept=Math.round(symStrength*3);        // 0..3 attributes respected
+      const honesty=Math.max(0.05,Math.min(1,(0.30+0.70*symStrength)-evNoise*0.45));
+      api.setMetric("hB","—");
+      api.setMetric("kept",kept+"/3");
+      api.setMetric("honesty",(honesty*100).toFixed(0)+"%");
+      api.setMetric("claim", honesty>0.6?"directed":"generic");
+
+      const claimTxt=honesty>0.6
+        ? "directed, typed regulation — honest"
+        : "undirected co-expression only";
+      sceneSnap={mode,symStrength:+symStrength.toFixed(3),evNoise:+evNoise.toFixed(3),
+        keptAttributes:kept,honesty:+honesty.toFixed(3),hB:null,permEquivariant:null,oversmooth:null};
+
+      return {
+        badge:"Blueprint · "+kept+"/3 attributes kept · honesty "+(honesty*100).toFixed(0)+"%",
+        formula:"domain → signal → symmetry → operator → scale → <code>claim</code>",
+        insight:"The heterogeneous GRN (TF·peak·gene·gene·cell-state) is not one generic graph. Raise symmetry strength and the operator is allowed to keep edge DIRECTION and TYPE (violet=regulatory, amber=context, green=co-expression) and the blueprint ladder lights up. Drop it and every edge collapses to one grey undirected relation — the model can still predict targets but can no longer claim directed regulation.",
+        state:"Attributes respected: "+kept+"/3 (direction · type · context). Output claim allowed: "+claimTxt+". Evidence noise "+(evNoise*100).toFixed(0)+"% lowers honesty.",
+        metrics:{hB:"—",kept:kept+"/3",honesty:(honesty*100).toFixed(0)+"%",claim:honesty>0.6?"directed":"generic"},
+        focus:{center:[1.2,2.6,-0.2],radius:14}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE 2 — LOCALITY: the numeric path A(1)--B(2)--C(10), radius-r averaging
+    //   radius 1 → h_B' = (1+2+10)/3 = 4.33. Larger radius pulls distant echoes
+    //   in and h_B drifts toward the global mean → OVERSMOOTHING.
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="locality"){
+      const radius=Math.round(s.radius);          // 1..3
+      const evNoise=s.evNoise;
+      const av=localAverage(radius);
+
+      // draw the 3-node path along x, value encoded as bar height in y
+      const px=[-3.0,0.0,3.0];
+      PATH.ids.forEach((id,i)=>{
+        const x=px[i], v=PATH.x[i];
+        const h=0.25+v*0.34;                       // bar height ∝ value
+        const isB=(i===1);
+        const c=isB?AM:CY;
+        const bar=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),
+          new T.MeshStandardMaterial({color:c,emissive:new T.Color(c).multiplyScalar(isB?0.7:0.35),emissiveIntensity:isB?0.8:0.45,roughness:0.4}));
+        bar.position.set(x,h/2,0);
+        gMain.add(bar);
+        api.pick(bar,{path:{id,value:v}});
+        lbl("x_"+id+"="+v,c,0.95,x,h+0.55,0);
+        slbl(id,"#cfe0f0",0.42,x,0.05,0.85);
+      });
+
+      // path edges A--B--C
+      api.edge([px[0],0.2,0],[px[1],0.2,0],{color:"#33526d",width:0.05,group:"structure"});
+      api.edge([px[1],0.2,0],[px[2],0.2,0],{color:"#33526d",width:0.05,group:"structure"});
+
+      // far "echo" neighbours that enter when radius > 1 (oversmoothing source)
+      av.far.forEach((v,k)=>{
+        const side=(k%2===0)?-1:1;
+        const ring=Math.floor(k/2)+2;              // distance ring 2,3,…
+        const x=side*(3.0+ring*1.6);
+        const h=0.25+v*0.34;
+        const bar=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),
+          new T.MeshStandardMaterial({color:SL,emissive:new T.Color(SL).multiplyScalar(0.3),emissiveIntensity:0.3,roughness:0.5,transparent:true,opacity:0.7}));
+        bar.position.set(x,h/2,0);
+        gAudit.add(bar);
+        api.edge([Math.sign(x)*3.0,0.2,0],[x,0.2,0],{color:"#243a4e",width:0.035,group:"audit",opacity:0.6,dashed:false});
+        slbl("r"+ring,"#6f8498",0.34,x,h+0.4,0);
+      });
+
+      // the computed h_B' as an amber marker hovering over B, with the radius-1
+      // reference plane at the canonical 4.33 line.
+      const hB=av.hB;
+      const hBar=0.25+hB*0.34;
+      const marker=new T.Mesh(new T.SphereGeometry(0.26,20,16),
+        new T.MeshStandardMaterial({color:RO,emissive:RO,emissiveIntensity:0.9,roughness:0.25}));
+      marker.position.set(px[1],hBar,0);
+      gOps.add(marker);
+      api.pick(marker,{result:{hB:+hB.toFixed(3),radius,n:av.n}});
+      lbl("h_B'="+hB.toFixed(2),RO,1.05,px[1],hBar+0.6,0);
+
+      // reference line at the canonical radius-1 mean (4.33)
+      const refH=0.25+PATH_MEAN*0.34;
+      gAudit.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-9,refH,0),new T.Vector3(9,refH,0)]),
+        new T.LineBasicMaterial({color:0x355a3a})));
+      slbl("radius-1 mean 4.33","#34d399",0.34,-6.6,refH+0.35,0);
+
+      const oversmooth=Math.abs(hB-PATH_MEAN); // how far drifted from the local truth
+      const honesty=Math.max(0.05,Math.min(1,1-oversmooth*0.18-evNoise*0.4));
+      sceneSnap={mode,radius,evNoise:+evNoise.toFixed(3),hB:+hB.toFixed(3),
+        oversmooth:+oversmooth.toFixed(3),honesty:+honesty.toFixed(3),keptAttributes:null,permEquivariant:null};
+
+      return {
+        badge:"Locality · radius "+radius+" · h_B' = "+hB.toFixed(2),
+        formula:"h_B' = mean(x_u : u ∈ N_r(B)) = (1 + 2 + 10)/3 = <code>4.33</code>  (r=1)",
+        insight:"A radius-1 local operator updates B by averaging itself and its graph neighbours: (1+2+10)/3 = 4.33. Push the radius higher and distant echoes (grey) enter the receptive field; h_B' drifts toward the global mean and the sharp B=10 signal is washed out. In biology, graph distance is NOT evidence strength — a direct perturbation edge can matter more than a short, weak co-expression path.",
+        state:"radius "+radius+": neighbourhood size "+av.n+", h_B' = "+hB.toFixed(3)+". Drift from radius-1 truth: "+oversmooth.toFixed(2)+" (oversmoothing). Larger radius ≠ more biological locality.",
+        metrics:{hB:hB.toFixed(2),kept:"r="+radius,honesty:(honesty*100).toFixed(0)+"%",claim:radius===1?"local":"oversmoothed"},
+        focus:{center:[0,2.2,0],radius:15}
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // MODE 3 — SYMMETRY: permutation equivariance (valid) vs direction reversal
+    //   Reorder [A,B,C] → [C,A,B]: the output permutes the SAME way (valid).
+    //   Reverse A--B → B→A: the claim changes (invalid "symmetry").
+    //   transform: 0=identity, 1=permute(valid), 2=reverse-edge(invalid)
+    // ══════════════════════════════════════════════════════════════════════
+    if(mode==="symmetry"){
+      const transform=Math.round(s.transform);    // 0,1,2
+      const evNoise=s.evNoise;
+
+      // permutation σ applied to the file order [A,B,C]
+      const idsIn=PATH.ids.slice();
+      let order=[0,1,2];                            // identity
+      if(transform===1) order=[2,0,1];             // [A,B,C] → [C,A,B]
+      const idsOut=order.map(i=>idsIn[i]);
+      const xOut  =order.map(i=>PATH.x[i]);
+
+      // two rows: TOP = input order, BOTTOM = output order after transform
+      const px=[-3.0,0.0,3.0];
+      function drawRow(zRow,ids,xs,accent){
+        ids.forEach((id,i)=>{
+          const v=xs[i], x=px[i];
+          const c=accent;
+          const sph=new T.Mesh(new T.SphereGeometry(0.40,24,18),
+            new T.MeshStandardMaterial({color:c,emissive:new T.Color(c).multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+          sph.position.set(x,0,zRow);
+          gMain.add(sph);
+          api.pick(sph,{cell:{id,value:v,row:zRow<0?"output":"input"}});
+          lbl(id,"#06121a",1.0,x,0,zRow);
+          slbl("x="+v,"#cfe0f0",0.34,x,0.0,zRow+0.7);
+        });
+        // chain edges within the row
+        api.edge([px[0],0,zRow],[px[1],0,zRow],{color:"#33526d",width:0.045,group:"structure"});
+        api.edge([px[1],0,zRow],[px[2],0,zRow],{color:"#33526d",width:0.045,group:"structure"});
+      }
+      drawRow( 2.4, idsIn,  PATH.x, CY);           // input
+      const outAccent=(transform===2)?RO:GR;
+      drawRow(-2.4, idsOut, xOut,   outAccent);    // output
+
+      // correspondence arrows input→output (show how labels map)
+      idsIn.forEach((id,i)=>{
+        const j=idsOut.indexOf(id);
+        const a=[px[i],0.0,2.4], b=[px[j],0.0,-2.4];
+        const c=(transform===2)?"#fb7185":"#34d399";
+        api.arrow(a,b,{color:c,width:0.03,head:0.22,group:"operator"});
+      });
+
+      // for the invalid case, flip the A--B edge direction and flag it
+      let equivariant=true, claimOK=true;
+      if(transform===2){
+        // highlight the reversed regulatory edge with a red back-arrow on the output row
+        api.arrow([px[0],0.0,-2.4],[px[1],0.0,-2.4],{color:RO,width:0.06,head:0.32,group:"audit"});
+        lbl("B→A reversed","#fb7185",0.85,-1.5,0.9,-2.4);
+        equivariant=false; claimOK=false;
+      }else if(transform===1){
+        lbl("[A,B,C]→[C,A,B]","#34d399",0.85,0,0.9,2.4);
+      }
+
+      lbl("input order","#9fb4cc",0.8,-5.0,0.0,2.4);
+      lbl("output order","#9fb4cc",0.8,-5.0,0.0,-2.4);
+
+      const tName=["identity","permutation (valid)","reverse edge (invalid)"][transform];
+      const honesty=transform===2
+        ? Math.max(0.05,0.20-evNoise*0.15)
+        : Math.max(0.05,Math.min(1,0.95-evNoise*0.4));
+      sceneSnap={mode,transform,evNoise:+evNoise.toFixed(3),
+        permEquivariant:equivariant?1:0,claimValid:claimOK?1:0,honesty:+honesty.toFixed(3),
+        hB:null,keptAttributes:null,oversmooth:null};
+
+      return {
+        badge:"Symmetry · "+tName+" · "+(equivariant?"equivariant":"BROKEN"),
+        formula:"f(g·x) = ρ_out(g) f(x)   ⟶   valid iff g preserves the <code>evidence</code>",
+        insight:"Reordering the node list [A,B,C]→[C,A,B] is a VALID symmetry: the output permutes the same way (green), the biological answer is unchanged. Reversing a regulatory edge A--B→B→A is NOT a harmless symmetry (red): it changes the directed-regulation claim. The blueprint's job is to tell apart relabelings the model may ignore from transformations that destroy meaning.",
+        state:"Transform: "+tName+". Permutation-equivariant: "+(equivariant?"yes":"NO")+". Claim still valid: "+(claimOK?"yes":"NO — direction reversed")+".",
+        metrics:{hB:"—",kept:equivariant?"equivar":"broken",honesty:(honesty*100).toFixed(0)+"%",claim:claimOK?"valid":"invalid"},
+        focus:{center:[0,0.4,0],radius:15}
+      };
+    }
+
+    return {badge:"C01",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"c01",
+    kind:"geometric-deep-learning-blueprint",
+    eyebrow:"Block C · Geometric & Topological DL",
+    title:"C01 · The geometric deep learning blueprint",
+    subtitle:"Structure before layer. One heterogeneous GRN, three blueprint questions: which structure must the model respect (domain·signal·symmetry·operator·scale·claim), what does locality mean, and which transformations preserve meaning.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, bar, ladder stage, or marker.",
+    modes:[
+      {value:"blueprint", label:"Blueprint (domain → claim)"},
+      {value:"locality",  label:"Locality (radius-r averaging)"},
+      {value:"symmetry",  label:"Symmetry (equivariant vs invalid)"}
+    ],
+    params:[
+      {key:"symStrength",label:"symmetry strength (keep direction & type)",min:0,max:1,step:0.05,value:0.8,
+       fmt:v=>Math.round(v*100)+"%",modes:["blueprint"]},
+      {key:"radius",     label:"operator radius r",min:1,max:3,step:1,value:1,
+       fmt:v=>"r="+Math.round(v),modes:["locality"]},
+      {key:"transform",  label:"transform (0 id · 1 permute · 2 reverse)",min:0,max:2,step:1,value:1,
+       fmt:v=>["identity","permute","reverse"][Math.round(v)],modes:["symmetry"]},
+      {key:"evNoise",    label:"evidence noise",min:0,max:1,step:0.05,value:0.2,
+       fmt:v=>Math.round(v*100)+"%"}
+    ],
+    metrics:[
+      {key:"hB",     label:"h_B' (radius-r average)",accent:"amber"},
+      {key:"kept",   label:"structure respected",    accent:"cyan"},
+      {key:"honesty",label:"claim honesty",          accent:"green"},
+      {key:"claim",  label:"output claim",           accent:"violet"}
+    ],
+    layers:[
+      {group:"structure",label:"Graph / path"},
+      {group:"operator", label:"Operator"},
+      {group:"audit",    label:"Audit / echoes"},
+      {group:"labels",   label:"Labels"}
+    ],
+    primary:{
+      label:"Radius 1 (local)",
+      on:api=>{api.setMode("locality");api.setParam("radius",1);}
+    },
+    secondary:{
+      label:"Reverse edge (invalid)",
+      on:api=>{api.setMode("symmetry");api.setParam("transform",2);}
+    },
+    defaultCam:{theta:-0.5,phi:0.78,r:14},
+    hint:'<span style="color:#a78bfa">violet</span>=TF/regulatory · <span style="color:#fbbf24">amber</span>=peak/context · <span style="color:#4dd7ff">cyan</span>=gene/input · <span style="color:#34d399">green</span>=cell-state/valid · <span style="color:#fb7185">rose</span>=result / invalid transform.',
+    onMode(api){
+      const m=api.state.mode;
+      if(m==="blueprint") api.frame([1.2,2.6,-0.2],14);
+      else if(m==="locality") api.frame([0,2.2,0],15);
+      else api.frame([0,0.4,0],15);
+    },
+    onParam(api){
+      const m=api.state.mode;
+      if(m==="blueprint") api.frame([1.2,2.6,-0.2],14);
+      else if(m==="locality") api.frame([0,2.2,0],15);
+      else api.frame([0,0.4,0],15);
+    },
+    onSelect(api,d){
+      if(d.het)    api.setSelected(d.het.id+" · "+d.het.type+" · "+d.het.feat);
+      if(d.stage)  api.setSelected("blueprint stage: "+d.stage.name+(d.stage.filled?" · filled":" · skipped"));
+      if(d.path)   api.setSelected("path node "+d.path.id+" · x = "+d.path.value);
+      if(d.result) api.setSelected("h_B' = "+d.result.hB+" over "+d.result.n+" nodes (radius "+d.result.radius+")");
+      if(d.cell)   api.setSelected(d.cell.row+" "+d.cell.id+" · x = "+d.cell.value);
+    },
+    build,
+    snapshot(s){
+      const radius=Math.round(s.radius);
+      const transform=Math.round(s.transform);
+      const symStrength=s.symStrength;
+      const av=localAverage(radius);
+      const kept=Math.round(symStrength*3);
+      return {
+        mode:s.mode,
+        symStrength:+(+symStrength).toFixed(3),
+        radius:radius,
+        transform:transform,
+        evNoise:+(+s.evNoise).toFixed(3),
+        hB:+av.hB.toFixed(3),
+        radius1Mean:+PATH_MEAN.toFixed(3),
+        oversmooth:+Math.abs(av.hB-PATH_MEAN).toFixed(3),
+        keptAttributes:kept,
+        permEquivariant:(transform===2)?0:1,
+        claimValid:(transform===2)?0:1,
+        heteroNodes:HET.nodes.length,
+        heteroEdges:HET.edges.length
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

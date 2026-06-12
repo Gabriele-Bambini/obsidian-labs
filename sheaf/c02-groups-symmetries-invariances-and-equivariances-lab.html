@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C02 · Groups, symmetries, invariances, and equivariances</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no non-deterministic calls) ─────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+  const R2=Math.sqrt(2);
+
+  // ── FACTS — mirror the note's Section-5 worked example ───────────────────
+  // 3-gene set [A,B,C] = [1,2,10]; sum readout = 13 (permutation-invariant)
+  const F={
+    genes:["A","B","C"],
+    vals:[1,2,10],
+    sumOut:13,                 // 1+2+10
+    nodeOut:[2,4,20],          // node-wise f(x)=2x
+    perm:[2,0,1],              // [A,B,C] -> [10,1,2] order (C,A,B)
+    // GRN edge T->G  (motif support, perturbation evidence)
+    motif:0.8, pert:0.6, edgeScore:1.4,   // 0.8+0.6
+    // molecule: atom at r=(1,0); rotate 90deg -> (0,1)
+    rx:1, ry:0, rotx:0, roty:1, normR:1,
+    fvecx:1, fvecy:0           // predicted force vector (1,0) -> (0,1)
+  };
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const applied=s.applied>0.5;        // 0=identity, 1=apply transformation g
+    const claim=Math.round(s.claim);    // 0=invariant scalar, 1=equivariant vector/node
+    const angle=s.angle*Math.PI/180;    // rotation angle (molecule)
+    const evidence=s.evidence;          // 0..1 biological evidence strength
+
+    const gMain  =api.group("scene");
+    const gOut    =api.group("output");
+    const gLabels=api.group("labels");
+    const gAux    =api.group("aux");
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+
+    function lab(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function flat(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE A — Permutation invariance: sum readout on the 3-gene set
+    //   genes [A,B,C]=[1,2,10]; sum f=13 regardless of order
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="permute"){
+      const order=applied?F.perm:[0,1,2];
+      const xs=[-3.0,0,3.0];
+      let runSum=0;
+      const cols=[CY,GR,AM];
+
+      order.forEach((gi,slot)=>{
+        const v=F.vals[gi];
+        runSum+=v;
+        const h=0.3+v*0.42;                 // bar height ∝ value
+        const x=xs[slot];
+        const col=cols[gi];
+        const bar=new T.Mesh(new T.BoxGeometry(1.3,h,1.3),
+          new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(0.55),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(x,h/2,0); gMain.add(bar);
+        api.pick(bar,{gene:{name:F.genes[gi],value:v,slot}});
+        lab("gene "+F.genes[gi],col,1.1,x,-0.55,0);
+        lab("x="+v,"#cfe0f0",1.25,x,h+0.5,0);
+        // node-wise output marker (claim=equivariant): f(x)=2x stays attached to gene
+        if(claim===1){
+          const o=F.nodeOut[gi];
+          const oc=new T.Mesh(new T.SphereGeometry(0.24,18,14),
+            new T.MeshStandardMaterial({color:new T.Color(VI),emissive:new T.Color(VI).multiplyScalar(0.7),emissiveIntensity:0.8,roughness:0.3}));
+          oc.position.set(x,h+1.35,0); gOut.add(oc);
+          lab("f="+o,VI,1.0,x,h+2.05,0);
+        }
+      });
+
+      // sum-readout node (permutation-invariant scalar)
+      if(claim===0){
+        const sumN=new T.Mesh(new T.SphereGeometry(0.7,28,20),
+          new T.MeshStandardMaterial({color:new T.Color(GR),emissive:new T.Color(GR).multiplyScalar(0.7),emissiveIntensity:0.85,roughness:0.3}));
+        sumN.position.set(0,4.6,0); gOut.add(sumN);
+        api.pick(sumN,{readout:{type:"sum",value:F.sumOut}});
+        lab("Σ = "+F.sumOut,GR,1.7,0,5.6,0);
+        xs.forEach(x=>{
+          const ed=[new T.Vector3(x,0.9,0),new T.Vector3(0,4.2,0)];
+          gAux.add(new T.Line(new T.BufferGeometry().setFromPoints(ed),new T.LineBasicMaterial({color:0x224058,transparent:true,opacity:0.6})));
+        });
+      }
+
+      lab(applied?"g·x  (order C,A,B)":"x  (order A,B,C)",applied?AM:CY,1.25,0,-1.5,0);
+
+      // INVARIANT: sum unchanged; EQUIVARIANT: node outputs relabel with genes
+      const invHold = (claim===0);                  // sum readout is invariant
+      const eqHold  = (claim===1);                  // node outputs travel with genes
+      const bioPreserved = 1.0;                      // reordering rows is always valid biology
+      sceneSnap={mode,applied:applied?1:0,claim,readoutSum:F.sumOut,
+        invariantHolds:invHold?1:0,equivariantHolds:eqHold?1:0,
+        bioPreserved:+bioPreserved.toFixed(3),invalidRisk:0};
+
+      return {
+        badge:"Permutation · "+(claim===0?"sum readout (invariant)":"node-wise f=2x (equivariant)"),
+        formula:claim===0
+          ? "f([1,2,10]) = 1+2+10 = <b style='color:#34d399'>13</b> = f(g·x)"
+          : "f(g·x) = P·f(x):  [2,4,20] &rarr; [20,2,4]  (outputs travel with genes)",
+        insight:claim===0
+          ? "A sum ignores row order, so the sample-level scalar is permutation-INVARIANT: f([1,2,10]) = f([10,1,2]) = 13. Reordering genes is a valid nuisance transformation — row order is not biology."
+          : "Node-wise outputs are permutation-EQUIVARIANT: relabel the genes and the predictions f=2x relabel with them ([2,4,20] becomes [20,2,4]). They must stay attached to genes, not to row positions.",
+        state:applied
+          ? "Applied g (order C,A,B). "+(claim===0?"Sum still 13 — invariant.":"Outputs [20,2,4] follow the genes — equivariant.")
+          : "Identity order A,B,C. "+(claim===0?"Sum = 13.":"Outputs [2,4,20]."),
+        metrics:{
+          bioPreserved:"100%",
+          invariant:claim===0?"holds":"—",
+          equivariant:claim===1?"holds":"—",
+          invalidRisk:"0%"
+        },
+        focus:{center:[0,2.4,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE B — GRN direction reversal: T -> G edge, the FALSE symmetry
+    //   edge feature motif=0.8, perturbation=0.6
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="grn"){
+      const reversed=applied;
+      const pT=new T.Vector3(-2.6,0,0);   // TF node
+      const pG=new T.Vector3( 2.6,0,0);   // target gene node
+
+      const tf=new T.Mesh(new T.SphereGeometry(0.55,26,18),
+        new T.MeshStandardMaterial({color:new T.Color(VI),emissive:new T.Color(VI).multiplyScalar(0.7),emissiveIntensity:0.85,roughness:0.3}));
+      tf.position.copy(pT); gMain.add(tf); api.pick(tf,{gene:{name:"TF T",role:"regulator"}});
+      const tg=new T.Mesh(new T.SphereGeometry(0.55,26,18),
+        new T.MeshStandardMaterial({color:new T.Color(CY),emissive:new T.Color(CY).multiplyScalar(0.7),emissiveIntensity:0.85,roughness:0.3}));
+      tg.position.copy(pG); gMain.add(tg); api.pick(tg,{gene:{name:"gene G",role:"target"}});
+      lab("TF  T",VI,1.4,pT.x,1.15,0);
+      lab("gene  G",CY,1.4,pG.x,1.15,0);
+
+      // the directed regulatory edge
+      const eCol=reversed?RO:GR;
+      const from=reversed?pG:pT, to=reversed?pT:pG;
+      api.arrow([from.x,from.y,from.z],[to.x,to.y,to.z],{color:eCol,width:0.09,head:0.5,group:"scene"});
+      lab(reversed?"G → T  (reversed)":"T → G  (claimed)",eCol,1.35,0,-1.15,0);
+      lab("motif="+F.motif.toFixed(1)+"  pert="+F.pert.toFixed(1),AM,1.0,0,-1.9,0);
+
+      // evidence bars: edge score = motif + perturbation
+      const eScore=F.motif*(0.5+0.5*evidence)+F.pert*(0.5+0.5*evidence);
+      const eh=0.3+eScore*1.6;
+      const ebar=new T.Mesh(new T.BoxGeometry(1.0,eh,1.0),
+        new T.MeshStandardMaterial({color:new T.Color(AM),emissive:new T.Color(AM).multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+      ebar.position.set(0,eh/2,2.8); gMain.add(ebar);
+      lab("edge evidence","#8a99ad",0.95,0,-0.5,2.8);
+      lab(eScore.toFixed(2),AM,1.15,0,eh+0.5,2.8);
+
+      // output claim panel
+      const claimDir = (claim===1);  // claim is "directed mechanism" when equivariant chosen
+      const bioPreserved = reversed ? 0.12 : (0.45+0.55*evidence);
+      const invalidRisk  = reversed ? (0.72+0.2*(1-evidence)) : 0.12*(1-evidence);
+      // a direction-blind model treats T->G and G->T as identical => false symmetry when reversed
+      const claimNode=new T.Mesh(new T.SphereGeometry(0.5,24,16),
+        new T.MeshStandardMaterial({color:new T.Color(reversed?RO:GR),emissive:new T.Color(reversed?RO:GR).multiplyScalar(0.7),emissiveIntensity:0.85,roughness:0.3}));
+      claimNode.position.set(0,3.4,0); gOut.add(claimNode);
+      api.pick(claimNode,{readout:{type:"mechanism",valid:!reversed}});
+      lab(reversed?"claim BROKEN":"claim: T regulates G",reversed?RO:GR,1.4,0,4.4,0);
+
+      sceneSnap={mode,applied:reversed?1:0,claim,edgeScore:+eScore.toFixed(3),
+        invariantHolds:0,equivariantHolds:reversed?0:1,
+        bioPreserved:+bioPreserved.toFixed(3),invalidRisk:+invalidRisk.toFixed(3)};
+
+      return {
+        badge:"GRN edge · "+(reversed?"direction reversed (INVALID)":"T → G (valid relabel only)"),
+        formula:"f(P X, P A Pᵀ) = P f(X, A)   —  but  T→G  ≠  G→T",
+        insight:reversed
+          ? "Reversing the edge T→G to G→T is NOT a nuisance transformation: it changes the regulatory mechanism being claimed. A direction-blind GNN treats them as identical (false invariance) — biology-preserved collapses and invalid-symmetry risk spikes."
+          : "Consistent relabeling and row reordering keep T→G intact, so they are valid symmetries. The edge carries motif="+F.motif+" and perturbation="+F.pert+" evidence — direction is part of the claim, so the model must stay direction-aware.",
+        state:reversed
+          ? "g = direction reversal. Biology preserved "+(bioPreserved*100).toFixed(0)+"% · invalid risk "+(invalidRisk*100).toFixed(0)+"%."
+          : "Identity / valid relabel. Edge evidence "+eScore.toFixed(2)+" · biology preserved "+(bioPreserved*100).toFixed(0)+"%.",
+        metrics:{
+          bioPreserved:(bioPreserved*100).toFixed(0)+"%",
+          invariant:"—",
+          equivariant:reversed?"broken":"holds",
+          invalidRisk:(invalidRisk*100).toFixed(0)+"%"
+        },
+        focus:{center:[0,1.6,1],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE C — Molecular E(3): atom r=(1,0); rotate by angle.
+    //   scalar ‖r‖ INVARIANT; force vector EQUIVARIANT (rotates with r)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="molecule"){
+      const a=applied?angle:0;
+      const ca=Math.cos(a), sa=Math.sin(a);
+      // atom position r=(1,0) rotated
+      const rx=F.rx*ca - F.ry*sa, ry=F.rx*sa + F.ry*ca;
+      const scl=2.4;
+      const origin=new T.Vector3(0,0,0);
+      const atom=new T.Vector3(rx*scl,ry*scl,0);
+
+      // origin marker + reference axes
+      const oN=new T.Mesh(new T.SphereGeometry(0.28,18,14),
+        new T.MeshStandardMaterial({color:new T.Color(SL),emissive:new T.Color(SL).multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+      gMain.add(oN);
+      gAux.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-3.2,0,0),new T.Vector3(3.2,0,0)]),new T.LineBasicMaterial({color:0x1e3046})));
+      gAux.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(0,-3.2,0),new T.Vector3(0,3.2,0)]),new T.LineBasicMaterial({color:0x1e3046})));
+
+      // radius ring = invariant ‖r‖=1
+      const ringPts=[];
+      for(let k=0;k<=48;k++){const th=k/48*Math.PI*2;ringPts.push(new T.Vector3(Math.cos(th)*scl,Math.sin(th)*scl,0));}
+      gAux.add(new T.Line(new T.BufferGeometry().setFromPoints(ringPts),new T.LineBasicMaterial({color:0x2a5566,transparent:true,opacity:0.7})));
+
+      // bond from origin to atom (radius vector)
+      api.edge([0,0,0],[atom.x,atom.y,atom.z],{color:CY,width:0.06,group:"scene"});
+      const atomN=new T.Mesh(new T.SphereGeometry(0.42,24,16),
+        new T.MeshStandardMaterial({color:new T.Color(CY),emissive:new T.Color(CY).multiplyScalar(0.7),emissiveIntensity:0.85,roughness:0.3}));
+      atomN.position.copy(atom); gMain.add(atomN);
+      api.pick(atomN,{atom:{x:+rx.toFixed(3),y:+ry.toFixed(3),norm:F.normR}});
+      lab("atom r=("+rx.toFixed(2)+","+ry.toFixed(2)+")",CY,1.1,atom.x,atom.y+0.7,0);
+
+      if(claim===0){
+        // INVARIANT scalar: distance ‖r‖ = 1 always
+        lab("‖r‖ = "+F.normR.toFixed(0)+"  (invariant)",GR,1.5,0,-3.7,0);
+        const sN=new T.Mesh(new T.SphereGeometry(0.55,24,16),
+          new T.MeshStandardMaterial({color:new T.Color(GR),emissive:new T.Color(GR).multiplyScalar(0.7),emissiveIntensity:0.85,roughness:0.3}));
+        sN.position.set(0,3.7,0); gOut.add(sN);
+        api.pick(sN,{readout:{type:"scalar",value:F.normR}});
+        lab("E(r) = E(Rr)",GR,1.3,0,4.6,0);
+      } else {
+        // EQUIVARIANT vector: force F=(1,0) rotates the same way -> (rfx,rfy)
+        const rfx=F.fvecx*ca - F.fvecy*sa, rfy=F.fvecx*sa + F.fvecy*ca;
+        const tail=atom.clone();
+        const tip=new T.Vector3(atom.x+rfx*1.5, atom.y+rfy*1.5, 0);
+        api.arrow([tail.x,tail.y,tail.z],[tip.x,tip.y,tip.z],{color:VI,width:0.07,head:0.4,group:"output"});
+        lab("F=("+rfx.toFixed(2)+","+rfy.toFixed(2)+")",VI,1.1,tip.x,tip.y+0.5,0);
+        lab("F(Rr) = R·F(r)  (equivariant)",VI,1.3,0,-3.7,0);
+      }
+
+      lab(applied?("rotate "+Math.round(s.angle)+"°"):"identity",applied?AM:CY,1.2,0,3.0,0);
+
+      const invHold=(claim===0);
+      const eqHold=(claim===1);
+      const bioPreserved=1.0;     // rigid motion is a valid symmetry of geometry
+      sceneSnap={mode,applied:applied?1:0,claim,angle:+s.angle.toFixed(1),
+        atomNorm:F.normR,invariantHolds:invHold?1:0,equivariantHolds:eqHold?1:0,
+        bioPreserved:+bioPreserved.toFixed(3),invalidRisk:0};
+
+      return {
+        badge:"Molecule E(3) · "+(claim===0?"scalar ‖r‖ (invariant)":"force F (equivariant)"),
+        formula:claim===0
+          ? "E(Rr + t) = E(r):   ‖r‖ = ‖Rr‖ = <b style='color:#34d399'>1</b>"
+          : "F(Rr + t) = R·F(r):   (1,0) &rarr; ("+(F.fvecx*ca-F.fvecy*sa).toFixed(2)+","+(F.fvecx*sa+F.fvecy*ca).toFixed(2)+")",
+        insight:claim===0
+          ? "A scalar property depends only on geometry, so it is INVARIANT to rigid motion: rotating the atom keeps ‖r‖ = 1. Orientation is a nuisance for scalar energies."
+          : "A vector output is EQUIVARIANT: rotate the molecule and the predicted force rotates the same way. The force (1,0) becomes R·(1,0) — same physics, transformed coordinate frame.",
+        state:applied
+          ? "Rotated "+Math.round(s.angle)+"°. "+(claim===0?"‖r‖ still 1 — invariant.":"Force tracked the rotation — equivariant.")
+          : "Identity pose. "+(claim===0?"‖r‖ = 1.":"Force = (1,0)."),
+        metrics:{
+          bioPreserved:"100%",
+          invariant:claim===0?"holds":"—",
+          equivariant:claim===1?"holds":"—",
+          invalidRisk:"0%"
+        },
+        focus:{center:[0,0.4,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE D — Heterogeneous type swap: gene ↔ peak is NOT a symmetry
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="typed"){
+      const swapped=applied;
+      const types=["gene","peak","perturb","state"];
+      const tCols=[CY,GR,AM,VI];
+      const R=2.7;
+      const N=4;
+      const pos=[];
+      for(let i=0;i<N;i++){const th=i/N*Math.PI*2 - Math.PI/2; pos.push(new T.Vector3(Math.cos(th)*R,Math.sin(th)*R,0));}
+
+      // when swapped, gene(0) and peak(1) exchange COLOR/identity -> invalid type collapse
+      const order=swapped?[1,0,2,3]:[0,1,2,3];
+      order.forEach((ti,slot)=>{
+        const p=pos[slot];
+        const col=tCols[ti];
+        const isCollapsed=swapped && (slot<2);
+        const n=new T.Mesh(new T.SphereGeometry(0.5,24,16),
+          new T.MeshStandardMaterial({color:new T.Color(isCollapsed?RO:col),emissive:new T.Color(isCollapsed?RO:col).multiplyScalar(0.65),emissiveIntensity:0.8,roughness:0.35}));
+        n.position.copy(p); gMain.add(n);
+        api.pick(n,{typedNode:{type:types[ti],collapsed:isCollapsed}});
+        lab(types[ti],isCollapsed?RO:col,1.1,p.x,p.y+0.85,0);
+      });
+      // restriction-map edges between distinct feature spaces (sheaf hint)
+      for(let i=0;i<N;i++){
+        const a=pos[i], b=pos[(i+1)%N];
+        gAux.add(new T.Line(new T.BufferGeometry().setFromPoints([a,b]),new T.LineBasicMaterial({color:0x223c52,transparent:true,opacity:0.6})));
+      }
+
+      lab(swapped?"swap gene ↔ peak":"distinct typed spaces",swapped?RO:CY,1.3,0,-3.5,0);
+
+      const bioPreserved = swapped ? 0.10 : (0.55+0.45*evidence);
+      const invalidRisk  = swapped ? (0.78+0.18*(1-evidence)) : 0.10;
+      const validNode=new T.Mesh(new T.SphereGeometry(0.5,24,16),
+        new T.MeshStandardMaterial({color:new T.Color(swapped?RO:GR),emissive:new T.Color(swapped?RO:GR).multiplyScalar(0.7),emissiveIntensity:0.85,roughness:0.3}));
+      validNode.position.set(0,0,0); gOut.add(validNode);
+      api.pick(validNode,{readout:{type:"typecheck",valid:!swapped}});
+      lab(swapped?"type collapse":"types preserved",swapped?RO:GR,1.25,0,0.85,0);
+
+      sceneSnap={mode,applied:swapped?1:0,claim,
+        invariantHolds:0,equivariantHolds:swapped?0:1,
+        bioPreserved:+bioPreserved.toFixed(3),invalidRisk:+invalidRisk.toFixed(3)};
+
+      return {
+        badge:"Heterogeneous graph · "+(swapped?"gene↔peak swap (INVALID)":"same-type relabel only"),
+        formula:"symmetries live WITHIN a type, not across:  gene ≠ peak ≠ perturb ≠ state",
+        insight:swapped
+          ? "Swapping a gene node with a chromatin-peak node is NOT a symmetry — it collapses two different feature spaces and erases modality provenance. Only same-type relabeling is valid in a heterogeneous (sheaf-style) graph."
+          : "Each node type lives in its own feature space; the edges are restriction-style maps between them. Relabeling within a type is valid, so the four typed spaces stay distinct. This is why sheaf ideas help: they refuse to pretend all evidence is one flat vector.",
+        state:swapped
+          ? "g = type swap. Biology preserved "+(bioPreserved*100).toFixed(0)+"% · invalid risk "+(invalidRisk*100).toFixed(0)+"%."
+          : "Identity / same-type relabel. Biology preserved "+(bioPreserved*100).toFixed(0)+"%.",
+        metrics:{
+          bioPreserved:(bioPreserved*100).toFixed(0)+"%",
+          invariant:"—",
+          equivariant:swapped?"broken":"holds",
+          invalidRisk:(invalidRisk*100).toFixed(0)+"%"
+        },
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    return {badge:"C02",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"c02",
+    kind:"groups-symmetries-equivariance",
+    eyebrow:"Block C · Geometric & Topological DL",
+    title:"C02 · Groups, symmetries, invariances, and equivariances",
+    subtitle:"f(g·x) = ρ(g) f(x). Toggle the transformation g and the output type to see when a symmetry is valid — and when it secretly changes the biology.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, atom, edge, or readout.",
+    modes:[
+      {value:"permute",  label:"Permutation (sum invariant · node equivariant)"},
+      {value:"grn",      label:"GRN direction reversal (false symmetry)"},
+      {value:"molecule", label:"Molecule E(3) (scalar invariant · force equivariant)"},
+      {value:"typed",    label:"Heterogeneous type swap (invalid)"}
+    ],
+    params:[
+      {key:"applied", label:"apply g (0=identity 1=transform)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"identity":"transform g"},
+      {key:"claim",   label:"output type (0=invariant 1=equivariant)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"invariant scalar":"equivariant vec/node",modes:["permute","molecule"]},
+      {key:"angle",   label:"rotation angle (deg)",min:0,max:180,step:5,value:90,
+       fmt:v=>Math.round(v)+"°",modes:["molecule"]},
+      {key:"evidence",label:"biological evidence",min:0,max:1,step:0.05,value:0.8,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["grn","typed"]}
+    ],
+    metrics:[
+      {key:"bioPreserved",label:"Biology preserved",accent:"green"},
+      {key:"invariant",   label:"Invariance",        accent:"cyan"},
+      {key:"equivariant", label:"Equivariance",      accent:"violet"},
+      {key:"invalidRisk", label:"Invalid-symmetry risk",accent:"rose"}
+    ],
+    layers:[
+      {group:"scene",  label:"Object / g·x"},
+      {group:"output", label:"Model output"},
+      {group:"aux",    label:"Axes / guides"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Apply g",
+      on:api=>{api.setParam("applied",1);}
+    },
+    secondary:{
+      label:"Reset to identity",
+      on:api=>{api.setParam("applied",0);}
+    },
+    defaultCam:{theta:-0.25,phi:0.45,r:12},
+    hint:'<span style="color:#34d399">green</span>=invariant / valid · <span style="color:#a78bfa">violet</span>=equivariant output · <span style="color:#4dd7ff">cyan</span>=object · <span style="color:#fb7185">rose</span>=invalid symmetry · <span style="color:#fbbf24">amber</span>=evidence.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="permute") api.frame([0,2.4,0],11);
+      else if(s.mode==="grn") api.frame([0,1.6,1],11);
+      else api.frame([0,0.4,0],11);
+    },
+    onSelect(api,d){
+      if(d.gene)      api.setSelected("Gene "+d.gene.name+(d.gene.value!=null?" · x="+d.gene.value:"")+(d.gene.role?" · "+d.gene.role:""));
+      if(d.atom)      api.setSelected("Atom r=("+d.atom.x+","+d.atom.y+") · ‖r‖="+d.atom.norm);
+      if(d.typedNode) api.setSelected("Type "+d.typedNode.type+(d.typedNode.collapsed?" · COLLAPSED (invalid)":" · distinct space"));
+      if(d.readout)   api.setSelected("Readout "+d.readout.type+(d.readout.value!=null?" = "+d.readout.value:(d.readout.valid?" · valid":" · BROKEN")));
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const applied=s.applied>0.5?1:0;
+      const claim=Math.round(s.claim);
+      // recompute the lesson invariants deterministically from FACTS + state
+      let bioPreserved=1, invalidRisk=0, invariantHolds=0, equivariantHolds=0;
+      if(mode==="permute"){ invariantHolds=(claim===0)?1:0; equivariantHolds=(claim===1)?1:0; }
+      else if(mode==="molecule"){ invariantHolds=(claim===0)?1:0; equivariantHolds=(claim===1)?1:0; }
+      else if(mode==="grn"){ const ev=s.evidence; bioPreserved=applied?0.12:(0.45+0.55*ev); invalidRisk=applied?(0.72+0.2*(1-ev)):0.12*(1-ev); equivariantHolds=applied?0:1; }
+      else if(mode==="typed"){ const ev=s.evidence; bioPreserved=applied?0.10:(0.55+0.45*ev); invalidRisk=applied?(0.78+0.18*(1-ev)):0.10; equivariantHolds=applied?0:1; }
+      return {
+        mode,
+        applied,
+        claim,
+        angle:+(s.angle).toFixed(1),
+        readoutSum:F.sumOut,
+        atomNorm:F.normR,
+        edgeScore:+(F.motif+F.pert).toFixed(2),
+        invariantHolds,
+        equivariantHolds,
+        bioPreserved:+bioPreserved.toFixed(3),
+        invalidRisk:+invalidRisk.toFixed(3),
+        validSymmetry:(invalidRisk<0.2)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure H06 — Same model, four negatives: AUROC spans 22 points</title>
+<desc id="d">Four-panel captioned figure: Same model, four negatives: AUROC spans 22 points</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE H06 · BLOCK H · BENCHMARKS AND DATASETS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Same model, four negatives: AUROC spans 22 points</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Open-world negatives</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">positives P</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">14</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">negatives N</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">76</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">false neg in N</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">10</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">genuine N</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">66</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="510" cy="108" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="510" y="113" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">False negatives inflate AUROC</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">FPR@14TP = 14 / N</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">measured 0.184 &lt; genuine 0.212</text>
+<text x="502" y="187.5" fill="#fb7185" font-size="11.5" font-weight="700">measured FPR</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.184</text>
+<text x="502" y="207.5" fill="#34d399" font-size="11.5" font-weight="700">genuine FPR</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">0.212</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#34d399"/>
+<circle cx="64" cy="270" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="64" y="275" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Four sampling strategies</text>
+<rect x="56" y="292" width="12" height="64" rx="2" fill="#fb7185"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">Rand</text>
+<rect x="91" y="298.02" width="12" height="57.98" rx="2" fill="#fbbf24"/>
+<text x="97" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">TF</text>
+<rect x="126" y="304.05" width="12" height="51.95" rx="2" fill="#4dd7ff"/>
+<text x="132" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">Path</text>
+<rect x="161" y="308.56" width="12" height="47.44" rx="2" fill="#34d399"/>
+<text x="167" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">Motif</text>
+<line x1="56" y1="303.29" x2="196" y2="303.29" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393" fill="#8a99ad" font-size="11">Same classifier, same 14 positives — only N changes.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Easy/hard mixture</text>
+<text x="502" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">AUROC = e·0.90 + (1−e)·0.60</text>
+<text x="502" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">60% easy → 0.78</text>
+<text x="502" y="349.5" fill="#a78bfa" font-size="11.5" font-weight="700">spread</text>
+<text x="642" y="349.5" fill="#9fb4cc" font-size="11.5">+22 pp</text>
+<text x="502" y="369.5" fill="#a78bfa" font-size="11.5" font-weight="700">random AUPRC</text>
+<text x="642" y="369.5" fill="#9fb4cc" font-size="11.5">0.50</text>
+<text x="502" y="389.5" fill="#a78bfa" font-size="11.5" font-weight="700">always report</text>
+<text x="642" y="389.5" fill="#9fb4cc" font-size="11.5">P, N, strategy</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure H06. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">10-gene </text>
+<text x="224.91" y="538" fill="#c7d2dd" font-size="13">GRN: </text>
+<text x="268.84" y="538" fill="#c7d2dd" font-size="13">P=14 </text>
+<text x="310.35" y="538" fill="#c7d2dd" font-size="13">true </text>
+<text x="350.65" y="538" fill="#c7d2dd" font-size="13">edges, </text>
+<text x="407.07" y="538" fill="#c7d2dd" font-size="13">N=76 </text>
+<text x="448.58" y="538" fill="#c7d2dd" font-size="13">non-edges. </text>
+<text x="537.24" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="570.77" y="538" fill="#c7d2dd" font-size="13">Open-world: </text>
+<text x="668.7" y="538" fill="#c7d2dd" font-size="13">10 </text>
+<text x="692.88" y="538" fill="#c7d2dd" font-size="13">negatives </text>
+<text x="773.48" y="538" fill="#c7d2dd" font-size="13">are</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">undiscovered </text>
+<text x="144.78" y="559" fill="#c7d2dd" font-size="13">edges </text>
+<text x="193.14" y="559" fill="#c7d2dd" font-size="13">(false </text>
+<text x="249.56" y="559" fill="#c7d2dd" font-size="13">negatives), </text>
+<text x="346.28" y="559" fill="#c7d2dd" font-size="13">genuine </text>
+<text x="410.76" y="559" fill="#c7d2dd" font-size="13">N=66. </text>
+<text x="460.33" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="493.86" y="559" fill="#c7d2dd" font-size="13">Contamination </text>
+<text x="607.91" y="559" fill="#c7d2dd" font-size="13">lowers </text>
+<text x="664.33" y="559" fill="#c7d2dd" font-size="13">FPR@14TP </text>
+<text x="749.36" y="559" fill="#c7d2dd" font-size="13">to </text>
+<text x="773.54" y="559" fill="#c7d2dd" font-size="13">0.184 </text>
+<text x="821.9" y="559" fill="#c7d2dd" font-size="13">vs</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">genuine </text>
+<text x="104.48" y="580" fill="#c7d2dd" font-size="13">0.212. </text>
+<text x="160.9" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="194.43" y="580" fill="#c7d2dd" font-size="13">Four </text>
+<text x="235.94" y="580" fill="#c7d2dd" font-size="13">strategies, </text>
+<text x="332.66" y="580" fill="#c7d2dd" font-size="13">one </text>
+<text x="364.9" y="580" fill="#c7d2dd" font-size="13">classifier: </text>
+<text x="461.62" y="580" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="516.02" y="580" fill="#c7d2dd" font-size="13">0.85 </text>
+<text x="556.32" y="580" fill="#c7d2dd" font-size="13">→ </text>
+<text x="578.89" y="580" fill="#c7d2dd" font-size="13">0.63 </text>
+<text x="619.19" y="580" fill="#c7d2dd" font-size="13">(22 </text>
+<text x="651.43" y="580" fill="#c7d2dd" font-size="13">pp). </text>
+<text x="691.73" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="725.26" y="580" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="779.67" y="580" fill="#c7d2dd" font-size="13">=</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">e·0.90+(1−e)·0.60 </text>
+<text x="197.98" y="601" fill="#c7d2dd" font-size="13">— </text>
+<text x="220.54" y="601" fill="#c7d2dd" font-size="13">report </text>
+<text x="276.96" y="601" fill="#c7d2dd" font-size="13">P, </text>
+<text x="302.35" y="601" fill="#c7d2dd" font-size="13">N, </text>
+<text x="327.74" y="601" fill="#c7d2dd" font-size="13">strategy.</text>
+</svg>

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seed · Sheaf diffusion — stalks, restriction maps & consistency</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  // ---------- deterministic gene graph + sheaf (angular synchronization) ----------
+  const TAU=Math.PI*2;
+  function layout(n){const R=2.0+n*0.10,pos=[];for(let i=0;i<n;i++){const a=i*2.399963,r=R*Math.sqrt((i+0.5)/n);pos.push([Math.cos(a)*r,Math.sin(a)*r]);}return {pos,R};}
+  function edgesKNN(pos,k){const n=pos.length,set=new Set(),E=[];
+    for(let i=0;i<n;i++){const d=[];for(let j=0;j<n;j++)if(j!==i){const dx=pos[i][0]-pos[j][0],dz=pos[i][1]-pos[j][1];d.push([dx*dx+dz*dz,j]);}
+      d.sort((a,b)=>a[0]-b[0]);for(let t=0;t<Math.min(k,d.length);t++){const j=d[t][1],key=i<j?i+"_"+j:j+"_"+i;if(!set.has(key)){set.add(key);E.push([Math.min(i,j),Math.max(i,j)]);}}}
+    return E;}
+  function restriction(a,b,mode,twist){ // rotation θ on edge (a<b): consistency wants α_a ≈ α_b + θ
+    if(mode==="trivial")return 0;
+    if(mode==="signed")return ((a*7+b*13)%2)?Math.PI:0;
+    return twist*Math.PI*((((a*7+b*13)%11)/11)*2-1); }
+  function synchronize(n,E,theta,alpha0,L,selfw){
+    const nbr=Array.from({length:n},()=>[]);
+    E.forEach((e,idx)=>{const th=theta[idx];nbr[e[0]].push([e[1],+th]);nbr[e[1]].push([e[0],-th]);}); // transport j->i uses sign
+    let a=alpha0.slice();
+    for(let t=0;t<L;t++){const na=new Float64Array(n);
+      for(let i=0;i<n;i++){let sx=selfw*Math.cos(a[i]),sy=selfw*Math.sin(a[i]);
+        for(const nb of nbr[i]){sx+=Math.cos(a[nb[0]]+nb[1]);sy+=Math.sin(a[nb[0]]+nb[1]);}
+        na[i]=Math.atan2(sy,sx);}
+      a=na;}
+    return a;}
+  function energy(E,theta,a){let s=0;E.forEach((e,idx)=>{s+=1-Math.cos(a[e[0]]-a[e[1]]-theta[idx]);});return E.length?s/E.length:0;}
+  function nodeDisagree(n,E,theta,a){const d=new Float64Array(n),c=new Float64Array(n);
+    E.forEach((e,idx)=>{const dis=(1-Math.cos(a[e[0]]-a[e[1]]-theta[idx]))/2;d[e[0]]+=dis;d[e[1]]+=dis;c[e[0]]++;c[e[1]]++;});
+    for(let i=0;i<n;i++)d[i]=c[i]?d[i]/c[i]:0;return d;}
+
+  let scene={};
+  function buildScene(api){
+    const T=api.THREE, s=api.state, n=Math.round(s.nodes), k=3;
+    const lay=layout(n), pos=lay.pos, R=lay.R, E=edgesKNN(pos,k);
+    const theta=E.map(e=>restriction(e[0],e[1],s.mode,s.twist));
+    const a0=pos.map((p,i)=>s.noise*((i*1.7)%TAU));
+    const a=synchronize(n,E,theta,a0,Math.round(s.diffuse),Math.max(0.01,s.selfweight));
+    const En=energy(E,theta,a), dis=nodeDisagree(n,E,theta,a);
+    const gG=api.group("graph"), eG=api.group("edges"), sG=api.group("stalks"), lG=api.group("labels");
+    const P=pos.map(p=>[p[0],0.15,p[1]]);
+    if(E.length){const pts=[];for(const e of E){pts.push(new T.Vector3(P[e[0]][0],P[e[0]][1],P[e[0]][2]),new T.Vector3(P[e[1]][0],P[e[1]][1],P[e[1]][2]));}
+      eG.add(new T.LineSegments(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:0x2c4a6e,transparent:true,opacity:0.5})));}
+    const sel=(s.sel&&s.sel.i<n)?s.sel.i:-1, nbrSet=new Set();
+    if(sel>=0)for(const e of E){if(e[0]===sel)nbrSet.add(e[1]);if(e[1]===sel)nbrSet.add(e[0]);}
+    for(let i=0;i<n;i++){
+      const isSel=i===sel, isNbr=nbrSet.has(i), col=api.ramp(dis[i],"#34d399","#fb7185"); // green consistent → rose disagree
+      const m=new T.Mesh(new T.SphereGeometry(isSel?0.2:0.15,20,20),
+        new T.MeshStandardMaterial({color:col,roughness:0.42,metalness:0.08,emissive:col.clone().multiplyScalar(isSel?0.8:0.28),emissiveIntensity:isSel?0.6:0.3}));
+      m.position.set(P[i][0],P[i][1],P[i][2]); api.pick(m,{i}); gG.add(m);
+      // stalk = unit 2D vector drawn as a flat arrow on the node's tangent plane
+      const dir=new T.Vector3(Math.cos(a[i]),0,Math.sin(a[i]));
+      sG.add(new T.ArrowHelper(dir,new T.Vector3(P[i][0],P[i][1]+0.05,P[i][2]),0.72,isSel?0xffffff:(isNbr?0xfde68a:0x4dd7ff),0.22,0.15));
+      const lb=api.label(String(i),isSel?"#ffffff":"#9fb4cc",0.32); lb.position.set(P[i][0],0.6,P[i][2]); lG.add(lb);
+    }
+    const eqn=s.mode==="trivial"?"θ=0 · uᵢ ← mean(uⱼ)":(s.mode==="signed"?"θ∈{0,π} · activation / repression":"uᵢ ← mean( Rₑ uⱼ ),  Rₑ = rot(θₑ)");
+    gG.add(pos3(api.bigLabel("Sheaf diffusion · "+eqn,"#d4e4f4",6.2),0,2.0,-R-0.5));
+    scene={n,E:E.length,energy:En,dis,R,nodeDeg:(function(){const d=new Array(n).fill(0);for(const e of E){d[e[0]]++;d[e[1]]++;}return d;})(),angles:a,theta,Earr:E};
+    return readout(api);
+  }
+  function pos3(sp,x,y,z){sp.position.set(x,y,z);return sp;}
+  function readout(api){
+    const s=api.state,sc=scene,L=Math.round(s.diffuse),E=sc.energy,cons=Math.round((1-E/2)*100);
+    const badge=(s.mode==="trivial"?"Trivial sheaf":(s.mode==="signed"?"Signed sheaf ±":"Twisted sheaf"))+" · "+L+" step"+(L===1?"":"s");
+    let formula,insight,state;
+    if(s.mode==="trivial"){formula="θ=0 everywhere · "+sc.n+" genes, "+sc.E+" edges. self-weight "+s.selfweight.toFixed(2)+".";
+      insight="With identity restriction maps the sheaf is a plain graph: diffusion is ordinary averaging and every stalk can align — energy → 0.";
+      state=L===0?"Step 0: stalks scrambled by noise.":"After "+L+" steps energy="+E.toFixed(3)+(E<0.02?" — fully consistent global section.":".");}
+    else if(s.mode==="signed"){formula="restriction θ∈{0,π} (activation vs repression) · "+sc.E+" edges.";
+      insight="Signed edges flip a stalk by 180°. The section is consistent only if every cycle has an even number of repressions — otherwise it is frustrated.";
+      state="Energy "+E.toFixed(3)+" after "+L+" steps; "+cons+"% consistent.";}
+    else{formula="restriction Rₑ = rot(twist·θₑ) · twist=<b>"+s.twist.toFixed(2)+"</b>.";
+      insight="Twisted restriction maps carry holonomy: if the rotations don't sum to 0 around a cycle, no global section exists — diffusion stalls at an energy floor (nonzero sheaf cohomology).";
+      state="Energy "+E.toFixed(3)+" after "+L+" steps"+(E>0.08&&L>10?" — stuck above 0: cohomological obstruction.":(E<0.03?" — consistent.":"."));}
+    return {badge,formula,insight,state,
+      metrics:{nodes:sc.n,edges:sc.E,energy:E.toFixed(3),consistency:cons+"%"},
+      focus:{center:[0,0.4,0],radius:Math.min(26,sc.R*2.3+4)}};
+  }
+
+  MathLab.create({
+    id:"seedsheaf", kind:"sheaf",
+    eyebrow:"Engine seed · Block C/G · Cellular sheaves", title:"Sheaf diffusion — stalks, restriction maps & consistency",
+    subtitle:"Each gene carries a vector stalk (arrow). Edges carry restriction maps. Sheaf diffusion transports and averages neighbours until the stalks agree — unless the sheaf is frustrated.",
+    selectedLabel:"Selected gene", selectedHint:"Click a node — see its stalk and local disagreement.",
+    modes:[{value:"trivial",label:"Trivial sheaf · θ=0 (plain graph)"},{value:"twisted",label:"Twisted · holonomy / obstruction"},{value:"signed",label:"Signed ± · activation / repression"}],
+    params:[
+      {key:"nodes",label:"genes",min:6,max:16,step:1,value:11},
+      {key:"diffuse",label:"diffusion steps",min:0,max:20,step:1,value:0},
+      {key:"twist",label:"restriction twist",min:0,max:1,step:0.05,value:0.5,fmt:v=>v.toFixed(2),modes:["twisted"]},
+      {key:"noise",label:"initial scramble",min:0,max:1,step:0.1,value:1,fmt:v=>v.toFixed(1)},
+      {key:"selfweight",label:"self-weight",min:0,max:2,step:0.1,value:0.4,fmt:v=>v.toFixed(1)}
+    ],
+    metrics:[{key:"nodes",label:"Genes |V|",accent:"cyan"},{key:"edges",label:"Edges |E|",accent:"violet"},
+      {key:"energy",label:"Sheaf energy",accent:"rose"},{key:"consistency",label:"Consistency",accent:"green"}],
+    layers:[{group:"edges",label:"Edges"},{group:"stalks",label:"Stalks"},{group:"labels",label:"Labels"}],
+    primary:{label:"Diffuse +1 step",on:api=>{api.setParam("diffuse",Math.min(20,Math.round(api.state.diffuse)+1));}},
+    secondary:{label:"Reset steps",on:api=>{api.setParam("diffuse",0);}},
+    defaultCam:{theta:-0.7,phi:0.62,r:10},
+    hint:'<span class="g">green</span>=consistent stalk · <span class="r">rose</span>=disagrees with neighbours · <b>cyan</b> arrows = stalk vectors · edges carry restriction maps.',
+    onParam(api,key){const sc=scene;if(sc&&sc.R)api.frame([0,0.4,0],Math.min(26,sc.R*2.3+4));},
+    onSelect(api,d){const sc=scene;if(!sc||d.i>=sc.n){api.setSelected("Click a node.");return;}
+      api.setSelected("gene "+d.i+" · degree "+sc.nodeDeg[d.i]+" · stalk angle "+(sc.angles[d.i]*57.3).toFixed(0)+"° · local disagreement "+(sc.dis[d.i]).toFixed(2));},
+    build(api){return buildScene(api);},
+    snapshot(s){const sc=scene;return {mode:s.mode,nodes:Math.round(s.nodes),steps:Math.round(s.diffuse),energy:sc.energy!=null?+sc.energy.toFixed(4):null,edges:sc.E};}
+  });
+})();
+</script>
+</body>
+</html>

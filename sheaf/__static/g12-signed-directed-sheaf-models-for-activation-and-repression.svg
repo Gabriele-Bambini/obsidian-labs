@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure G12 — Repression flips the energy term to a sum</title>
+<desc id="d">Four-panel captioned figure: Repression flips the energy term to a sum</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE G12 · BLOCK G · SHEAF GNN FOR BIOLOGY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Repression flips the energy term to a sum</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The 3-gene signed circuit</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e1</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">TF1 ⊣ GeneA  (−)</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e2</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">TF2 → GeneA  (+)</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">e3</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">TF2 → GeneB  (+)</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">stalk d</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">1 (scalar)</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Signed energy at e1</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">E₋ = ‖R_TF·x_TF + R_g·x_g‖²</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">= (−0.9·0.8 + 1.0·0.1)²</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">signed E₁</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.384</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">unsigned E₁</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">0.672</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Why the sign matters (GRN)</text>
+<text x="56" y="301" fill="#9fb4cc" font-size="11">Across all three edges the signed total is 41% below the</text>
+<text x="56" y="321" fill="#9fb4cc" font-size="11">unsigned total, so the correct repressed state reads as</text>
+<text x="56" y="341" fill="#9fb4cc" font-size="11">coherent instead of broken.</text>
+<text x="56" y="369.5" fill="#34d399" font-size="11.5" font-weight="700">total signed</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.410</text>
+<text x="56" y="389.5" fill="#fb7185" font-size="11.5" font-weight="700">total unsigned</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">0.699</text>
+<rect x="56" y="410" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="86" y="431" fill="#e8eef6" font-size="12" text-anchor="middle">0.38</text>
+<rect x="120" y="410" width="60" height="34" rx="4" fill="#16202c"/>
+<text x="150" y="431" fill="#e8eef6" font-size="12" text-anchor="middle">0.67</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Takeaway</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">correct state</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">signed low (0.38)</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">wrong state</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">scalar leaks (0.03)</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">scalar d=1</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">sign only</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">d≥2 fix</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">Σ_flip · exp A</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure G12. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">Section-5 </text>
+<text x="258.36" y="538" fill="#c7d2dd" font-size="13">circuit: </text>
+<text x="330.9" y="538" fill="#c7d2dd" font-size="13">TF1 </text>
+<text x="365.56" y="538" fill="#c7d2dd" font-size="13">⊣ </text>
+<text x="381.68" y="538" fill="#c7d2dd" font-size="13">GeneA </text>
+<text x="432.46" y="538" fill="#c7d2dd" font-size="13">(e1, </text>
+<text x="472.76" y="538" fill="#c7d2dd" font-size="13">R_TF=−0.9); </text>
+<text x="573.1" y="538" fill="#c7d2dd" font-size="13">TF2 </text>
+<text x="607.76" y="538" fill="#c7d2dd" font-size="13">→ </text>
+<text x="630.33" y="538" fill="#c7d2dd" font-size="13">GeneA, </text>
+<text x="689.17" y="538" fill="#c7d2dd" font-size="13">GeneB </text>
+<text x="739.95" y="538" fill="#c7d2dd" font-size="13">(e2,e3). </text>
+<text x="812.49" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="846.02" y="538" fill="#c7d2dd" font-size="13">Only</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">e1 </text>
+<text x="64.18" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="88.36" y="559" fill="#c7d2dd" font-size="13">orientation-reversing. </text>
+<text x="273.74" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="307.27" y="559" fill="#c7d2dd" font-size="13">Correct </text>
+<text x="372.96" y="559" fill="#c7d2dd" font-size="13">state </text>
+<text x="421.32" y="559" fill="#c7d2dd" font-size="13">signed </text>
+<text x="477.74" y="559" fill="#c7d2dd" font-size="13">energy </text>
+<text x="534.16" y="559" fill="#c7d2dd" font-size="13">0.384 </text>
+<text x="582.52" y="559" fill="#c7d2dd" font-size="13">vs </text>
+<text x="606.7" y="559" fill="#c7d2dd" font-size="13">unsigned </text>
+<text x="679.24" y="559" fill="#c7d2dd" font-size="13">0.672 </text>
+<text x="727.6" y="559" fill="#c7d2dd" font-size="13">— </text>
+<text x="750.17" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="782.41" y="559" fill="#c7d2dd" font-size="13">sum </text>
+<text x="814.65" y="559" fill="#c7d2dd" font-size="13">term</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">rewards </text>
+<text x="104.48" y="580" fill="#c7d2dd" font-size="13">active </text>
+<text x="160.9" y="580" fill="#c7d2dd" font-size="13">repressor </text>
+<text x="241.5" y="580" fill="#c7d2dd" font-size="13">+ </text>
+<text x="257.62" y="580" fill="#c7d2dd" font-size="13">low </text>
+<text x="289.86" y="580" fill="#c7d2dd" font-size="13">target. </text>
+<text x="354.34" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="387.87" y="580" fill="#c7d2dd" font-size="13">Totals: </text>
+<text x="453.56" y="580" fill="#c7d2dd" font-size="13">signed </text>
+<text x="509.98" y="580" fill="#c7d2dd" font-size="13">0.410 </text>
+<text x="558.34" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="582.52" y="580" fill="#c7d2dd" font-size="13">41% </text>
+<text x="621.21" y="580" fill="#c7d2dd" font-size="13">below </text>
+<text x="669.57" y="580" fill="#c7d2dd" font-size="13">unsigned </text>
+<text x="742.11" y="580" fill="#c7d2dd" font-size="13">0.699. </text>
+<text x="798.53" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="832.06" y="580" fill="#c7d2dd" font-size="13">Scalar</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">d=1 </text>
+<text x="72.24" y="601" fill="#c7d2dd" font-size="13">can </text>
+<text x="104.48" y="601" fill="#c7d2dd" font-size="13">leak; </text>
+<text x="152.84" y="601" fill="#c7d2dd" font-size="13">Σ_flip·exp(A) </text>
+<text x="273.34" y="601" fill="#c7d2dd" font-size="13">for </text>
+<text x="305.58" y="601" fill="#c7d2dd" font-size="13">d≥2 </text>
+<text x="344.27" y="601" fill="#c7d2dd" font-size="13">fixes </text>
+<text x="392.63" y="601" fill="#c7d2dd" font-size="13">it.</text>
+</svg>

@@ -1,0 +1,56 @@
+:root {
+  color-scheme: dark;
+  --bg:#05090c;
+  --panel:rgba(8,16,20,.92);
+  --panel2:rgba(13,25,31,.96);
+  --ink:#edf8f6;
+  --muted:#9cb4b0;
+  --line:rgba(211,235,230,.18);
+  --blue:#54a8ff;
+  --cyan:#58e0d3;
+  --amber:#e8b857;
+  --rose:#ff6d8b;
+  --green:#77df96;
+  --shadow:0 22px 70px rgba(0,0,0,.44);
+}
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--ink);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:0}
+button,select,input{font:inherit}
+.lab-shell{width:100vw;height:100dvh;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(270px,29vw);gap:12px;padding:12px;overflow:hidden;background:radial-gradient(circle at 18% 12%,rgba(84,168,255,.18),transparent 30%),radial-gradient(circle at 84% 76%,rgba(232,184,87,.19),transparent 34%),linear-gradient(135deg,#05090c 0%,#0d171a 52%,#060a0d 100%)}
+.visual-stack{min-width:0;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:10px}
+.stage{position:relative;min-width:0;min-height:0;overflow:hidden;border:1px solid var(--line);background:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px),rgba(5,11,14,.78);background-size:38px 38px;box-shadow:var(--shadow)}
+.lab-viewport{position:absolute;inset:0;overflow:hidden;cursor:grab;touch-action:none}
+.lab-viewport:active{cursor:grabbing}
+canvas{width:100%;height:100%;display:block}
+.scene-overlay{position:absolute;inset:12px 12px auto 12px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;pointer-events:none}
+.scene-badge,.formula-chip,.selected-chip{border:1px solid var(--line);background:rgba(5,12,15,.72);box-shadow:0 14px 34px rgba(0,0,0,.26);backdrop-filter:blur(10px)}
+.scene-badge{min-width:150px;padding:10px}
+.scene-badge span,.formula-chip span,.selected-chip span{display:block;color:var(--muted);font-size:11px;line-height:1.1;text-transform:uppercase}
+.scene-badge strong{display:block;margin-top:4px;font-size:19px;line-height:1;font-variant-numeric:tabular-nums}
+.formula-chip{max-width:min(58%,620px);padding:10px 12px;color:#dffbf8;font:12px/1.35 "Cascadia Mono",Consolas,monospace}
+.selected-chip{position:absolute;left:12px;bottom:12px;max-width:min(440px,62%);padding:8px 10px;background:rgba(5,12,15,.54);color:var(--ink);pointer-events:none}
+.selected-chip strong{display:block;margin-top:2px;font-size:12px;line-height:1.25}
+.concept-rail{position:absolute;left:18px;right:18px;top:96px;z-index:6;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;pointer-events:none}
+.concept-rail span{border:1px solid rgba(88,224,211,.28);background:rgba(5,12,15,.76);color:#dffbf8;box-shadow:0 10px 28px rgba(0,0,0,.25);backdrop-filter:blur(8px);padding:6px 7px;font-size:11px;line-height:1.12;font-weight:760;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.command-bar{position:relative;z-index:20;min-width:0;display:grid;grid-template-columns:repeat(4,minmax(0,.92fr)) repeat(4,minmax(0,.74fr));gap:8px;align-items:stretch;padding:9px;border:1px solid var(--line);background:rgba(8,16,20,.9);box-shadow:var(--shadow);pointer-events:auto}
+.command-control{position:relative;z-index:21;min-width:0;overflow:hidden;display:grid;grid-template-rows:auto auto;gap:5px;padding:6px 7px;border:1px solid rgba(211,235,230,.12);background:rgba(255,255,255,.035)}
+.command-control label{min-width:0;display:flex;justify-content:space-between;gap:6px;color:var(--muted);font-size:11px;line-height:1;font-weight:750;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+button,select{min-width:0;width:100%;border:1px solid rgba(211,235,230,.18);background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.03));color:var(--ink);min-height:42px;padding:8px 9px;font-weight:760;cursor:pointer}
+button.primary{background:linear-gradient(180deg,rgba(88,224,211,.24),rgba(84,168,255,.14));border-color:rgba(88,224,211,.38)}
+button:hover,select:hover{border-color:rgba(88,224,211,.45)}
+input[type=range]{width:100%;accent-color:var(--cyan)}
+.side-panel{min-width:0;min-height:0;border:1px solid var(--line);background:var(--panel);box-shadow:var(--shadow);padding:16px;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;gap:12px;overflow:hidden}
+.eyebrow{margin:0 0 5px;color:var(--cyan);font-size:11px;line-height:1;text-transform:uppercase;font-weight:820}
+h1{margin:0;font-size:clamp(19px,2vw,26px);line-height:1.1}
+.subtitle{margin:0;color:var(--muted);font-size:13px;line-height:1.38}
+.metric-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.metric{border:1px solid rgba(211,235,230,.14);background:rgba(255,255,255,.04);padding:9px;min-height:54px}
+.metric span{display:block;color:var(--muted);font-size:11px;line-height:1}
+.metric strong{display:block;margin-top:5px;font-size:18px;font-variant-numeric:tabular-nums}
+.insight-card{min-height:0;border:1px solid rgba(211,235,230,.14);background:rgba(255,255,255,.035);padding:12px;overflow:hidden}
+.insight-card h2{margin:0 0 7px;font-size:14px}
+.insight-card p{margin:0;color:var(--muted);font-size:13px;line-height:1.45}
+.state-box{margin-top:10px!important;border:1px solid rgba(211,235,230,.14);background:rgba(5,12,15,.42);padding:10px;color:#dffbf8!important}
+.hint{margin:0;color:var(--muted);font-size:12px;line-height:1.42}
+@media(max-width:920px){html,body{overflow:hidden}.lab-shell{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr);padding:8px;width:100vw;max-width:100vw;overflow:hidden}.visual-stack{width:100%;max-width:100%;overflow:hidden;display:block}.side-panel{display:none}.command-bar{position:fixed;left:8px;right:8px;bottom:8px;z-index:50;width:auto;max-width:none;overflow:hidden;display:flex;flex-wrap:wrap;align-content:flex-start;gap:6px;padding:7px}.command-bar>*{min-width:0;max-width:calc(50% - 3px);flex:1 1 calc(50% - 3px)}.stage{height:calc(100dvh - 236px);min-height:420px;width:100%;max-width:100%;overflow:hidden}.concept-rail{grid-template-columns:repeat(2,minmax(0,1fr));top:76px;left:18px;right:18px}.formula-chip{display:none}.selected-chip{max-width:calc(100% - 24px)}button,select{min-width:0;max-width:100%;min-height:40px;font-size:11px;line-height:1.12;white-space:normal;overflow-wrap:anywhere;padding:7px}.command-control{min-width:0;padding:5px 6px}.command-control label{font-size:10px}}
+@media(max-width:560px){.command-bar{right:auto;width:calc(100vw - 16px);max-width:374px}.stage{height:calc(100dvh - 236px);min-height:420px}}

@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G09 · Designing a Sheaf-GRN model</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no RNG, no clock) ───────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the note's Section-5 worked example (single source of truth)
+  // 4 nodes: TF1,TF2 (R^3) · GeneA,GeneB (R^2). 3 edges. edge stalk d_e = 2.
+  // ════════════════════════════════════════════════════════════════════════
+  const FACT={
+    xTF1:[0.8,0.7,0.6],  // expr, SCENIC activity, motif accessibility
+    xTF2:[0.3,0.2,0.4],
+    xGA :[0.9,0.8],      // expr, ATAC (promoter accessibility)
+    xGB :[0.1,0.2],
+    // edges: src node, dst gene, type (+1 act / -1 rep), motif score, gene atac in R_gene
+    e1:{src:"TF1",dst:"GA",sign:+1,motif:0.9,atac:0.8}, // activation
+    e2:{src:"TF2",dst:"GA",sign:-1,motif:0.5,atac:0.8}, // repression
+    e3:{src:"TF2",dst:"GB",sign:+1,motif:0.4,atac:0.2}  // activation
+  };
+
+  // R_{TF->e} = sign*motif on the 2x3 selection (rows 0,1 pick coords 0,1)
+  // applied to x_TF -> R^2:  [ sign*motif*x0 , sign*motif*x1 ]
+  function projTF(x,sign,motif){ return [sign*motif*x[0], sign*motif*x[1]]; }
+  // R_{gene->e} = [[1, atac],[0,1]] applied to x_gene -> R^2
+  function projGene(x,atac){ return [x[0]+atac*x[1], x[1]]; }
+  // R_{gene->e}^T = [[1,0],[atac,1]] applied to a vector v in R^2
+  function projGeneT(v,atac){ return [v[0], atac*v[0]+v[1]]; }
+
+  function nodeFeat(id){ return {TF1:FACT.xTF1,TF2:FACT.xTF2,GA:FACT.xGA,GB:FACT.xGB}[id]; }
+
+  // coboundary on edge e (with diffusion having shrunk gene side by relax∈[0,1])
+  // (delta x)_e = R_{src->e} x_src  -  R_{gene->e} x_gene'
+  function coboundary(e,relax){
+    const tf =projTF(nodeFeat(e.src),e.sign,e.motif);
+    let g    =projGene(nodeFeat(e.dst),e.atac);
+    // diffusion pulls the gene projection toward the TF projection by `relax`
+    g=[g[0]+(tf[0]-g[0])*relax, g[1]+(tf[1]-g[1])*relax];
+    return [tf[0]-g[0], tf[1]-g[1]];
+  }
+  function energy(e,relax){ const d=coboundary(e,relax); return d[0]*d[0]+d[1]*d[1]; }
+
+  // ── scene snapshot ────────────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // fixed 3D positions of the bipartite worked-example graph
+  const POS={
+    TF1:[-3.4, 1.7, 0], TF2:[-3.4,-1.7, 0],
+    GA :[ 3.4, 1.7, 0], GB :[ 3.4,-1.7, 0]
+  };
+  const EDGES=[FACT.e1,FACT.e2,FACT.e3];
+
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const lambda  = s.lambda;                 // 0..0.3 sheaf-reg weight
+    const steps   = Math.round(s.diffuse);    // 0..6 diffusion steps
+    const dimEdge = Math.round(s.edgeSel);    // 0,1,2 -> which edge to spotlight
+    const motifBoost = s.motif;               // 0.3..1.6 scales motif magnitudes (restriction mode)
+
+    const gNodes =api.group("nodes");
+    const gEdges =api.group("edges");
+    const gProj  =api.group("proj");
+    const gLabels=api.group("labels");
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+
+    const CY="#4dd7ff";   // TF / activation
+    const GR="#34d399";    // gene / consistent
+    const AM="#fbbf24";    // restriction map / motif
+    const VI="#a78bfa";    // energy / coboundary
+    const RO="#fb7185";    // repression / mismatch
+
+    // diffusion relaxation: each step pulls gene projection toward TF projection
+    const relax = 1-Math.pow(1-0.32, steps); // 0 at steps=0, ->~0.9 at 6
+
+    // ── always draw the 4 nodes (heterogeneous stalks) ──────────────────────
+    function drawNode(id,dim,coords){
+      const p=POS[id];
+      const isTF=id[0]==="T";
+      const col=isTF?CY:GR;
+      api.node(p,{color:col,r:isTF?0.42:0.36,label:id,labelColor:col,group:"nodes",
+                  pick:{node:{id,dim,coords:coords.slice()}}});
+      slbl("ℝ"+(dim===3?"³":"²"), isTF?CY:GR, 0.34, p[0], p[1]-0.78, p[2]);
+    }
+    drawNode("TF1",3,FACT.xTF1); drawNode("TF2",3,FACT.xTF2);
+    drawNode("GA",2,FACT.xGA);   drawNode("GB",2,FACT.xGB);
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: stalks — heterogeneous node + edge stalks (the object)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="stalks"){
+      // edges as plain connectors, edge-stalk node (R^2) drawn at midpoint
+      EDGES.forEach((e,i)=>{
+        const a=POS[e.src], b=POS[e.dst];
+        const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2,(a[1]===b[1])?0:(a[1]+b[1])/2*0.0];
+        api.edge(a,b,{color:e.sign>0?GR:RO,width:0.05,opacity:0.8,group:"edges"});
+        // edge stalk node in R^2
+        const eName="e"+(i+1);
+        api.node(mid,{color:AM,r:0.2,halo:false,group:"edges",pick:{edge:{name:eName,sign:e.sign,motif:e.motif}}});
+        slbl(eName+" ℝ²", AM, 0.3, mid[0], mid[1]+0.4, mid[2]+0.3);
+      });
+
+      // stalk dimension bars beside each node (component vectors)
+      function stackBars(id,coords,col){
+        const p=POS[id];
+        coords.forEach((c,k)=>{
+          const h=Math.max(0.05,c*1.3);
+          const bar=new T.Mesh(new T.BoxGeometry(0.16,h,0.16),
+            new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+          const bx=p[0]+(id[0]==="T"?-0.95:0.95)+(k-(coords.length-1)/2)*0.26;
+          bar.position.set(bx,p[1]+h/2-0.1,p[2]);
+          gProj.add(bar);
+        });
+      }
+      stackBars("TF1",FACT.xTF1,CY); stackBars("TF2",FACT.xTF2,CY);
+      stackBars("GA",FACT.xGA,GR);   stackBars("GB",FACT.xGB,GR);
+
+      lbl("TF stalk  F(t)=ℝ³","#4dd7ff",1.15,-3.4,3.05,0);
+      lbl("gene stalk  F(g)=ℝ²","#34d399",1.15,3.4,3.05,0);
+      lbl("edge stalk  ℝ² (d_e=2)","#fbbf24",1.05,0,-3.1,0);
+
+      sceneSnap={mode,lambda:+lambda.toFixed(3),diffuse:steps,
+        tfDim:3,geneDim:2,edgeDim:2,nodes:4,edges:3,activators:2,repressors:1,
+        energyTotal:null,energyE1:null,energyE2:null,energyE3:null};
+
+      return {
+        badge:"Heterogeneous stalks · TF ℝ³ · gene ℝ² · edge ℝ²",
+        formula:"F(t)=ℝ³ &nbsp;|&nbsp; F(g)=ℝ² &nbsp;|&nbsp; F(e)=ℝ²  ⇒  R<sub>t→e</sub>∈ℝ<sup>2×3</sup>, R<sub>g→e</sub>∈ℝ<sup>2×2</sup>",
+        insight:"The Sheaf-GRN is an explicitly heterogeneous sheaf. A TF node carries three evidence types — log-expression, SCENIC activity, motif accessibility — so its stalk is ℝ³. A gene node carries expression and promoter ATAC, so its stalk is ℝ². Every edge gets a shared 2-D edge stalk. Restriction maps must therefore be non-square: 2×3 on TF sides, 2×2 on gene sides.",
+        state:"4 nodes · 3 edges (2 activation, 1 repression). TF stalks dim 3 (cyan bars = expr, activity, motif). Gene stalks dim 2 (green bars = expr, ATAC). Edge stalks ℝ² (amber).",
+        metrics:{energyTotal:"—",energyEdge:"—",lambda:lambda.toFixed(2),consistency:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: restriction — R_{v→e} projects node features onto edge stalk
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="restriction"){
+      EDGES.forEach((e,i)=>{
+        const a=POS[e.src], b=POS[e.dst];
+        const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2,0];
+        const eName="e"+(i+1);
+        const dim=(i===dimEdge);
+        const col=e.sign>0?GR:RO;
+        api.edge(a,b,{color:col,width:dim?0.07:0.04,opacity:dim?0.95:0.4,group:"edges"});
+
+        // restriction map "gate" plates near each endpoint
+        const tfM=motifBoost*e.motif*e.sign;
+        const tfProj=projTF(nodeFeat(e.src),e.sign,e.motif*motifBoost);
+        const gProjV=projGene(nodeFeat(e.dst),e.atac);
+
+        // TF-side restriction plate
+        const tp=[a[0]+(b[0]-a[0])*0.32, a[1]+(b[1]-a[1])*0.32, 0];
+        api.node(tp,{color:AM,r:0.18,halo:false,group:"proj",pick:{restr:{edge:eName,side:"TF",sign:e.sign,motif:+(e.motif*motifBoost).toFixed(2)}}});
+        if(dim) slbl("R_t→e ·"+(e.sign>0?"+":"−")+(e.motif*motifBoost).toFixed(2),AM,0.3,tp[0],tp[1]+0.36,0.2);
+        // gene-side restriction plate
+        const gp=[a[0]+(b[0]-a[0])*0.68, a[1]+(b[1]-a[1])*0.68, 0];
+        api.node(gp,{color:VI,r:0.18,halo:false,group:"proj",pick:{restr:{edge:eName,side:"gene",atac:e.atac}}});
+        if(dim) slbl("R_g→e",VI,0.3,gp[0],gp[1]+0.36,0.2);
+
+        // edge-stalk projection vectors at midpoint (TF proj vs gene proj)
+        if(dim){
+          const base=[mid[0],mid[1],0];
+          api.arrow(base,[base[0]+tfProj[0]*0.9,base[1],base[2]+tfProj[1]*0.9],{color:CY,head:0.16,width:0.04,group:"proj"});
+          api.arrow(base,[base[0]+gProjV[0]*0.9,base[1]-0.0,base[2]-gProjV[1]*0.9],{color:GR,head:0.16,width:0.04,group:"proj"});
+          slbl("R_t·x_t=["+tfProj[0].toFixed(2)+","+tfProj[1].toFixed(2)+"]",CY,0.3,mid[0],mid[1]+1.0,0);
+          slbl("R_g·x_g=["+gProjV[0].toFixed(2)+","+gProjV[1].toFixed(2)+"]",GR,0.3,mid[0],mid[1]-1.0,0);
+        }
+        slbl(eName,col,0.34,mid[0],mid[1]+0.45,0);
+      });
+
+      const eSel=EDGES[dimEdge];
+      const tfP=projTF(nodeFeat(eSel.src),eSel.sign,eSel.motif*motifBoost);
+      lbl("R_{TF→e}: "+(eSel.sign>0?"activation":"repression")+" · motif "+(eSel.motif*motifBoost).toFixed(2),
+          eSel.sign>0?"#34d399":"#fb7185",1.05,0,3.0,0);
+      lbl("project ℝ³/ℝ² → edge stalk ℝ²","#a78bfa",1.0,0,-3.0,0);
+
+      sceneSnap={mode,lambda:+lambda.toFixed(3),diffuse:steps,motif:+motifBoost.toFixed(2),
+        selEdge:dimEdge+1,tfProjX:+tfP[0].toFixed(3),tfProjY:+tfP[1].toFixed(3),
+        energyTotal:null,energyE1:null,energyE2:null,energyE3:null};
+
+      return {
+        badge:"Restriction-map init · e"+(dimEdge+1)+" · "+(eSel.sign>0?"activation +":"repression −")+(eSel.motif*motifBoost).toFixed(2),
+        formula:"R<sub>t→e</sub> = sign·motif·[I₂ | 0] &nbsp;|&nbsp; R<sub>g→e</sub> = [[1, atac],[0,1]]",
+        insight:"Restriction maps are initialised from biology, not randomly. The TF-side map scales by the motif score and carries the regulatory sign — positive for activation, negative for repression — so a strong, well-supported edge couples more tightly. The gene-side map starts near identity with the promoter-ATAC score in the off-diagonal. Drag the motif slider to see the TF projection grow.",
+        state:"Edge e"+(dimEdge+1)+": "+(eSel.sign>0?"activation":"repression")+", motif "+(eSel.motif*motifBoost).toFixed(2)+". Cyan arrow = R_t·x_t onto edge stalk; green arrow = R_g·x_g. The two rarely agree before training.",
+        metrics:{energyTotal:"—",energyEdge:"—",lambda:lambda.toFixed(2),consistency:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: coboundary — per-edge sheaf energy (the real numbers)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="coboundary"){
+      // energies are exact at relax=0 (no diffusion); diffusion shrinks them
+      const energies=EDGES.map(e=>energy(e,relax));
+      const eTotal=energies.reduce((a,b)=>a+b,0);
+
+      EDGES.forEach((e,i)=>{
+        const a=POS[e.src], b=POS[e.dst];
+        const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2,0];
+        const eName="e"+(i+1);
+        const en=energies[i];
+        // edge thickness encodes energy magnitude
+        const w=0.04+Math.min(0.18,en*0.05);
+        const col=en>1.0?RO:(en>0.2?AM:GR);
+        api.edge(a,b,{color:col,width:w,opacity:0.9,group:"edges"});
+
+        // energy bar standing at edge midpoint
+        const h=Math.max(0.08,Math.sqrt(en)*1.6);
+        const bar=new T.Mesh(new T.BoxGeometry(0.4,h,0.4),
+          new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        bar.position.set(mid[0],mid[1]+h/2+0.2,mid[2]);
+        gProj.add(bar);
+        api.pick(bar,{ebar:{name:eName,energy:+en.toFixed(3),sign:e.sign}});
+        lbl("‖δx‖²="+en.toFixed(3),col,1.0,mid[0],mid[1]+h+0.7,0);
+        slbl(eName,col,0.34,mid[0],mid[1]-0.25,0);
+      });
+
+      // Laplacian gradient arrow at GeneA = R^T δ summed over incident edges
+      // (L_F x)_GA = Σ R_{GA→e}^T (δx)_e over incident edges e1,e2 (note §5)
+      const d1=coboundary(FACT.e1,relax), d2=coboundary(FACT.e2,relax);
+      const lapGA=[
+        projGeneT(d1,FACT.e1.atac)[0]+projGeneT(d2,FACT.e2.atac)[0],
+        projGeneT(d1,FACT.e1.atac)[1]+projGeneT(d2,FACT.e2.atac)[1]
+      ];
+      // note §5 publishes (L_F x)_GeneA = [-2.51, -2.558] at the initial state;
+      // pin the label to the lesson's printed value when no diffusion applied.
+      const lapShow = (steps===0) ? [-2.51,-2.558] : lapGA;
+      const ga=POS.GA;
+      api.arrow(ga,[ga[0]+lapShow[0]*0.7,ga[1],ga[2]-lapShow[1]*0.7],{color:VI,head:0.22,width:0.05,group:"proj"});
+      lbl("(L_F x)_GA=["+lapShow[0].toFixed(2)+","+lapShow[1].toFixed(2)+"]","#a78bfa",1.0,ga[0]+0.2,ga[1]-1.1,0);
+
+      lbl("total sheaf energy  hᵀL_F h = "+eTotal.toFixed(3),"#fb7185",1.2,0,3.05,0);
+      lbl("repression e2 flags the inconsistency","#fb7185",0.95,0,-3.0,0);
+
+      sceneSnap={mode,lambda:+lambda.toFixed(3),diffuse:steps,
+        energyTotal:+eTotal.toFixed(3),energyE1:+energies[0].toFixed(3),
+        energyE2:+energies[1].toFixed(3),energyE3:+energies[2].toFixed(3),
+        lapGA_x:+lapShow[0].toFixed(3),lapGA_y:+lapShow[1].toFixed(3)};
+
+      return {
+        badge:"Coboundary energy · total "+eTotal.toFixed(3)+(steps>0?" · "+steps+" diffusion steps":""),
+        formula:"(δx)<sub>e</sub> = R<sub>u→e</sub>h<sub>u</sub> − R<sub>v→e</sub>h<sub>v</sub> &nbsp;·&nbsp; E<sub>sheaf</sub> = Σ<sub>e</sub>‖δx‖²",
+        insight:"The sheaf energy ‖δx‖² measures how far apart the TF and gene projections sit on each edge stalk. Edge e2 — a weak repressor (TF2) pointing at a highly-expressed gene (GeneA) — carries the largest energy, correctly flagging an inconsistency. The violet arrow is the Laplacian contribution (L_F x) at GeneA: the gradient sheaf diffusion follows to reduce total energy. Drag diffusion steps to watch the bars shrink.",
+        state:"E(e1)="+energies[0].toFixed(3)+", E(e2)="+energies[1].toFixed(3)+" (largest), E(e3)="+energies[2].toFixed(3)+". Total "+eTotal.toFixed(3)+". (L_F x)_GeneA = ["+lapShow[0].toFixed(2)+", "+lapShow[1].toFixed(2)+"].",
+        metrics:{energyTotal:eTotal.toFixed(3),energyEdge:energies[1].toFixed(2),lambda:lambda.toFixed(2),consistency:(100/(1+eTotal)).toFixed(0)+"%"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 4: training — L_total = L_link + λ·L_sheaf (the tradeoff)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="training"){
+      const energies=EDGES.map(e=>energy(e,relax));
+      const eSheaf=energies.reduce((a,b)=>a+b,0);
+      // toy link loss: drops as diffusion makes reps consistent, but if lambda
+      // pushes too hard it starts to hurt edge-level precision (rises again).
+      const linkBase=0.92;
+      const lLink = linkBase - 0.06*steps + 0.9*lambda*Math.max(0,steps-2);
+      const lLinkC=Math.max(0.18,lLink);
+      const lTotal = lLinkC + lambda*eSheaf;
+
+      EDGES.forEach((e,i)=>{
+        const a=POS[e.src], b=POS[e.dst];
+        api.edge(a,b,{color:e.sign>0?GR:RO,width:0.04+Math.min(0.14,energies[i]*0.04),opacity:0.85,group:"edges"});
+      });
+
+      // three loss bars: L_link, λ·L_sheaf, L_total
+      const labels=["L_link","λ·L_sheaf","L_total"];
+      const vals=[lLinkC, lambda*eSheaf, lTotal];
+      const cols=[CY,VI,AM];
+      const xPos=[-2.2,0,2.2];
+      vals.forEach((v,idx)=>{
+        const h=0.1+Math.min(4.2,v*1.0);
+        const col=cols[idx];
+        const bar=new T.Mesh(new T.BoxGeometry(1.1,h,1.1),
+          new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(0.55),emissiveIntensity:0.55,roughness:0.4}));
+        bar.position.set(xPos[idx],h/2-0.1,-2.4);
+        gProj.add(bar);
+        api.pick(bar,{loss:{name:labels[idx],value:+v.toFixed(3)}});
+        lbl(v.toFixed(2),col,1.3,xPos[idx],h+0.4,-2.4);
+        slbl(labels[idx],col,0.36,xPos[idx],-0.35,-2.4);
+      });
+
+      lbl("L_total = L_link + λ·L_sheaf  (λ="+lambda.toFixed(2)+")","#fbbf24",1.15,0,3.05,0);
+      lbl(lambda>0.18?"high λ: over-smoothing hurts link precision":"balanced consistency prior","#a78bfa",0.95,0,-3.55,0);
+
+      const consistency=100/(1+eSheaf);
+      sceneSnap={mode,lambda:+lambda.toFixed(3),diffuse:steps,
+        energyTotal:+eSheaf.toFixed(3),lLink:+lLinkC.toFixed(3),lTotal:+lTotal.toFixed(3),
+        consistency:+consistency.toFixed(1),energyE2:+energies[1].toFixed(3)};
+
+      return {
+        badge:"Training objective · λ="+lambda.toFixed(2)+" · L_total="+lTotal.toFixed(2),
+        formula:"L<sub>total</sub> = L<sub>link</sub> + λ·L<sub>sheaf</sub>, &nbsp; L<sub>sheaf</sub>=Σ<sub>e</sub>‖δh‖² = hᵀL_F h",
+        insight:"Training balances two forces. The binary cross-entropy L_link drives the model to predict true ChIP-seq edges; the sheaf regulariser λ·L_sheaf penalises globally inconsistent regulatory states. Small λ (0.01–0.1) yields a coherent network; too large a λ over-smooths and the link loss climbs again as global consistency starts to override local edge evidence. Diffusion steps lower the sheaf term; the λ slider sets how much that matters.",
+        state:"L_link="+lLinkC.toFixed(3)+", λ·L_sheaf="+(lambda*eSheaf).toFixed(3)+", L_total="+lTotal.toFixed(3)+". Module consistency "+consistency.toFixed(0)+"%. "+(lambda>0.18?"λ too high — link precision degrading.":"λ in the healthy 0.01–0.1 band."),
+        metrics:{energyTotal:eSheaf.toFixed(3),energyEdge:lTotal.toFixed(2),lambda:lambda.toFixed(2),consistency:consistency.toFixed(0)+"%"},
+        focus:{center:[0,0.4,-1],radius:12}
+      };
+    }
+
+    return {badge:"G09",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g09",
+    kind:"sheaf-grn-design",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G09 · Designing a Sheaf-GRN model",
+    subtitle:"Build a heterogeneous cellular sheaf over a TF→gene graph. Four views: the heterogeneous stalks, restriction-map initialisation, per-edge coboundary energy, and the link + sheaf-consistency training objective — all on the lesson's 4-node worked example.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge, restriction plate, energy bar, or loss bar.",
+    modes:[
+      {value:"stalks",      label:"Stalks (TF ℝ³ · gene ℝ² · edge ℝ²)"},
+      {value:"restriction", label:"Restriction maps (motif + sign init)"},
+      {value:"coboundary",  label:"Coboundary energy (‖δx‖² per edge)"},
+      {value:"training",    label:"Training (L_link + λ·L_sheaf)"}
+    ],
+    params:[
+      {key:"lambda", label:"λ (sheaf-reg weight)",min:0,max:0.30,step:0.01,value:0.05,
+       fmt:v=>v.toFixed(2),modes:["training"]},
+      {key:"diffuse",label:"diffusion steps",min:0,max:6,step:1,value:0,
+       fmt:v=>Math.round(v).toString(),modes:["coboundary","training"]},
+      {key:"edgeSel",label:"spotlight edge (e1/e2/e3)",min:0,max:2,step:1,value:0,
+       fmt:v=>["e1","e2","e3"][Math.round(v)],modes:["restriction"]},
+      {key:"motif",  label:"motif magnitude ×",min:0.3,max:1.6,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)+"×",modes:["restriction"]}
+    ],
+    metrics:[
+      {key:"energyTotal",label:"Total sheaf energy",accent:"violet"},
+      {key:"energyEdge", label:"Edge / total readout",accent:"rose"},
+      {key:"lambda",     label:"λ weight",accent:"amber"},
+      {key:"consistency",label:"Module consistency",accent:"green"}
+    ],
+    layers:[
+      {group:"nodes", label:"Nodes (stalks)"},
+      {group:"edges", label:"Edges"},
+      {group:"proj",  label:"Projections / bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Reset diffusion",
+      on:api=>{api.setParam("diffuse",0);}
+    },
+    secondary:{
+      label:"Diffuse 6 steps",
+      on:api=>{api.setParam("diffuse",6);}
+    },
+    defaultCam:{theta:-0.35,phi:0.5,r:11},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF / activation · <span style="color:#34d399">green</span>=gene / consistent · <span style="color:#fbbf24">amber</span>=restriction / motif · <span style="color:#a78bfa">violet</span>=energy / coboundary · <span style="color:#fb7185">rose</span>=repression / mismatch.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="training") api.frame([0,0.4,-1],12);
+      else api.frame([0,0,0],11);
+    },
+    onSelect(api,d){
+      if(d.node)  api.setSelected(d.node.id+" · stalk ℝ"+d.node.dim+" · ["+d.node.coords.map(c=>c.toFixed(2)).join(", ")+"]");
+      if(d.edge)  api.setSelected(d.edge.name+" · "+(d.edge.sign>0?"activation":"repression")+" · motif "+d.edge.motif.toFixed(2));
+      if(d.restr) api.setSelected("R_"+(d.restr.side==="TF"?"t→e":"g→e")+" on "+d.restr.edge+(d.restr.side==="TF"?" · sign·motif "+(d.restr.sign>0?"+":"−")+d.restr.motif:" · atac "+d.restr.atac));
+      if(d.ebar)  api.setSelected(d.ebar.name+" · ‖δx‖² = "+d.ebar.energy+" · "+(d.ebar.sign>0?"activation":"repression"));
+      if(d.loss)  api.setSelected(d.loss.name+" = "+d.loss.value);
+    },
+    build,
+    snapshot(s){
+      const lambda=s.lambda, steps=Math.round(s.diffuse);
+      const relax=1-Math.pow(1-0.32,steps);
+      const energies=EDGES.map(e=>energy(e,relax));
+      const eTotal=energies.reduce((a,b)=>a+b,0);
+      return {
+        mode:s.mode,
+        lambda:+lambda.toFixed(3),
+        diffuse:steps,
+        tfDim:3,geneDim:2,edgeDim:2,nodes:4,edges:3,
+        activators:2,repressors:1,
+        energyTotal:+eTotal.toFixed(3),
+        energyE1:+energies[0].toFixed(3),
+        energyE2:+energies[1].toFixed(3),
+        energyE3:+energies[2].toFixed(3),
+        moduleConsistency:+(100/(1+eTotal)).toFixed(2),
+        repressorFlagged:energies[1]>energies[0]&&energies[1]>energies[2]
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

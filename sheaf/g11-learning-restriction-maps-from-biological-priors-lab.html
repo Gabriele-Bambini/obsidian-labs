@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G11 · Learning restriction maps from biological priors</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random hash (no rng, no clock) ──────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS — note §5 worked example (single source of truth) ──────────────
+  // TF1 regulates GeneA (strong motif) and GeneB (weak motif).
+  const F={
+    xTF1:[0.8,0.6],          // TF1 stalk (expression, SCENIC)
+    xA  :[0.7,0.9],          // GeneA stalk (expression, ATAC)
+    xB  :[0.1,0.2],          // GeneB stalk
+    mA  :0.9,                // motif score TF1->GeneA (strong)
+    mB  :0.2,                // motif score TF1->GeneB (weak)
+    Rfree:[[1.0,0.5],[0.2,0.8]],   // fully-learned map (SVD/identity init)
+    Iden :[[1,0],[0,1]]            // gene-side maps = identity
+  };
+
+  // 2x2 mat · 2-vec
+  function mv(M,v){return [M[0][0]*v[0]+M[0][1]*v[1], M[1][0]*v[0]+M[1][1]*v[1]];}
+  function scaleM(M,s){return [[M[0][0]*s,M[0][1]*s],[M[1][0]*s,M[1][1]*s]];}
+  function addM(A,B){return [[A[0][0]+B[0][0],A[0][1]+B[0][1]],[A[1][0]+B[1][0],A[1][1]+B[1][1]]];}
+  function subV(a,b){return [a[0]-b[0],a[1]-b[1]];}
+  function sq2(v){return v[0]*v[0]+v[1]*v[1];}
+  function frob(M){return Math.sqrt(M[0][0]*M[0][0]+M[0][1]*M[0][1]+M[1][0]*M[1][0]+M[1][1]*M[1][1]);}
+
+  // SVD-direction prior surrogate (deterministic): outer-product of the
+  // dominant co-variation mode of the cross-covariance Sigma = xTF (x) xGene.
+  // u1 ~ normalize(xGene), v1 ~ normalize(xTF), s1 ~ |xTF||xGene|. R_prior = s1^.5 u1 v1^T.
+  function svdPrior(xTF,xG){
+    const nT=Math.hypot(xTF[0],xTF[1])||1, nG=Math.hypot(xG[0],xG[1])||1;
+    const u=[xG[0]/nG,xG[1]/nG], v=[xTF[0]/nT,xTF[1]/nT];
+    const s=Math.sqrt(nT*nG);
+    return [[s*u[0]*v[0], s*u[0]*v[1]],[s*u[1]*v[0], s*u[1]*v[1]]];
+  }
+
+  // build the gated / residual map for a given gene + mode + params
+  // mode: "gate" | "svd" | "residual"
+  function buildMap(mode,xG,m,gamma){
+    if(mode==="gate"){
+      return {R:scaleM(F.Rfree,m), prior:null, delta:null, gate:m};
+    }
+    if(mode==="svd"){
+      const Rp=svdPrior(F.xTF1,xG);
+      return {R:Rp, prior:Rp, delta:[[0,0],[0,0]], gate:1};
+    }
+    // residual: R = R_prior + R_delta ; at gamma->inf delta->0 (anchored to prior),
+    // at gamma->0 delta relaxes toward (R_free - R_prior). w in [0,1] = relaxation.
+    const Rp=svdPrior(F.xTF1,xG);
+    const target=[[F.Rfree[0][0]-Rp[0][0],F.Rfree[0][1]-Rp[0][1]],
+                  [F.Rfree[1][0]-Rp[1][0],F.Rfree[1][1]-Rp[1][1]]];
+    const w=1/(1+10*gamma);                 // strong gamma -> w~0 (stay at prior)
+    const delta=scaleM(target,w);
+    return {R:addM(Rp,delta), prior:Rp, delta:delta, gate:1};
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const mA=mode==="gate"?s.motifA:F.mA;     // motifA slider drives strong-edge gate in gate mode
+    const mB=mode==="gate"?s.motifB:F.mB;
+    const gamma=s.gamma;
+    const scale=s.featScale;                  // visual amplitude on stalk geometry
+
+    const gGRN  =api.group("grn");
+    const gMaps =api.group("maps");
+    const gBars =api.group("energy");
+    const gLab  =api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // TF1 / structure
+    const GR=new T.Color("#34d399");   // strong / activation
+    const AM=new T.Color("#fbbf24");   // GeneA energy
+    const VI=new T.Color("#a78bfa");   // prior / SVD
+    const RO=new T.Color("#fb7185");   // weak / repression-ish
+    const SL=new T.Color("#54667c");
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);}
+
+    // ── shared geometry: TF1 node + two target genes A,B ──
+    const pTF=[0,0,0], pA=[-3.4,0,2.6], pB=[3.4,0,2.6];
+    api.node(pTF,{color:"#4dd7ff",r:0.42,label:"TF1",group:"grn",pick:{node:"TF1",x:F.xTF1}});
+    api.node(pA ,{color:"#34d399",r:0.36,label:"GeneA",group:"grn",pick:{node:"GeneA",x:F.xA,motif:mA}});
+    api.node(pB ,{color:"#fb7185",r:0.36,label:"GeneB",group:"grn",pick:{node:"GeneB",x:F.xB,motif:mB}});
+
+    // compute both edges' maps + coboundary energies
+    const mapA=buildMap(mode,F.xA,mA,gamma);
+    const mapB=buildMap(mode,F.xB,mB,gamma);
+    // (delta x)_g = R(TF1->g)*xTF1 - I*x_g
+    const dA=subV(mv(mapA.R,F.xTF1), mv(F.Iden,F.xA));
+    const dB=subV(mv(mapB.R,F.xTF1), mv(F.Iden,F.xB));
+    const eA=sq2(dA), eB=sq2(dB);
+    const ratio=(eB>1e-9)?eA/eB:0;
+
+    // ── edges TF1->A, TF1->B : thickness ~ map Frobenius norm ──
+    const fA=frob(mapA.R), fB=frob(mapB.R);
+    api.edge(pTF,pA,{color:"#34d399",width:0.04+0.10*Math.min(1.4,fA)/1.4,opacity:0.9,group:"maps"});
+    api.edge(pTF,pB,{color:"#fb7185",width:0.04+0.10*Math.min(1.4,fB)/1.4,opacity:0.9,group:"maps"});
+
+    // gate beads on each edge: number/brightness ~ gate strength (motif)
+    function beads(a,b,strength,colHex){
+      const n=Math.max(1,Math.round(2+strength*5));
+      for(let k=1;k<=n;k++){
+        const t=k/(n+1);
+        const x=a[0]+(b[0]-a[0])*t, y=0.0, z=a[2]+(b[2]-a[2])*t;
+        const m=new T.Mesh(new T.SphereGeometry(0.07+0.05*strength,12,10),
+          new T.MeshStandardMaterial({color:colHex,emissive:new T.Color(colHex),emissiveIntensity:0.4+0.6*strength,roughness:0.4}));
+        m.position.set(x,y,z); gMaps.add(m);
+      }
+    }
+    beads(pTF,pA,mode==="gate"?mA:0.9,"#34d399");
+    beads(pTF,pB,mode==="gate"?mB:0.45,"#fb7185");
+
+    // ── restriction-map matrix tiles floating above each edge midpoint ──
+    function matTile(M,cx,cz,col,gate){
+      const mid=[cx,1.7,cz];
+      // 2x2 grid of small bars whose height ~ |entry|, tint by sign
+      for(let r=0;r<2;r++)for(let c=0;c<2;c++){
+        const val=M[r][c];
+        const h=0.12+Math.min(1.2,Math.abs(val))*0.9;
+        const bx=mid[0]+(c-0.5)*0.55, bz=mid[2]+(r-0.5)*0.55;
+        const cc=val>=0?new T.Color(col):RO.clone();
+        const bar=new T.Mesh(new T.BoxGeometry(0.38,h,0.38),
+          new T.MeshStandardMaterial({color:cc,emissive:cc.clone().multiplyScalar(0.45),emissiveIntensity:0.5,roughness:0.4}));
+        bar.position.set(bx,mid[1]+h/2,bz); gMaps.add(bar);
+        api.pick(bar,{cell:{r,c,val:+val.toFixed(3)}});
+      }
+      const pl=api.plane([mid[0],mid[1]-0.02,mid[2]],{w:1.4,h:1.4,color:col,opacity:0.10,group:"maps"});
+    }
+    matTile(mapA.R,(pTF[0]+pA[0])/2,(pTF[2]+pA[2])/2,"#34d399",mode==="gate"?mA:0.9);
+    matTile(mapB.R,(pTF[0]+pB[0])/2,(pTF[2]+pB[2])/2,"#fb7185",mode==="gate"?mB:0.2);
+
+    // in svd/residual mode, draw a ghost "prior" tile to show anchoring
+    if(mode!=="gate" && mapA.prior){
+      const ang=frob(addM(mapA.delta||[[0,0],[0,0]],[[0,0],[0,0]]));
+      lbl("R = R_prior + R_δ","#a78bfa",1.15,0,3.0,2.6);
+    }
+
+    // ── energy bars (sheaf consistency contribution per edge) ──
+    const xS=[-1.4,1.4];
+    const evals=[eA,eB], ecol=[AM,RO], enames=["||δx_A||²","||δx_B||²"];
+    const eMax=Math.max(0.04,eA,eB);
+    evals.forEach((e,i)=>{
+      const h=0.12+(e/eMax)*3.2;
+      const bar=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),
+        new T.MeshStandardMaterial({color:ecol[i],emissive:ecol[i].clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+      bar.position.set(xS[i],h/2,-3.4); gBars.add(bar);
+      api.pick(bar,{energy:{edge:i===0?"A":"B",val:+e.toFixed(4)}});
+      lbl(e.toFixed(3),ecol[i].getStyle(),1.4,xS[i],h+0.5,-3.4);
+      slbl(enames[i],ecol[i].getStyle(),0.36,xS[i],0.05,-3.4);
+    });
+    gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+      [new T.Vector3(-3.0,0,-3.4),new T.Vector3(3.0,0,-3.4)]),new T.LineBasicMaterial({color:0x1e3046})));
+    lbl("sheaf energy","#8a99ad",1.05,0,-0.55,-4.6);
+
+    // ── mode-specific badge / formula / insight ──
+    let badge,formula,insight,stateTxt;
+    if(mode==="gate"){
+      badge="Motif gating · m_A="+mA.toFixed(2)+" m_B="+mB.toFixed(2)+" · ratio "+ratio.toFixed(1)+"×";
+      formula="R(TF1→g) = m(TF1,g) · R_free  →  ||δx||² scales by m²";
+      insight="Each restriction map is scaled by its continuous motif score. GeneA (strong motif "+mA.toFixed(2)+") keeps a large map and a large sheaf-energy contribution; GeneB (weak motif "+mB.toFixed(2)+") is shrunk, so its energy collapses. With the note's m_A=0.9, m_B=0.2 the energies are "+eA.toFixed(3)+" vs "+eB.toFixed(3)+" — a "+ratio.toFixed(1)+"× gap with no hard threshold. Biologically-unsupported edges self-suppress.";
+      stateTxt="δx_A="+vfmt(dA)+", δx_B="+vfmt(dB)+". Drag m_A / m_B to gate the maps; gating gives automatic sparsity.";
+    } else if(mode==="svd"){
+      badge="SVD init · R_prior from cross-covariance · ‖R_A‖="+fA.toFixed(2);
+      formula="Σ = C_TFᵀ C_Gene = U S Vᵀ ;  R_prior = √s₁ · u₁ v₁ᵀ";
+      insight="Instead of random init, each map is seeded by the dominant co-variation mode of the TF–gene cross-covariance (its SVD). The map direction (violet tiles) already aligns TF features to the gene's expression/ATAC axis before any gradient step — training refines rather than rediscovers the regulatory mode. GeneA, whose stalk co-varies strongly with TF1, gets the larger prior map.";
+      stateTxt="‖R_prior(A)‖="+fA.toFixed(3)+", ‖R_prior(B)‖="+fB.toFixed(3)+". Energies start at "+eA.toFixed(3)+" / "+eB.toFixed(3)+" — already structured, not noise.";
+    } else { // residual
+      const wA=1/(1+10*gamma);
+      badge="Residual + L2 anchor · γ="+gamma.toFixed(2)+" · relax "+(wA*100).toFixed(0)+"%";
+      formula="R = R_prior + R_δ ,  L_prior = γ·‖R_δ‖_F²  →  R_δ→0 as γ→∞";
+      insight="The trainable map is a residual on top of the SVD prior, with an L2 penalty γ·‖R_δ‖². Large γ freezes the model at the biological prior (R_δ≈0); small γ lets the residual relax toward the data-driven R_free. Watch the tiles morph from the prior (γ high) toward R_free (γ low) as you lower γ — the anchor keeps the prior relevant throughout training, not just at init.";
+      stateTxt="γ="+gamma.toFixed(2)+" → ‖R_δ(A)‖="+frob(mapA.delta).toFixed(3)+", relax weight "+wA.toFixed(2)+". Energies "+eA.toFixed(3)+" / "+eB.toFixed(3)+".";
+    }
+
+    sceneSnap={
+      mode, motifA:+mA.toFixed(3), motifB:+mB.toFixed(3), gamma:+gamma.toFixed(3),
+      energyA:+eA.toFixed(4), energyB:+eB.toFixed(4), energyRatio:+ratio.toFixed(2),
+      mapNormA:+fA.toFixed(3), mapNormB:+fB.toFixed(3),
+      deltaA0:+dA[0].toFixed(3), deltaA1:+dA[1].toFixed(3),
+      deltaB0:+dB[0].toFixed(3), deltaB1:+dB[1].toFixed(3),
+      deltaNormA:+frob(mapA.delta||[[0,0],[0,0]]).toFixed(3)
+    };
+
+    api.setMetric("energyA",eA.toFixed(3));
+    api.setMetric("energyB",eB.toFixed(3));
+    api.setMetric("ratio",ratio.toFixed(1)+"×");
+    api.setMetric("mapNorm",fA.toFixed(2)+" / "+fB.toFixed(2));
+
+    return {
+      badge, formula, insight,
+      state:stateTxt,
+      metrics:{
+        energyA:eA.toFixed(3),
+        energyB:eB.toFixed(3),
+        ratio:ratio.toFixed(1)+"×",
+        mapNorm:fA.toFixed(2)+" / "+fB.toFixed(2)
+      },
+      focus:{center:[0,1.0,0],radius:13}
+    };
+  }
+
+  function vfmt(v){return "["+v[0].toFixed(2)+", "+v[1].toFixed(2)+"]";}
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g11",
+    kind:"prior-guided-restriction-maps",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G11 · Learning restriction maps from biological priors",
+    subtitle:"TF1 regulates GeneA (strong motif) and GeneB (weak motif). Three ways to put biology into the restriction map: motif gating, SVD initialization, and residual + L2 anchoring.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, a map-matrix cell, or an energy bar.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"gate",     label:"Motif gating  R = m·R_free"},
+      {value:"svd",      label:"SVD init  R_prior from co-expression"},
+      {value:"residual", label:"Residual + L2 anchor  R = R_prior + R_δ"}
+    ],
+    params:[
+      {key:"motifA",   label:"motif m(TF1,GeneA)",min:0,max:1,step:0.01,value:0.9,
+       fmt:v=>(+v).toFixed(2),modes:["gate"]},
+      {key:"motifB",   label:"motif m(TF1,GeneB)",min:0,max:1,step:0.01,value:0.2,
+       fmt:v=>(+v).toFixed(2),modes:["gate"]},
+      {key:"gamma",    label:"prior strength γ (L2 anchor)",min:0,max:2,step:0.05,value:0.1,
+       fmt:v=>(+v).toFixed(2),modes:["residual"]},
+      {key:"featScale",label:"feature amplitude",min:0.5,max:1.5,step:0.05,value:1.0,
+       fmt:v=>(+v).toFixed(2)}
+    ],
+    metrics:[
+      {key:"energyA", label:"‖δx_A‖²  (strong edge)",accent:"amber"},
+      {key:"energyB", label:"‖δx_B‖²  (weak edge)",  accent:"rose"},
+      {key:"ratio",   label:"energy ratio A:B",       accent:"cyan"},
+      {key:"mapNorm", label:"‖R_A‖ / ‖R_B‖ Frobenius",accent:"violet"}
+    ],
+    layers:[
+      {group:"grn",    label:"GRN nodes"},
+      {group:"maps",   label:"Restriction maps"},
+      {group:"energy", label:"Sheaf energy bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Note example (m=.9/.2)",
+      on:api=>{api.setParam("motifA",0.9);api.setParam("motifB",0.2);}
+    },
+    secondary:{
+      label:"Kill weak motif (m_B=0)",
+      on:api=>{api.setParam("motifB",0.0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF1 · <span style="color:#34d399">green</span>=GeneA / strong motif · <span style="color:#fb7185">rose</span>=GeneB / weak motif · <span style="color:#a78bfa">violet</span>=prior · matrix tiles = restriction-map entries · bars = sheaf energy ‖δx‖².',
+    onParam(api){ api.frame([0,1.0,0],13); },
+    onMode(api){ api.frame([0,1.0,0],13); },
+    onSelect(api,d){
+      if(d.node)   api.setSelected("Node "+d.node.node+" · stalk x="+vfmt(d.node.x)+(d.node.motif!=null?" · motif "+d.node.motif.toFixed(2):""));
+      if(d.cell)   api.setSelected("R["+d.cell.r+","+d.cell.c+"] = "+d.cell.val);
+      if(d.energy) api.setSelected("Edge "+d.energy.edge+" sheaf energy ‖δx‖² = "+d.energy.val);
+    },
+    build,
+    snapshot(s){
+      return Object.assign({
+        mode:s.mode,
+        motifA:+(+s.motifA).toFixed(3),
+        motifB:+(+s.motifB).toFixed(3),
+        gamma:+(+s.gamma).toFixed(3),
+        featScale:+(+s.featScale).toFixed(3)
+      }, sceneSnap);
+    }
+  });
+})();
+</script>
+</body>
+</html>

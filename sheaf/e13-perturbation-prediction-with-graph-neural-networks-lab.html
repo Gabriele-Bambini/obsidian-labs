@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E13 · Perturbation prediction with graph neural networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash over sin; no RNG, no clock) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — note Section 5 (erythroid 3-TF / 5-target worked example)
+  // ════════════════════════════════════════════════════════════════════════
+  const TFS    =["GATA1","KLF1","NFE2"];          // TF1, TF2, TF3(unseen)
+  const TARGETS=["HBB","GYPA","SLC4A1","BAND3","DMBT1"];
+  // training KO effect vectors (delta = expr_KO - expr_ctrl), per target
+  const D_GATA1=[-3.2,-2.8,-2.1,-1.9,-0.2];
+  const D_KLF1 =[-2.8,-2.4,-1.8,-1.6,-0.1];
+  // true held-out NFE2 KO (first 3 from literature; last two ~floor)
+  const D_NFE2_TRUE=[-2.5,-2.2,-1.5,-1.3,-0.1];
+  // CellOracle GRN edge weights TF→target (signed regulatory weights, drive=-1 KO)
+  // GATA1 is the master erythroid regulator → strong weights; chain GATA1→KLF1→targets
+  const W_GATA1=[ 3.0, 2.6, 1.9, 1.7, 0.15]; // GATA1 direct onto targets
+  const W_KLF1 =[ 2.6, 2.2, 1.7, 1.5, 0.10]; // KLF1 direct onto targets
+  const W_G1_K1=0.7;                          // GATA1→KLF1 cascade weight (2nd order)
+  // Pearson r benchmarks (Replogle K562, note §6/§8)
+  const R_MEAN=0.25, R_GEARS=0.68;
+  // double-KO additive baseline GATA1+KLF1, with floor epistasis on HBB
+  const D_DOUBLE_ADD=D_GATA1.map((v,i)=>v+D_KLF1[i]);     // [-6.0,-5.2,-3.9,-3.5,-0.3]
+  const D_DOUBLE_TRUE=[-5.8,-5.0,-3.8,-3.4,-0.3];          // HBB hits floor ~ -5.8
+
+  // GO co-function adjacency on the 3 TFs (1 = direct shared specific GO term)
+  // GATA1--KLF1 (erythrocyte dev + transcription), KLF1--NFE2 (erythrocyte dev)
+  // GATA1--NFE2 : NO direct edge (only 2-hop via KLF1)
+  const A=[[0,1,0],[1,0,1],[0,1,0]];
+
+  // 3D ring positions for the 3 TFs
+  const TFPOS=[[-3.4,0,1.9],[0,0,-2.4],[3.4,0,1.9]]; // GATA1, KLF1, NFE2
+
+  // ── helpers ───────────────────────────────────────────────────────────────
+  function pearson(a,b){
+    const n=a.length; let sa=0,sb=0; for(let i=0;i<n;i++){sa+=a[i];sb+=b[i];}
+    const ma=sa/n, mb=sb/n; let num=0,da=0,db=0;
+    for(let i=0;i<n;i++){const x=a[i]-ma,y=b[i]-mb;num+=x*y;da+=x*x;db+=y*y;}
+    const den=Math.sqrt(da*db); return den<1e-9?0:num/den;
+  }
+  function lerpVec(a,b,t){return a.map((v,i)=>v*(1-t)+b[i]*t);}
+  const meanVec=()=>D_GATA1.map((_,i)=>(D_GATA1[i]+D_KLF1[i])/2);
+
+  // GEARS prediction for unseen NFE2 as alpha-weighted interp of GATA1,KLF1.
+  // alpha = weight on GATA1; NFE2 is closer to KLF1 (direct GO edge) so alpha<0.5.
+  // The slider "alpha" sweeps this; note's canonical value alpha=0.3 → HBB -2.96.
+  function gearsNFE2(alpha){return lerpVec(D_GATA1,D_KLF1,1-alpha);} // alpha on GATA1
+
+  // CellOracle: propagate KO (delta_TF=-1) through GRN edges to targets.
+  // strength scales the perturbation magnitude; hops in {1,2} toggle cascade term.
+  function cellOracle(tfIdx,strength,hops){
+    const out=new Array(TARGETS.length).fill(0);
+    const dTF=-1*strength;
+    const Wdir = tfIdx===0?W_GATA1 : tfIdx===1?W_KLF1 : W_KLF1.map(w=>w*0.9);
+    for(let g=0;g<TARGETS.length;g++) out[g]+=Wdir[g]*dTF;          // 1st order
+    if(hops>=2 && tfIdx===0){                                       // 2nd: GATA1→KLF1→targets
+      const dKLF1=W_G1_K1*dTF;
+      for(let g=0;g<TARGETS.length;g++) out[g]+=W_KLF1[g]*dKLF1;
+    }
+    return out;
+  }
+
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const alpha   =s.alpha;                       // GEARS interp weight on GATA1 (0..1)
+    const strength=s.strength;                    // CellOracle KO magnitude (0..1.5)
+    const hops    =Math.round(s.hops);            // GRN propagation depth 1..2
+    const corpus  =Math.round(s.corpus);          // foundation-model corpus 0=small 1=large
+    const doubleKO=Math.round(s.doubleKO);        // 0=single NFE2, 1=double GATA1+KLF1
+
+    const gGraph =api.group("graph");
+    const gFlow  =api.group("flow");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff"), GR=new T.Color("#34d399"),
+          AM=new T.Color("#fbbf24"), VI=new T.Color("#a78bfa"),
+          RO=new T.Color("#fb7185"), SL=new T.Color("#54667c");
+    const TFCOL=[CY,GR,AM]; // GATA1 cyan, KLF1 green, NFE2 amber(unseen)
+
+    function L(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function l(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // signed delta bars laid out along x; below baseline = downregulation
+    function deltaBars(vals,baseCol,z,picks,emiOn){
+      const x0=-3.2, dx=1.6, sc=0.62;
+      vals.forEach((v,g)=>{
+        const x=x0+g*dx, h=Math.max(0.12,Math.abs(v)*sc);
+        const c=(typeof baseCol==="function")?baseCol(g):baseCol;
+        const down=v<0;
+        const bar=new T.Mesh(new T.BoxGeometry(1.05,h,1.05),
+          new T.MeshStandardMaterial({color:c.clone(),
+            emissive:c.clone().multiplyScalar(emiOn?0.6:0.25),
+            emissiveIntensity:emiOn?0.7:0.3,roughness:0.4}));
+        const yc=down?-h/2:h/2;
+        bar.position.set(x,yc,z);
+        gBars.add(bar);
+        if(picks) api.pick(bar,picks(g,v));
+        l(v.toFixed(1),c.getStyle(),0.34,x,(down?-h-0.45:h+0.4),z);
+        l(TARGETS[g],"#8a99ad",0.3,x,down?0.42:-0.42,z);
+      });
+      // baseline
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(x0-0.9,0,z),new T.Vector3(x0+(vals.length-1)*dx+0.9,0,z)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 · GEARS — GNN on GO graph, transfer to unseen NFE2
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="gears"){
+      // GO co-function graph: 3 TF nodes + edges, NFE2 highlighted as unseen.
+      for(let i=0;i<3;i++){
+        const p=TFPOS[i], unseen=(i===2);
+        api.node(p,{r:unseen?0.42:0.5,color:"#"+TFCOL[i].getHexString(),
+          group:"graph",label:TFS[i]+(unseen?" (unseen)":" (seen)"),
+          labelColor:unseen?"#fbbf24":"#cfe0f0",
+          pick:{tf:{name:TFS[i],idx:i,seen:!unseen}}});
+      }
+      // GO edges (message-passing channels)
+      for(let i=0;i<3;i++)for(let j=i+1;j<3;j++) if(A[i][j]){
+        api.edge(TFPOS[i],TFPOS[j],{color:"#3f7fa8",width:0.06,group:"graph"});
+      }
+      // explicit "NO direct edge" GATA1—NFE2 (dashed faint red, 2-hop)
+      api.edge(TFPOS[0],TFPOS[2],{color:"#5a2733",width:0.03,dashed:true,opacity:0.5,group:"graph"});
+      L("GO co-function graph G_GO","#9fb4cc",0.95,0,2.2,-2.4);
+      L("2-hop only","#fb7185",0.8,0,1.0,1.9);
+
+      // message-passing pulses along active edges (deterministic offsets)
+      [[0,1],[1,2]].forEach((e,k)=>{
+        const a=new T.Vector3(...TFPOS[e[0]]), b=new T.Vector3(...TFPOS[e[1]]);
+        for(let m=0;m<3;m++){
+          const t=frac(0.18*m+0.31*k+0.2);
+          const pp=a.clone().lerp(b,t);
+          const dot=new T.Mesh(new T.SphereGeometry(0.1,10,8),
+            new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.9,roughness:0.3}));
+          dot.position.copy(pp); gFlow.add(dot);
+        }
+      });
+
+      // GEARS prediction for NFE2 = alpha-weighted interp; show as a bar panel
+      const pred = doubleKO? D_DOUBLE_ADD.slice() : gearsNFE2(alpha);
+      const truth= doubleKO? D_DOUBLE_TRUE : D_NFE2_TRUE;
+      // shift the whole bar panel below the graph
+      const zBars=4.4;
+      deltaBars(pred,()=>VI,zBars,(g,v)=>({pred:{gene:TARGETS[g],val:v}}),true);
+      // overlay true values as small amber markers
+      truth.forEach((v,g)=>{
+        const x=-3.2+g*1.6, yc=v<0?-Math.abs(v)*0.62:Math.abs(v)*0.62;
+        const mk=new T.Mesh(new T.SphereGeometry(0.13,12,10),
+          new T.MeshStandardMaterial({color:AM,emissive:AM,emissiveIntensity:0.95,roughness:0.2}));
+        mk.position.set(x,yc,zBars-0.7); gFlow.add(mk);
+      });
+      L(doubleKO?"predicted Δ · GATA1+KLF1 (additive)":"predicted Δ(NFE2)  [violet]","#a78bfa",0.9,0,2.0,zBars);
+      L("true Δ  [amber dots]","#fbbf24",0.78,3.6,1.2,zBars-0.7);
+
+      const r=pearson(pred,truth);
+      const hbb=pred[0];
+      sceneSnap={mode,alpha:+alpha.toFixed(2),doubleKO,
+        predHBB:+hbb.toFixed(2),pearsonR:+r.toFixed(3),
+        gainOverMean:+(R_GEARS-R_MEAN).toFixed(3),strength:+strength.toFixed(2),hops,corpus};
+      api.setMetric("pearsonR",r.toFixed(2));
+      api.setMetric("predHBB",hbb.toFixed(2));
+      api.setMetric("transferGain","+"+(R_GEARS-R_MEAN).toFixed(2));
+      api.setMetric("benchR","GEARS "+R_GEARS.toFixed(2));
+
+      return {
+        badge:"GEARS · "+(doubleKO?"double KO (additive)":"unseen NFE2 · α(GATA1)="+alpha.toFixed(2)),
+        formula:doubleKO
+          ? "h_pert(g₁+g₂)=h^K(g₁)+h^K(g₂)  →  Δ_add=Δ_GATA1+Δ_KLF1"
+          : "h_pert(NFE2)≈α·h(GATA1)+(1−α)·h(KLF1)  →  Δ(NFE2,HBB)="+hbb.toFixed(2),
+        insight:doubleKO
+          ? "Additive perturbation embeddings sum the two KO effects. The amber dots (true double KO) sit ABOVE the additive bars on HBB: expression hits a floor, so the real effect (−5.8) is smaller than the additive sum (−6.0). GEARS' MLP learns part of this saturation/epistasis."
+          : "NFE2 was never perturbed in training. GEARS embeds it from its GO neighbours (KLF1, then GATA1), so its predicted Δ is an interpolation of the two seen KOs. With α≈0.3 (NFE2 closer to KLF1) HBB ≈ −2.96 — right direction, magnitude slightly overshoots the true −2.5.",
+        state:"Pearson r(pred,true)="+r.toFixed(2)+" over 5 targets. GEARS beats the mean-shift baseline (r="+R_MEAN.toFixed(2)+") by +"+(R_GEARS-R_MEAN).toFixed(2)+" on held-out KOs. Dashed red = the missing GATA1–NFE2 edge (transfer must route through KLF1).",
+        metrics:{pearsonR:r.toFixed(2),predHBB:hbb.toFixed(2),transferGain:"+"+(R_GEARS-R_MEAN).toFixed(2),benchR:"GEARS "+R_GEARS.toFixed(2)},
+        focus:{center:[0,0,1.0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 · CellOracle — mechanistic GRN propagation
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="celloracle"){
+      // perturbed TF = GATA1 (master regulator). Draw GATA1 + (if hops>=2) KLF1 relay.
+      const gata=[-3.0,0,0], klf=[0,0,-2.6];
+      api.node(gata,{r:0.55,color:"#4dd7ff",group:"graph",label:"GATA1 (KO)",labelColor:"#4dd7ff",
+        pick:{tf:{name:"GATA1",idx:0,seen:true}}});
+      if(hops>=2) api.node(klf,{r:0.42,color:"#34d399",group:"graph",label:"KLF1",labelColor:"#34d399",
+        pick:{tf:{name:"KLF1",idx:1,seen:true}}});
+
+      const dGRN=cellOracle(0,strength,hops);
+      // target nodes in a row, sized by |delta|
+      const tx0=-3.2, tdx=1.6, tz=3.6;
+      dGRN.forEach((v,g)=>{
+        const x=tx0+g*tdx, p=[x,0,tz];
+        const r=0.2+Math.min(0.55,Math.abs(v)*0.16);
+        api.node(p,{r,color:"#fb7185",group:"graph",halo:false,
+          pick:{target:{gene:TARGETS[g],val:v}}});
+        l(TARGETS[g],"#8a99ad",0.32,x,-0.95,tz);
+        l(v.toFixed(2),"#fda4b0",0.34,x,r+0.4,tz);
+        // regulatory edge GATA1→target (flow arrow), weight = |W|
+        api.arrow(gata,[x,0,tz],{color:"#4dd7ff",width:0.03,head:0.18,group:"flow",opacity:0.7});
+        if(hops>=2){ // cascade GATA1→KLF1→target
+          api.arrow(klf,[x,0,tz],{color:"#34d399",width:0.025,head:0.15,group:"flow"});
+        }
+      });
+      if(hops>=2) api.arrow(gata,klf,{color:"#a78bfa",width:0.035,head:0.2,group:"flow",label:"w₁₂="+W_G1_K1});
+
+      L("CellOracle · GRN vector field","#9fb4cc",0.95,0,1.8,tz-2.0);
+      L("Δ(target)=Σ w(TF→t)·Δ(TF)","#c4b5fd",0.82,0,1.0,tz);
+
+      // delta bars below
+      deltaBars(dGRN,()=>RO,5.2,(g,v)=>({pred:{gene:TARGETS[g],val:v}}),true);
+      L("propagated Δ (mechanistic)","#fb7185",0.85,0,2.0,5.2);
+
+      const hbb=dGRN[0];
+      const r=pearson(dGRN,D_GATA1); // how well GRN propagation matches measured GATA1 KO
+      sceneSnap={mode,strength:+strength.toFixed(2),hops,predHBB:+hbb.toFixed(2),
+        pearsonR:+r.toFixed(3),gainOverMean:null,alpha:+alpha.toFixed(2),corpus,doubleKO:0};
+      api.setMetric("pearsonR",r.toFixed(2));
+      api.setMetric("predHBB",hbb.toFixed(2));
+      api.setMetric("transferGain","traceable");
+      api.setMetric("benchR",hops>=2?"2-hop":"1-hop");
+
+      return {
+        badge:"CellOracle · KO GATA1 · "+hops+"-hop · strength "+strength.toFixed(2),
+        formula:"Δ(t)=w(GATA1→t)·Δ(GATA1)"+(hops>=2?" + w(GATA1→KLF1)·w(KLF1→t)·Δ(GATA1)":""),
+        insight:"CellOracle is mechanistic, not data-driven: it sets Δ(GATA1)=−"+strength.toFixed(2)+" and pushes that change along the reconstructed GRN edges. Every predicted gene change traces to a specific TF→target weight. "+(hops>=2?"At 2 hops the cascade GATA1→KLF1→targets (violet) adds second-order flow.":"At 1 hop only direct GATA1 targets respond.")+" Interpretable, but bounded by GRN quality.",
+        state:"Predicted HBB Δ="+hbb.toFixed(2)+". Correlation with measured GATA1 KO r="+r.toFixed(2)+". Unlike GEARS this needs an explicit regulatory edge to every target — no edge, no prediction (limited transfer).",
+        metrics:{pearsonR:r.toFixed(2),predHBB:hbb.toFixed(2),transferGain:"traceable",benchR:hops>=2?"2-hop":"1-hop"},
+        focus:{center:[0,0,2.0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 · Foundation (scGPT / Geneformer) zero-shot + baseline bars
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="foundation"){
+      // central pre-trained encoder; query cell ranks gene tokens.
+      api.node([0,0,0],{r:0.9,color:"#a78bfa",group:"graph",label:"pre-trained encoder",labelColor:"#c4b5fd"});
+      // surrounding gene-token cloud (size = corpus). bigger corpus = more tokens.
+      const nTok=corpus===0?14:26, R=3.6;
+      for(let i=0;i<nTok;i++){
+        const ang=i/nTok*Math.PI*2;
+        const p=[Math.cos(ang)*R,0,Math.sin(ang)*R];
+        const isPert=(i===0); // the masked / removed perturbed-gene token
+        const c=isPert?"#fbbf24":"#54a8ff";
+        api.node(p,{r:isPert?0.3:0.2,color:c,group:"graph",halo:false,
+          pick:{token:{i,perturbed:isPert}}});
+        api.edge([0,0,0],p,{color:"#1a3050",width:0.02,opacity:0.4,group:"graph"});
+      }
+      L("Geneformer · rank gene tokens","#9fb4cc",0.9,0,1.5,R+0.6);
+      L(corpus===0?"small corpus":"large corpus (millions of cells)","#fbbf24",0.82,0,-1.4,R+0.6);
+      L("remove perturbed token → re-rank","#c4b5fd",0.78,0,0,-(R+0.9));
+
+      // zero-shot accuracy scales with corpus; correlation-based so r below GEARS
+      const rZero = corpus===0?0.41:0.58;
+      // benchmark bar panel: mean / scGPT(zero) / GEARS / CellOracle
+      const benchVals=[R_MEAN,rZero,R_GEARS,0.54];
+      const benchLbl=["mean","zero-shot","GEARS","CellOracle"];
+      const benchCol=[SL,VI,CY,RO];
+      const bx0=-3.6, bdx=2.0, bz=4.6, bsc=4.4;
+      benchVals.forEach((v,i)=>{
+        const x=bx0+i*bdx, h=0.12+v*bsc;
+        const c=benchCol[i];
+        const bar=new T.Mesh(new T.BoxGeometry(1.3,h,1.3),
+          new T.MeshStandardMaterial({color:c.clone(),emissive:c.clone().multiplyScalar(0.4),
+            emissiveIntensity:0.5,roughness:0.4}));
+        bar.position.set(x,h/2,bz); gBars.add(bar);
+        api.pick(bar,{bench:{model:benchLbl[i],r:v}});
+        l(v.toFixed(2),c.getStyle(),0.42,x,h+0.5,bz);
+        l(benchLbl[i],"#8a99ad",0.32,x,-0.5,bz);
+      });
+      // mean-baseline reference line across the bar panel
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(bx0-0.9,0.12+R_MEAN*bsc,bz),new T.Vector3(bx0+3*bdx+0.9,0.12+R_MEAN*bsc,bz)]),
+        new T.LineDashedMaterial({color:0x54667c})));
+      L("Pearson r vs mean-shift baseline","#9fb4cc",0.88,0,0.12+R_GEARS*bsc+0.9,bz);
+
+      sceneSnap={mode,corpus,pearsonR:+rZero.toFixed(3),predHBB:null,
+        gainOverMean:+(rZero-R_MEAN).toFixed(3),alpha:+alpha.toFixed(2),strength:+strength.toFixed(2),hops,doubleKO:0};
+      api.setMetric("pearsonR",rZero.toFixed(2));
+      api.setMetric("predHBB","correlational");
+      api.setMetric("transferGain","+"+(rZero-R_MEAN).toFixed(2));
+      api.setMetric("benchR","GEARS "+R_GEARS.toFixed(2));
+
+      return {
+        badge:"Foundation zero-shot · "+(corpus===0?"small":"large")+" corpus · r="+rZero.toFixed(2),
+        formula:"Δ_pred = attention( z_cell , gene-embeddings )   [no task labels]",
+        insight:"scGPT / Geneformer predict KO effects zero-shot from gene embeddings learned over millions of cells — no GO graph, no GRN. Remove the perturbed gene's token and re-rank. Predictions are CORRELATION-derived, not causal: a "+(corpus===0?"small":"large")+" corpus reaches r="+rZero.toFixed(2)+". GEARS (GO graph) and CellOracle (GRN) still win on interpretable, causal transfer.",
+        state:"Bars compare Pearson r on held-out KOs: mean-shift "+R_MEAN.toFixed(2)+" (dashed baseline), zero-shot "+rZero.toFixed(2)+", GEARS "+R_GEARS.toFixed(2)+", CellOracle 0.54. Any model below the dashed line has learned nothing gene-specific.",
+        metrics:{pearsonR:rZero.toFixed(2),predHBB:"correlational",transferGain:"+"+(rZero-R_MEAN).toFixed(2),benchR:"GEARS "+R_GEARS.toFixed(2)},
+        focus:{center:[0,0,2.0],radius:13}
+      };
+    }
+
+    return {badge:"E13",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e13",
+    kind:"perturbation-prediction",
+    eyebrow:"Block E · Single-Cell and Multi-Omics",
+    title:"E13 · Perturbation prediction with graph neural networks",
+    subtitle:"Predict KO effects for an UNSEEN gene. Three approaches on the same erythroid 3-TF / 5-target example: GEARS (GO graph transfer), CellOracle (mechanistic GRN), and foundation-model zero-shot.",
+    selectedLabel:"Element",
+    selectedHint:"Click a TF, target, bar, or token.",
+    modes:[
+      {value:"gears",      label:"GEARS · GNN on GO graph → unseen NFE2"},
+      {value:"celloracle", label:"CellOracle · GRN propagation (mechanistic)"},
+      {value:"foundation", label:"Foundation · scGPT / Geneformer zero-shot"}
+    ],
+    params:[
+      {key:"alpha",   label:"GEARS α (weight on GATA1)",min:0,max:1,step:0.05,value:0.3,
+       fmt:v=>v.toFixed(2),modes:["gears"]},
+      {key:"doubleKO",label:"perturbation (0=NFE2 1=GATA1+KLF1)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"NFE2 single":"GATA1+KLF1",modes:["gears"]},
+      {key:"strength",label:"CellOracle KO magnitude",min:0,max:1.5,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2),modes:["celloracle"]},
+      {key:"hops",    label:"GRN propagation hops",min:1,max:2,step:1,value:1,
+       fmt:v=>Math.round(v)+"-hop",modes:["celloracle"]},
+      {key:"corpus",  label:"foundation corpus (0=small 1=large)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"small":"large",modes:["foundation"]}
+    ],
+    metrics:[
+      {key:"pearsonR",     label:"Pearson r (pred vs true)",accent:"cyan"},
+      {key:"predHBB",      label:"Predicted Δ(HBB)",accent:"violet"},
+      {key:"transferGain", label:"Gain over mean baseline",accent:"green"},
+      {key:"benchR",       label:"Benchmark",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph", label:"Graph / nodes"},
+      {group:"flow",  label:"Message / flow"},
+      {group:"bars",  label:"Δ / benchmark bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"NFE2 @ α=0.3 (canonical)",
+      on:api=>{api.setMode("gears");api.setParam("doubleKO",0);api.setParam("alpha",0.3);}
+    },
+    secondary:{
+      label:"Double KO (epistasis)",
+      on:api=>{api.setMode("gears");api.setParam("doubleKO",1);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=GATA1/GEARS · <span style="color:#34d399">green</span>=KLF1 · <span style="color:#fbbf24">amber</span>=NFE2 (unseen) / true Δ · <span style="color:#a78bfa">violet</span>=prediction / message · <span style="color:#fb7185">rose</span>=CellOracle Δ · dashed red = missing GO edge.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="gears") api.frame([0,0,1.0],13);
+      else api.frame([0,0,2.0],13);
+    },
+    onSelect(api,d){
+      if(d.tf)     api.setSelected(d.tf.name+" · TF"+(d.tf.idx+1)+" · "+(d.tf.seen?"SEEN (training)":"UNSEEN (predict)"));
+      if(d.target) api.setSelected(d.target.gene+" · Δ="+d.target.val.toFixed(2));
+      if(d.pred)   api.setSelected(d.pred.gene+" · predicted Δ="+d.pred.val.toFixed(2));
+      if(d.bench)  api.setSelected(d.bench.model+" · Pearson r="+d.bench.r.toFixed(2));
+      if(d.token)  api.setSelected(d.token.perturbed?"perturbed gene token (removed)":"gene token #"+d.token.i);
+    },
+    build,
+    snapshot(s){
+      const alpha=s.alpha, mode=s.mode;
+      const doubleKO=Math.round(s.doubleKO), hops=Math.round(s.hops), corpus=Math.round(s.corpus);
+      let pred,truth,predHBB,r;
+      if(mode==="gears"){
+        pred=doubleKO?D_DOUBLE_ADD.slice():gearsNFE2(alpha);
+        truth=doubleKO?D_DOUBLE_TRUE:D_NFE2_TRUE;
+        r=pearson(pred,truth); predHBB=pred[0];
+      }else if(mode==="celloracle"){
+        pred=cellOracle(0,s.strength,hops); truth=D_GATA1;
+        r=pearson(pred,truth); predHBB=pred[0];
+      }else{
+        const rZero=corpus===0?0.41:0.58; r=rZero; predHBB=null;
+      }
+      return {
+        mode,
+        alpha:+alpha.toFixed(2),
+        doubleKO, hops, corpus,
+        strength:+s.strength.toFixed(2),
+        predHBB:predHBB==null?null:+predHBB.toFixed(2),
+        pearsonR:+r.toFixed(3),
+        gearsR:R_GEARS, meanR:R_MEAN,
+        gainOverMean:+(r-R_MEAN).toFixed(3),
+        beatsMeanBaseline:r>R_MEAN
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

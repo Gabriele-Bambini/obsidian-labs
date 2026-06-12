@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H03 · RegulonDB, TRRUST, DoRothEA, and TF-target priors</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no RNG, no clock) ───────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── canonical FACTS (from note Sections 3,4,5) ───────────────────────────
+  // Four prior databases. coverageFrac = fraction of target TF family with
+  // usable prior; topDecile = share of edges held by top-10% TFs (bias);
+  // fpRate = headline false-positive rate of the recommended usage.
+  const DB=[
+    // name, organism, edges, coverageFrac(0..1), topDecileBias(0..1), fpRate(0..1), accent
+    {name:"RegulonDB", org:"E. coli", edges:6000,  cov:0.75, bias:0.45, fp:0.05, col:"#4dd7ff", role:"gold standard"},
+    {name:"TRRUST v2", org:"human",   edges:6800,  cov:0.08, bias:0.65, fp:0.30, col:"#fbbf24", role:"literature labels"},
+    {name:"DoRothEA",  org:"human",   edges:8400,  cov:0.11, bias:0.35, fp:0.15, col:"#34d399", role:"graph prior (A+B)"},
+    {name:"JASPAR 24", org:"human",   edges:500000, cov:0.40, bias:0.20, fp:0.90, col:"#a78bfa", role:"candidate filter"}
+  ];
+
+  // DoRothEA five-tier ladder (note Section 3 + Section 4 illustrative experiment)
+  // size = cumulative TF-gene pairs; auroc/auprc/ep = BEELINE mESC link-pred result
+  const TIERS=[
+    {t:"A",     size:200,    fp:0.04, auroc:0.72, auprc:0.18, ep:0.35},
+    {t:"A+B",   size:1400,   fp:0.15, auroc:0.68, auprc:0.14, ep:0.28},
+    {t:"A+B+C", size:8400,   fp:0.35, auroc:0.61, auprc:0.09, ep:0.21},
+    {t:"+D",    size:50000,  fp:0.65, auroc:0.54, auprc:0.04, ep:0.12},
+    {t:"+E",    size:500000, fp:0.90, auroc:0.51, auprc:0.02, ep:0.05}
+  ];
+
+  // Leakage worked example (note Section 5 Jaccard diagnostic)
+  const LEAK={priorAB:8400, gold:854, sharedMax:300};
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+
+    const gMain =api.group("scene");
+    const gBars =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addBig(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function addSm(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function bar(x,z,h,w,col,active,grp){
+      const m=new T.Mesh(new T.BoxGeometry(w,Math.max(0.04,h),w),
+        new T.MeshStandardMaterial({color:col.clone(),emissive:col.clone().multiplyScalar(active?0.8:0.22),
+          emissiveIntensity:active?0.7:0.18,roughness:0.42,transparent:!active,opacity:active?1:0.5}));
+      m.position.set(x,Math.max(0.04,h)/2,z);(grp||gBars).add(m);return m;
+    }
+
+    const SL=new T.Color("#54667c");
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: databases — the four prior databases as a bipartite catalog
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="databases"){
+      const focusIdx=Math.round(s.dbFocus);          // 0..3 which DB is highlighted
+      const yScale=4.2;
+      const xPos=[-4.5,-1.5,1.5,4.5];
+
+      // three readout dimensions per DB shown as a triad of bars
+      DB.forEach((d,i)=>{
+        const x=xPos[i];
+        const col=new T.Color(d.col);
+        const active=(i===focusIdx);
+        // coverage (front), bias (mid), fp (back)
+        const hCov=d.cov*yScale;
+        const hBias=d.bias*yScale;
+        const hFp=d.fp*yScale;
+        const bCov=bar(x-0.55,1.4,hCov,0.42,col,active);    api.pick(bCov,{db:{name:d.name,metric:"coverage",val:d.cov}});
+        const bBias=bar(x,1.4,hBias,0.42,new T.Color("#fbbf24"),active); api.pick(bBias,{db:{name:d.name,metric:"top-decile bias",val:d.bias}});
+        const bFp=bar(x+0.55,1.4,hFp,0.42,new T.Color("#fb7185"),active); api.pick(bFp,{db:{name:d.name,metric:"FP rate",val:d.fp}});
+
+        // database node sphere above the triad
+        const node=new T.Mesh(new T.SphereGeometry(active?0.46:0.34,20,16),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:active?0.85:0.45,roughness:0.32}));
+        node.position.set(x,Math.max(hCov,hBias,hFp)+1.0,1.4);
+        gMain.add(node); api.pick(node,{db:{name:d.name,edges:d.edges,role:d.role}});
+
+        addBig(d.name,d.col,active?1.55:1.25,x,Math.max(hCov,hBias,hFp)+2.0,1.4);
+        addSm(d.org,"#8a99ad",0.36,x,Math.max(hCov,hBias,hFp)+1.55,1.4);
+        addSm(d.role,active?d.col:"#6b7a8d",0.34,x,0.05,2.6);
+      });
+
+      // baseline
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-6,0,1.4),new T.Vector3(6,0,1.4)]),new T.LineBasicMaterial({color:0x1e3046})));
+      addSm("coverage","#4dd7ff",0.4,-5.8,yScale*0.5,1.4);
+      addSm("bias","#fbbf24",0.4,-5.8,yScale*0.35,0.6);
+      addSm("FP","#fb7185",0.4,-5.8,yScale*0.2,-0.2);
+
+      const f=DB[focusIdx];
+      sceneSnap={mode,dbFocus:focusIdx,dbName:f.name,coverageFrac:+f.cov.toFixed(3),topDecileBias:+f.bias.toFixed(3),fpRate:+f.fp.toFixed(3),tierThreshold:0,jaccard:0,fracTestInPrior:0,cleanAuroc:0};
+
+      return {
+        badge:"Databases · focus "+f.name+" ("+f.org+")",
+        formula:"coverage ↑  vs  bias ↑  vs  FP-rate ↑   — no single database wins all three",
+        insight:"Four TF-target priors, three readouts each. RegulonDB (cyan) is the cleanest but E. coli only (75% of HTH TFs, 5% FP). TRRUST is human literature with severe top-decile bias (65%). DoRothEA A+B trades coverage for low bias via ChIP-seq. JASPAR has the widest reach (40%) but 90% FP — candidate edges, not evidence. Drag DB focus to compare.",
+        state:f.name+" · "+f.edges.toLocaleString()+" edges · role: "+f.role+" · coverage "+(f.cov*100).toFixed(0)+"% · top-decile bias "+(f.bias*100).toFixed(0)+"% · FP "+(f.fp*100).toFixed(0)+"%.",
+        metrics:{coverageFrac:(f.cov*100).toFixed(0)+"%",topDecileBias:(f.bias*100).toFixed(0)+"%",fpRate:(f.fp*100).toFixed(0)+"%",cleanAuroc:"—"},
+        focus:{center:[0,2,1.2],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: tiers — DoRothEA A→E confidence ladder (size vs AUROC vs FP)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="tiers"){
+      const cut=Math.round(s.tierCut);               // 0..4 inclusive tiers used (A..+E)
+      const xPos=[-4.5,-2.25,0,2.25,4.5];
+      const aurScale=6.0;
+
+      TIERS.forEach((tr,i)=>{
+        const x=xPos[i];
+        const included=(i<=cut);
+        const col=included?new T.Color("#34d399"):SL.clone();
+        // AUROC bar
+        const h=(tr.auroc-0.5)*2*aurScale;           // map 0.5..1.0 → 0..aurScale
+        const b=bar(x,0,Math.max(0.06,h),1.1,col,included);
+        api.pick(b,{tier:{t:tr.t,auroc:tr.auroc,fp:tr.fp,size:tr.size}});
+        addBig(tr.auroc.toFixed(2),included?"#7fe7c0":"#54667c",1.4,x,Math.max(0.06,h)+0.6,0);
+        addBig("Tier "+tr.t,included?"#e8eef6":"#6b7a8d",1.25,x,-0.55,0);
+        addSm(tr.size>=1000?(tr.size/1000)+"k pairs":tr.size+" pairs",included?"#9fb4cc":"#54667c",0.34,x,-1.05,0);
+
+        // FP-rate marker disc behind (red, scaled by fp)
+        const disc=new T.Mesh(new T.CircleGeometry(0.18+tr.fp*0.55,20),
+          new T.MeshBasicMaterial({color:new T.Color("#fb7185"),transparent:true,opacity:included?0.85:0.3}));
+        disc.position.set(x,Math.max(0.06,h)+1.4,-1.6);disc.rotation.x=-0.2;gMain.add(disc);
+        addSm("FP "+(tr.fp*100).toFixed(0)+"%","#fb7185",0.32,x,Math.max(0.06,h)+1.95,-1.6);
+      });
+
+      // recommended A+B band
+      const recX=(xPos[0]+xPos[1])/2;
+      addSm("A+B: mechanistic / gold standard","#34d399",0.4,recX,aurScale*0.65,1.4);
+      addSm("+D/+E: never as positive labels","#fb7185",0.4,xPos[3],aurScale*0.5,1.4);
+
+      // baseline + 0.5 reference (random)
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-6,0,0),new T.Vector3(6,0,0)]),new T.LineBasicMaterial({color:0x1e3046})));
+      addSm("AUROC (0.50 = random at floor)","#8a99ad",0.4,0,aurScale+0.6,0);
+
+      const sel=TIERS[cut];
+      // cumulative positive pairs used and resulting metrics
+      sceneSnap={mode,tierThreshold:cut,tierLabel:sel.t,positivePairs:sel.size,fpRate:+sel.fp.toFixed(3),auroc:+sel.auroc.toFixed(3),auprc:+sel.auprc.toFixed(3),ep100:+sel.ep.toFixed(3),coverageFrac:0,topDecileBias:0,jaccard:0,fracTestInPrior:0,cleanAuroc:+sel.auroc.toFixed(3)};
+
+      return {
+        badge:"DoRothEA tiers · using A…"+sel.t+" · "+sel.size.toLocaleString()+" pairs",
+        formula:"more tiers → more pairs, but FP-rate ↑ and AUROC ↓ (signal dilution)",
+        insight:"DoRothEA's A–E ladder is the design innovation. Tier A needs all 4 evidence types (<5% FP); each lower tier adds many more pairs but mostly false positives. As link-prediction labels on BEELINE mESC, adding D and E DILUTES signal: AUROC falls 0.72→0.51 while ~450k Tier-E false positives flood the loss. A+B is the precision-coverage sweet spot. Drag the tier cutoff.",
+        state:"Using tiers A…"+sel.t+": "+sel.size.toLocaleString()+" positive pairs · FP "+(sel.fp*100).toFixed(0)+"% · AUROC "+sel.auroc.toFixed(2)+" · AUPRC "+sel.auprc.toFixed(2)+" · EP@100 "+sel.ep.toFixed(2)+".",
+        metrics:{coverageFrac:sel.size.toLocaleString(),topDecileBias:(sel.fp*100).toFixed(0)+"%",fpRate:(sel.fp*100).toFixed(0)+"%",cleanAuroc:sel.auroc.toFixed(2)},
+        focus:{center:[0,2.5,0],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: leakage — Jaccard overlap: prior (A+B) ∩ gold (mESC ChIP)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="leakage"){
+      const shared=Math.round(s.shared);             // 0..300 edges shared
+      const removeOverlap=Math.round(s.removeOverlap); // 0=full test, 1=clean test
+      const P=LEAK.priorAB, G=LEAK.gold;
+      const jac=shared/(P+G-shared);
+      const fracIn=shared/G;
+      // clean AUROC: contaminated test inflates by the retrieved fraction; cleaning removes it
+      const baseInfer=0.62;                            // genuine expression-only inference
+      const contaminated=baseInfer+0.30*fracIn;       // retrieved overlap looks "perfect"
+      const reported=removeOverlap? baseInfer : contaminated;
+
+      // two overlapping rings: prior (green, large) and gold (cyan, small)
+      const Rp=3.4, Rg=1.7;
+      const cxP=-1.2, cxG=1.6;
+      function ring(cx,R,col,op){
+        const pts=[];for(let k=0;k<=64;k++){const a=k/64*Math.PI*2;pts.push(new T.Vector3(cx+Math.cos(a)*R,Math.sin(a)*R,0));}
+        gMain.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),new T.LineBasicMaterial({color:new T.Color(col).getHex()})));
+        const disc=new T.Mesh(new T.CircleGeometry(R,48),new T.MeshBasicMaterial({color:new T.Color(col).getHex(),transparent:true,opacity:op}));
+        disc.position.set(cx,0,-0.05);gMain.add(disc);
+      }
+      ring(cxP,Rp,"#34d399",0.10);
+      ring(cxG,Rg,"#4dd7ff",0.14);
+      addBig("DoRothEA A+B","#34d399",1.4,cxP-0.4,Rp+0.6,0);
+      addSm(P.toLocaleString()+" edges","#7fe7c0",0.4,cxP-0.4,Rp+0.15,0);
+      addBig("mESC gold","#4dd7ff",1.3,cxG+0.3,Rg+0.55,0);
+      addSm(G+" edges","#9fe0ff",0.4,cxG+0.3,Rg+0.15,0);
+
+      // shared-edge dots in the lens region (deterministic placement)
+      const nDots=Math.min(40,Math.round(shared/300*40));
+      const lensX=(cxP+Rp+cxG-Rg)/2;
+      for(let k=0;k<nDots;k++){
+        const r=0.15+prand(k*3+1)*0.9;
+        const a=prand(k*7+2)*Math.PI*2;
+        const dot=new T.Mesh(new T.SphereGeometry(0.085,8,8),
+          new T.MeshStandardMaterial({color:new T.Color("#fbbf24"),emissive:new T.Color("#fbbf24"),emissiveIntensity:0.7,roughness:0.4}));
+        dot.position.set(lensX+Math.cos(a)*r,Math.sin(a)*r*1.4,0.12);gMain.add(dot);
+      }
+      if(shared>0){addSm(shared+" shared","#fbbf24",0.42,lensX,-Rg-0.5,0.2);api.pick(new T.Mesh(new T.SphereGeometry(0.01),new T.MeshBasicMaterial()),{});}
+
+      // reported-AUROC bar on the right
+      const bx=5.6;
+      const hb=(reported-0.5)*2*4.2;
+      const colB=removeOverlap?new T.Color("#34d399"):new T.Color("#fb7185");
+      const b=bar(bx,0,Math.max(0.06,hb),0.9,colB,true,gBars);
+      api.pick(b,{auroc:{reported,clean:removeOverlap}});
+      addBig(reported.toFixed(2),removeOverlap?"#7fe7c0":"#fda4b0",1.5,bx,Math.max(0.06,hb)+0.6,0);
+      addSm(removeOverlap?"clean test":"contaminated","#9fb4cc",0.4,bx,-0.55,0);
+
+      sceneSnap={mode,shared,removeOverlap,jaccard:+jac.toFixed(4),fracTestInPrior:+fracIn.toFixed(4),reportedAuroc:+reported.toFixed(3),cleanAuroc:+baseInfer.toFixed(3),coverageFrac:0,topDecileBias:0,fpRate:0,tierThreshold:0};
+
+      return {
+        badge:"Leakage · "+shared+" shared edges · "+(removeOverlap?"clean":"full")+" test",
+        formula:"Jaccard = |∩| / (|A+B| + |gold| − |∩|) = "+shared+" / "+(P+G-shared).toLocaleString()+" = "+jac.toFixed(3),
+        insight:"Using DoRothEA A+B as the message-passing graph AND BEELINE mESC as the gold standard creates prior leakage: both draw from ENCODE ChIP-seq, so test positives sit inside the training prior. Jaccard >0.05 is the trip-wire. The fraction of test positives already in the prior is the real damage — the GNN was TOLD those edges exist, so its score on them is retrieval, not inference. Toggle 'remove overlap' to clean the test set.",
+        state:shared+" of "+G+" test positives ("+(fracIn*100).toFixed(0)+"%) are in the prior · Jaccard "+jac.toFixed(3)+(jac>0.05?" (>0.05: leakage!)":" (clean)")+" · reported AUROC "+reported.toFixed(2)+(removeOverlap?" on cleaned test":" — inflated by retrieval")+".",
+        metrics:{coverageFrac:(fracIn*100).toFixed(0)+"%",topDecileBias:jac.toFixed(3),fpRate:shared+"",cleanAuroc:reported.toFixed(2)},
+        focus:{center:[1,0.2,0],radius:15}
+      };
+    }
+
+    return {badge:"H03",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"h03",
+    kind:"tf-target-priors",
+    eyebrow:"Block H · Benchmarks and Datasets",
+    title:"H03 · RegulonDB, TRRUST, DoRothEA, and TF-target priors",
+    subtitle:"Prior databases are biased catalogs of what has been studied. Three views: compare the four databases, walk the DoRothEA A–E confidence ladder, and audit prior↔gold-standard leakage.",
+    selectedLabel:"Element",
+    selectedHint:"Click a database node, a tier bar, or the AUROC bar.",
+    modes:[
+      {value:"databases", label:"Databases (coverage / bias / FP)"},
+      {value:"tiers",     label:"DoRothEA tiers (A→E ladder)"},
+      {value:"leakage",   label:"Leakage audit (Jaccard overlap)"}
+    ],
+    params:[
+      {key:"dbFocus",      label:"database focus (0=RegulonDB 1=TRRUST 2=DoRothEA 3=JASPAR)",min:0,max:3,step:1,value:1,
+       fmt:v=>["RegulonDB","TRRUST","DoRothEA","JASPAR"][Math.round(v)],modes:["databases"]},
+      {key:"tierCut",      label:"DoRothEA tiers included (0=A … 4=+E)",min:0,max:4,step:1,value:1,
+       fmt:v=>["A","A+B","A+B+C","+D","+E"][Math.round(v)],modes:["tiers"]},
+      {key:"shared",       label:"shared edges  prior ∩ gold",min:0,max:300,step:2,value:154,
+       fmt:v=>Math.round(v)+" edges",modes:["leakage"]},
+      {key:"removeOverlap",label:"clean test set (0=full 1=remove overlap)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"full test":"clean test",modes:["leakage"]}
+    ],
+    metrics:[
+      {key:"coverageFrac",  label:"Coverage / pairs / test-in-prior",accent:"cyan"},
+      {key:"topDecileBias", label:"Bias / FP / Jaccard",accent:"amber"},
+      {key:"fpRate",        label:"FP rate / shared",accent:"rose"},
+      {key:"cleanAuroc",    label:"AUROC (clean)",accent:"green"}
+    ],
+    layers:[
+      {group:"scene",  label:"Scene / nodes"},
+      {group:"bars",   label:"Bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Recommend A+B",
+      on:api=>{if(api.state.mode==="tiers")api.setParam("tierCut",1);else if(api.state.mode==="leakage")api.setParam("removeOverlap",1);else api.setParam("dbFocus",2);}
+    },
+    secondary:{
+      label:"Worst case",
+      on:api=>{if(api.state.mode==="tiers")api.setParam("tierCut",4);else if(api.state.mode==="leakage")api.setParam("removeOverlap",0);else api.setParam("dbFocus",3);}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:14},
+    hint:'<span style="color:#4dd7ff">cyan</span>=RegulonDB/coverage/gold · <span style="color:#fbbf24">amber</span>=bias/shared edges · <span style="color:#fb7185">rose</span>=FP rate/contaminated · <span style="color:#34d399">green</span>=DoRothEA/clean · grey=excluded tier.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="databases") api.frame([0,2,1.2],14);
+      else if(s.mode==="tiers") api.frame([0,2.5,0],14);
+      else api.frame([1,0.2,0],15);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="databases") api.frame([0,2,1.2],14);
+      else if(s.mode==="tiers") api.frame([0,2.5,0],14);
+      else api.frame([1,0.2,0],15);
+    },
+    onSelect(api,d){
+      if(d.db&&d.db.metric) api.setSelected(d.db.name+" · "+d.db.metric+" = "+(d.db.val*100).toFixed(0)+"%");
+      else if(d.db) api.setSelected(d.db.name+" · "+(d.db.edges?d.db.edges.toLocaleString()+" edges":"")+(d.db.role?" · "+d.db.role:""));
+      if(d.tier) api.setSelected("Tier "+d.tier.t+" · AUROC "+d.tier.auroc.toFixed(2)+" · FP "+(d.tier.fp*100).toFixed(0)+"% · "+d.tier.size.toLocaleString()+" pairs");
+      if(d.auroc) api.setSelected("Reported AUROC "+d.auroc.reported.toFixed(2)+" · "+(d.auroc.clean?"clean test":"contaminated by overlap"));
+    },
+    build,
+    snapshot(s){
+      const out={mode:s.mode};
+      if(s.mode==="databases"){
+        const f=DB[Math.round(s.dbFocus)];
+        out.dbFocus=Math.round(s.dbFocus);out.dbName=f.name;
+        out.coverageFrac=+f.cov.toFixed(3);out.topDecileBias=+f.bias.toFixed(3);out.fpRate=+f.fp.toFixed(3);
+        out.dbEdges=f.edges;
+      } else if(s.mode==="tiers"){
+        const cut=Math.round(s.tierCut);const tr=TIERS[cut];
+        out.tierThreshold=cut;out.tierLabel=tr.t;out.positivePairs=tr.size;
+        out.fpRate=+tr.fp.toFixed(3);out.auroc=+tr.auroc.toFixed(3);out.auprc=+tr.auprc.toFixed(3);out.ep100=+tr.ep.toFixed(3);
+        out.signalDilution=(tr.auroc<0.6);
+      } else if(s.mode==="leakage"){
+        const shared=Math.round(s.shared);const rm=Math.round(s.removeOverlap);
+        const P=LEAK.priorAB,G=LEAK.gold;
+        const jac=shared/(P+G-shared);const fracIn=shared/G;
+        const baseInfer=0.62;const reported=rm?baseInfer:(baseInfer+0.30*fracIn);
+        out.shared=shared;out.removeOverlap=rm;
+        out.jaccard=+jac.toFixed(4);out.fracTestInPrior=+fracIn.toFixed(4);
+        out.reportedAuroc=+reported.toFixed(3);out.cleanAuroc=+baseInfer.toFixed(3);
+        out.leakageFlag=(jac>0.05);
+      }
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

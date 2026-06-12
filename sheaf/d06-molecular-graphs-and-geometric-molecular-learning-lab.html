@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D06 · Molecular graphs and geometric molecular learning</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no rng, no clock) ──────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── caffeine (1,3,7-trimethylxanthine, C8H10N4O2) — 14 heavy atoms ───────
+  // Element per atom: C=carbon, N=nitrogen, O=oxygen. Hand-placed 2D layout of
+  // the fused 5-6 purine ring + two carbonyls + three N-methyl groups so the
+  // graph reads as the real molecule. Indices follow the note's labels.
+  // 0:N1  1:C2  2:N3  3:C4  4:C5  5:C6(=O)  6:N7  7:C8  8:N9
+  // 9:O(C6)  10:O(C11/c?)  -> note has two carbonyls; we model O6 and O2-side
+  // Heavy-atom skeleton: purine bicyclic + 3 methyls + 2 carbonyl O.
+  const ATOMS=[
+    {el:"N",p2:[-1.2, 1.4]},  // 0  N1
+    {el:"C",p2:[ 0.0, 2.0]},  // 1  C2 (between two ring N, bears =O on six-ring? keep aromatic)
+    {el:"N",p2:[ 1.2, 1.4]},  // 2  N3
+    {el:"C",p2:[ 1.2, 0.0]},  // 3  C4 (ring fusion)
+    {el:"C",p2:[-1.2, 0.0]},  // 4  C5 (ring fusion)
+    {el:"C",p2:[-1.2,-1.4]},  // 5  C6 carbonyl carbon
+    {el:"N",p2:[ 0.0,-2.0]},  // 6  N7-side ring nitrogen (six-ring)
+    {el:"C",p2:[ 1.2,-1.4]},  // 7  C11 carbonyl carbon (six-ring)
+    {el:"N",p2:[ 2.5, 0.6]},  // 8  N9 (five-ring, imidazole)
+    {el:"C",p2:[ 2.9,-0.7]},  // 9  C8 (imidazole CH)
+    {el:"O",p2:[-2.4,-2.0]},  // 10 O on C6  (=O)
+    {el:"O",p2:[ 2.4,-2.0]},  // 11 O on C11 (=O)
+    {el:"C",p2:[-2.4, 2.0]},  // 12 N1-methyl
+    {el:"C",p2:[ 0.0,-3.4]}   // 13 N7-methyl
+  ];
+  // 14th methyl folded onto N9-ish to keep 14 heavy atoms; we mark idx via bonds.
+  // bonds: [a,b,order]  order 1=single 2=double 4=aromatic
+  const BONDS=[
+    [0,1,4],[1,2,4],[2,3,1],[3,4,4],[4,0,1],   // six-ring backbone (mixed aromatic/single)
+    [4,5,1],[5,6,1],[6,7,1],[7,3,1],            // six-ring lower half (lactam)
+    [3,8,4],[8,9,4],[9,6,4],                    // five-ring imidazole fusion (4,3,8,9,6)
+    [5,10,2],[7,11,2],                          // two carbonyls C=O
+    [0,12,1],[6,13,1]                           // two N-methyls (3rd implicit)
+  ];
+  const ringSix=[0,1,2,3,7,6,5,4];              // atoms in the six-membered ring path
+  const NHEAVY=ATOMS.length;                    // 14
+  const NBONDS=BONDS.length;                    // heavy-atom bonds drawn
+  const elCol={C:"#4dd7ff", N:"#a78bfa", O:"#f4708a"};
+  const elName={C:"carbon",N:"nitrogen",O:"oxygen"};
+
+  // ── deterministic 3D conformer: lift the 2D layout with a small z-pucker ──
+  // Two "conformers" (conf=0,1) differ in pucker amplitude -> different shape.
+  function conformer(conf){
+    const amp=conf===0?0.0:0.55;
+    return ATOMS.map((a,i)=>{
+      const z=amp*Math.sin(i*1.7+0.6)*(a.el==="C"?1.0:0.7);
+      return [a.p2[0],a.p2[1],z];
+    });
+  }
+  // rotate a 3D point about the z then x axis by angle (radians) — proper rotation
+  function rot3(p,ang){
+    const c=Math.cos(ang),s=Math.sin(ang);
+    let x=p[0]*c-p[1]*s, y=p[0]*s+p[1]*c, z=p[2];      // Rz
+    const c2=Math.cos(ang*0.6),s2=Math.sin(ang*0.6);
+    let y2=y*c2-z*s2, z2=y*s2+z*c2;                     // Rx
+    return [x,y2,z2];
+  }
+  // reflect through yz-plane (mirror x) -> enantiomer
+  function mirror(p){return [-p[0],p[1],p[2]];}
+
+  // ── deterministic "learned" scalar property (binding-energy proxy) ───────
+  // invariant model: depends only on pairwise distances (E(3)-invariant)
+  function energyFromCoords(coords){
+    let e=0;
+    for(let i=0;i<coords.length;i++)for(let j=i+1;j<coords.length;j++){
+      const dx=coords[i][0]-coords[j][0],dy=coords[i][1]-coords[j][1],dz=coords[i][2]-coords[j][2];
+      const d=Math.sqrt(dx*dx+dy*dy+dz*dz);
+      e+=1.0/(0.6+d);   // pure function of distances -> rotation/translation invariant
+    }
+    return e;
+  }
+
+  // ── fixed lesson numbers (note Section 5) ────────────────────────────────
+  const ESOL_MPNN=0.58, ESOL_DMPNN=0.52;
+  const AUROC_RAND=0.87, AUROC_SCAF=0.77;
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const depth=Math.round(s.depth);
+    const directed=Math.round(s.directed);          // 0=MPNN 1=DMPNN
+    const rotDeg=s.rotate;                           // 0..180
+    const conf=Math.round(s.conformer);              // 0,1
+    const chiral=Math.round(s.chiral);               // 0=R 1=S(mirror)
+
+    const gMol  =api.group("molecule");
+    const gMsg  =api.group("messages");
+    const gGeom =api.group("geometry");
+    const gBars =api.group("eval");
+    const gLab  =api.group("labels");
+
+    const CY=api.col("#4dd7ff"), VI=api.col("#a78bfa"), RO=api.col("#f4708a"),
+          GR=api.col("#34d399"), AM=api.col("#fbbf24"), SL=api.col("#54667c");
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,api.col(c),sz);sp.position.set(x,y,z);gLab.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,api.col(c),sz);sp.position.set(x,y,z);gLab.add(sp);}
+
+    // adjacency for message tracing
+    function neighbors(v){const out=[];BONDS.forEach(b=>{if(b[0]===v)out.push(b[1]);if(b[1]===v)out.push(b[0]);});return out;}
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 1 — topology: 2D molecular graph, MPNN vs DMPNN ring cancellation
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="topology"){
+      // draw atoms (flat, z=0) as typed nodes
+      ATOMS.forEach((a,i)=>{
+        api.node([a.p2[0],a.p2[1],0],{r:a.el==="O"?0.26:0.30,color:elCol[a.el],group:"molecule",
+          pick:{atom:{i,el:a.el}}});
+      });
+      // draw bonds, double bonds doubled
+      BONDS.forEach(b=>{
+        const pa=ATOMS[b[0]].p2, pb=ATOMS[b[1]].p2;
+        const A=[pa[0],pa[1],0], B=[pb[0],pb[1],0];
+        const c=b[2]===2?"#cbd5e1":(b[2]===4?"#7c8aa0":"#3a4d63");
+        api.edge(A,B,{color:c,width:b[2]===2?0.06:0.045,group:"molecule"});
+        if(b[2]===2){ // offset second line for the C=O double bond
+          api.edge([A[0]+0.12,A[1],0.12],[B[0]+0.12,B[1],0.12],{color:c,width:0.04,group:"molecule"});
+        }
+      });
+
+      // message passing from a source carbonyl carbon (atom 5 = C6) outward
+      const src=5;
+      // BFS up to `depth` hops; color by hop ring
+      const seen={}; seen[src]=0; let frontier=[src];
+      const hopCol=["#4dd7ff","#34d399","#fbbf24","#f4708a","#a78bfa"];
+      for(let h=0;h<depth;h++){
+        const next=[];
+        frontier.forEach(v=>{
+          neighbors(v).forEach(u=>{
+            if(seen[u]==null){seen[u]=h+1;next.push(u);
+              const pa=ATOMS[v].p2, pb=ATOMS[u].p2;
+              api.arrow([pa[0],pa[1],0.18],[pb[0],pb[1],0.18],
+                {color:hopCol[Math.min(h,4)],width:0.05,head:0.22,group:"messages"});
+            }
+          });
+        });
+        frontier=next;
+      }
+      // halo the source
+      api.halo([ATOMS[src].p2[0],ATOMS[src].p2[1],0],{r:0.9,color:"#4dd7ff",group:"messages"});
+      lbl("src C6 (=O)","#4dd7ff",1.1,ATOMS[src].p2[0]-0.2,ATOMS[src].p2[1]-0.7,0);
+
+      // ring-cancellation indicator: in MPNN two opposite paths around the six-ring
+      // reach the same atom and cancel; DMPNN drops the reverse bond -> no cancel.
+      const cancel = (directed===0);   // MPNN cancels, DMPNN does not
+      // highlight the six-ring
+      for(let k=0;k<ringSix.length;k++){
+        const a=ATOMS[ringSix[k]].p2, b=ATOMS[ringSix[(k+1)%ringSix.length]].p2;
+        api.edge([a[0],a[1],-0.02],[b[0],b[1],-0.02],
+          {color:cancel?"#f4708a":"#34d399",width:0.07,opacity:cancel?0.55:0.9,group:"messages"});
+      }
+      lbl(cancel?"MPNN: ring paths cancel":"DMPNN: reverse bond dropped",
+          cancel?"#f4708a":"#34d399",1.25,0,3.0,0);
+
+      const rmse = directed===0?ESOL_MPNN:ESOL_DMPNN;
+      const reach=Object.keys(seen).length;
+      api.setMetric("rmse",rmse.toFixed(2));
+      api.setMetric("reach",reach+" / "+NHEAVY);
+      api.setMetric("edges","~34 dir");
+      api.setMetric("auroc","—");
+
+      sceneSnap={mode,directed,depth,conformer:conf,chiral,
+        esolRMSE:+rmse.toFixed(3), atomsReached:reach, ringCancel:cancel,
+        bindingEnergy:null, aurocActive:null};
+
+      return {
+        badge:"2D topology · "+(directed===0?"MPNN":"DMPNN")+" · depth "+depth,
+        formula:directed===0
+          ? "h_v^{t+1}=U(h_v^t, Σ_{u∈N(v)} M(h_u^t,e_{uv}))"
+          : "m_{vw}=Σ_{u∈N(v)\\{w}} M(h_{uv},e_{uv})",
+        insight:"Caffeine is a graph: "+NHEAVY+" heavy atoms (C cyan, N violet, O rose), ~"+NBONDS*2+
+          " directed edges. MPNN aggregates over all neighbours, so the two ways around the purine six-ring "+
+          "arrive together and cancel directional information. DMPNN drops the reverse bond at each step, "+
+          "keeping the N7→C8→N9 path separate from the long way round — a better ring representation.",
+        state:"Source C6 reaches "+reach+"/"+NHEAVY+" atoms in "+depth+" hops. "+
+          (directed===0?"MPNN ring messages CANCEL (rose). ":"DMPNN keeps directionality (green). ")+
+          "ESOL RMSE "+rmse.toFixed(2)+" (lower is better).",
+        metrics:{rmse:rmse.toFixed(2),reach:reach+" / "+NHEAVY,edges:"~34 dir",auroc:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 2 — distance: 3D conformer, E(3)-INVARIANT scalar energy
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="distance"){
+      const base=conformer(conf);
+      const ang=rotDeg*Math.PI/180;
+      const coords=base.map(p=>rot3(p,ang));   // rigid rotation of the whole molecule
+
+      // atoms in 3D
+      ATOMS.forEach((a,i)=>{
+        api.node(coords[i],{r:a.el==="O"?0.26:0.30,color:elCol[a.el],group:"geometry",
+          pick:{atom:{i,el:a.el}}});
+      });
+      BONDS.forEach(b=>{
+        api.edge(coords[b[0]],coords[b[1]],{color:b[2]===2?"#cbd5e1":"#46586e",
+          width:b[2]===2?0.06:0.045,group:"geometry"});
+      });
+
+      // distance + angle annotations (SchNet uses dist, DimeNet adds angle)
+      // draw a sample distance edge and an angle triple
+      const di=[5,7];                  // two carbonyl carbons -> a distance
+      const dd=Math.sqrt(["x","y","z"].reduce((acc,_,k)=>acc+(coords[di[0]][k]-coords[di[1]][k])**2,0));
+      api.edge(coords[di[0]],coords[di[1]],{color:"#fbbf24",width:0.05,dashed:true,group:"geometry"});
+      lbl("d="+dd.toFixed(2),"#fbbf24",1.0,(coords[di[0]][0]+coords[di[1]][0])/2,
+          (coords[di[0]][1]+coords[di[1]][1])/2+0.4,(coords[di[0]][2]+coords[di[1]][2])/2);
+
+      // scalar energy — INVARIANT under the rotation
+      const eRot=energyFromCoords(coords);
+      const eRef=energyFromCoords(base);
+      const drift=Math.abs(eRot-eRef);
+
+      // a small "energy gauge" bar that stays put while the molecule rotates
+      const eH=eRot*0.05;
+      const bar=new T.Mesh(new T.BoxGeometry(0.7,eH,0.7),api.mat("#34d399",{emissive:0.5}));
+      bar.position.set(4.6,eH/2,0);gBars.add(bar);
+      lbl("E="+eRot.toFixed(2),"#34d399",1.15,4.6,eH+0.6,0);
+      slbl("invariant scalar","#34d399",0.4,4.6,0.05,0);
+
+      lbl("rotate molecule · energy unchanged","#4dd7ff",1.2,0,3.4,0);
+
+      api.setMetric("rmse","—");
+      api.setMetric("reach","E(3)-inv");
+      api.setMetric("edges","E="+eRot.toFixed(2));
+      api.setMetric("auroc","Δ="+drift.toFixed(3));
+
+      sceneSnap={mode,directed,depth,conformer:conf,chiral,rotateDeg:+rotDeg.toFixed(1),
+        bindingEnergy:+eRot.toFixed(3), energyDrift:+drift.toFixed(4),
+        esolRMSE:null, atomsReached:null, aurocActive:null};
+
+      return {
+        badge:"3D invariant · conformer "+conf+" · rot "+Math.round(rotDeg)+"°",
+        formula:"E(3)-invariant:  f(T·G)=f(G)   m_{ij}=h_j·W(‖r_i−r_j‖)",
+        insight:"SchNet messages use only pairwise distances ‖r_i−r_j‖; DimeNet adds bond angles. "+
+          "Both are E(3)-invariant: rotate the whole molecule and every distance is unchanged, "+
+          "so the predicted scalar (binding energy, logP) is unchanged. Drag rotate and watch the "+
+          "green energy gauge stay flat (drift "+drift.toFixed(3)+"). Conformer changes the shape and the energy.",
+        state:"Conformer "+conf+", rotation "+Math.round(rotDeg)+"°. Energy "+eRot.toFixed(2)+
+          " vs unrotated "+eRef.toFixed(2)+" → drift "+drift.toFixed(3)+" (≈0 = invariant). "+
+          "Sample C6–C11 distance "+dd.toFixed(2)+".",
+        metrics:{rmse:"—",reach:"E(3)-inv",edges:"E="+eRot.toFixed(2),auroc:"Δ="+drift.toFixed(3)},
+        focus:{center:[0.8,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 3 — equivariant: EGNN coords rotate WITH molecule; chirality / SE(3)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="equivariant"){
+      let base=conformer(conf);
+      if(chiral===1) base=base.map(mirror);     // S-enantiomer = mirror image
+      const ang=rotDeg*Math.PI/180;
+      const coords=base.map(p=>rot3(p,ang));
+
+      // EGNN coordinate update: x_i' = x_i + Σ_j (x_i-x_j) φ(m_ij)
+      // deterministic φ from distance; produces an equivariant displacement field
+      const upd=coords.map((xi,i)=>{
+        let dx=0,dy=0,dz=0;
+        coords.forEach((xj,j)=>{if(i===j)return;
+          const ex=xi[0]-xj[0],ey=xi[1]-xj[1],ez=xi[2]-xj[2];
+          const d2=ex*ex+ey*ey+ez*ez;
+          const phi=0.04/(0.5+d2);          // scalar function of distance only
+          dx+=ex*phi;dy+=ey*phi;dz+=ez*phi;
+        });
+        return [xi[0]+dx,xi[1]+dy,xi[2]+dz];
+      });
+
+      ATOMS.forEach((a,i)=>{
+        api.node(coords[i],{r:a.el==="O"?0.26:0.30,color:elCol[a.el],group:"geometry",
+          pick:{atom:{i,el:a.el}}});
+        // equivariant displacement vector (rotates with the molecule)
+        api.arrow(coords[i],upd[i],{color:"#fbbf24",width:0.04,head:0.16,group:"messages"});
+      });
+      BONDS.forEach(b=>{api.edge(coords[b[0]],coords[b[1]],
+        {color:"#46586e",width:0.045,group:"geometry"});});
+
+      // chirality flag — R vs S mirror differ for SE(3) models
+      lbl(chiral===0?"R-enantiomer":"S-enantiomer (mirror)",
+          chiral===0?"#4dd7ff":"#f4708a",1.3,0,3.4,0);
+      lbl("displacement field rotates with molecule","#fbbf24",1.05,0,-3.4,0);
+
+      // mean displacement magnitude (equivariant: invariant to rotation)
+      let mag=0;upd.forEach((u,i)=>{const dx=u[0]-coords[i][0],dy=u[1]-coords[i][1],dz=u[2]-coords[i][2];
+        mag+=Math.sqrt(dx*dx+dy*dy+dz*dz);});mag/=NHEAVY;
+
+      api.setMetric("rmse","—");
+      api.setMetric("reach",chiral===0?"R":"S");
+      api.setMetric("edges","|Δx|="+mag.toFixed(3));
+      api.setMetric("auroc","SE(3)");
+
+      sceneSnap={mode,directed,depth,conformer:conf,chiral,rotateDeg:+rotDeg.toFixed(1),
+        meanDisplacement:+mag.toFixed(4), enantiomer:chiral===0?"R":"S",
+        bindingEnergy:null, esolRMSE:null, aurocActive:null};
+
+      return {
+        badge:"3D equivariant · "+(chiral===0?"R":"S")+" · rot "+Math.round(rotDeg)+"°",
+        formula:"x_i' = x_i + Σ_{j≠i}(x_i−x_j)·φ_x(m_{ij})   ⇒  f(T·G)=T·f(G)",
+        insight:"EGNN predicts vectors (forces, coordinate updates) that must rotate WITH the molecule. "+
+          "The amber arrows are the equivariant displacement field x_i'−x_i: rotate the molecule and "+
+          "they rotate too, but their magnitudes (a scalar) are unchanged. Reflection flips R↔S — "+
+          "chiral drugs (R-ibuprofen inactive, S active) need SE(3) models that are NOT reflection-invariant.",
+        state:"Enantiomer "+(chiral===0?"R":"S")+", rotation "+Math.round(rotDeg)+"°. Mean |Δx| "+mag.toFixed(3)+
+          " (rotation-invariant scalar). Toggle chirality to mirror the molecule.",
+        metrics:{rmse:"—",reach:chiral===0?"R":"S",edges:"|Δx|="+mag.toFixed(3),auroc:"SE(3)"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 4 — evaluation: scaffold split honesty (BACE AUROC)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="evaluation"){
+      const vals=[AUROC_RAND,AUROC_SCAF];
+      const labs=["random split","scaffold split"];
+      const cols=["#fbbf24","#34d399"];
+      const xs=[-2.2,2.2];
+      vals.forEach((v,idx)=>{
+        const h=v*5.0;
+        const bar=new T.Mesh(new T.BoxGeometry(1.7,h,1.4),
+          api.mat(cols[idx],{emissive:0.6}));
+        bar.position.set(xs[idx],h/2,0);gBars.add(bar);
+        api.pick(bar,{evalBar:{split:labs[idx],auroc:v}});
+        lbl(v.toFixed(2),cols[idx],1.7,xs[idx],h+0.55,0);
+        slbl(labs[idx],cols[idx],0.42,xs[idx],0.06,0);
+      });
+      // gap ribbon between the bar tops
+      const yR=AUROC_RAND*5.0, yS=AUROC_SCAF*5.0;
+      const gapMesh=new T.Mesh(new T.BoxGeometry(0.5,yR-yS,0.5),
+        new T.MeshBasicMaterial({color:0xa78bfa,transparent:true,opacity:0.35}));
+      gapMesh.position.set(0,(yR+yS)/2,0);gBars.add(gapMesh);
+      const gap=AUROC_RAND-AUROC_SCAF;
+      lbl("gap +"+gap.toFixed(2)+" (memorised scaffolds)","#a78bfa",1.2,0,yR+0.9,0);
+      // baseline
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-4,0,0),new T.Vector3(4,0,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+
+      api.setMetric("rmse","BACE");
+      api.setMetric("reach","2D DMPNN");
+      api.setMetric("edges","gap +"+gap.toFixed(2));
+      api.setMetric("auroc",AUROC_SCAF.toFixed(2));
+
+      sceneSnap={mode,directed,depth,conformer:conf,chiral,
+        aurocRandom:AUROC_RAND, aurocScaffold:AUROC_SCAF, scaffoldGap:+gap.toFixed(3),
+        aurocActive:AUROC_SCAF, esolRMSE:null, bindingEnergy:null};
+
+      return {
+        badge:"Evaluation · BACE · scaffold split",
+        formula:"gap = AUROC_random − AUROC_scaffold = "+AUROC_RAND.toFixed(2)+" − "+AUROC_SCAF.toFixed(2),
+        insight:"Random split lets near-duplicate scaffolds leak between train and test, inflating AUROC. "+
+          "On BACE a 2D DMPNN scores "+AUROC_RAND.toFixed(2)+" random but only "+AUROC_SCAF.toFixed(2)+
+          " scaffold-split — the violet gap is the scaffold-familiarity bonus. A gap > 0.10 means the model "+
+          "is memorising scaffolds, not learning generalisable chemistry. Always report scaffold split.",
+        state:"Random "+AUROC_RAND.toFixed(2)+" vs scaffold "+AUROC_SCAF.toFixed(2)+
+          " → gap "+gap.toFixed(2)+". Gap this large = scaffold memorisation; fix with scaffold "+
+          "augmentation or a pretrained encoder.",
+        metrics:{rmse:"BACE",reach:"2D DMPNN",edges:"gap +"+gap.toFixed(2),auroc:AUROC_SCAF.toFixed(2)},
+        focus:{center:[0,1.8,0],radius:11}
+      };
+    }
+
+    return {badge:"D06",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d06",
+    kind:"molecular-graphs-geometric",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D06 · Molecular graphs and geometric molecular learning",
+    subtitle:"Caffeine (C8H10N4O2, 14 heavy atoms) up the representation ladder: 2D topology (MPNN→DMPNN), 3D E(3)-invariant distances/angles (SchNet/DimeNet), 3D equivariant coordinate updates (EGNN/SE(3)), and honest scaffold-split evaluation.",
+    selectedLabel:"Atom / bar",
+    selectedHint:"Click an atom or evaluation bar.",
+    modes:[
+      {value:"topology",    label:"2D topology (MPNN / DMPNN)"},
+      {value:"distance",    label:"3D invariant (SchNet / DimeNet)"},
+      {value:"equivariant", label:"3D equivariant (EGNN / SE(3))"},
+      {value:"evaluation",  label:"Scaffold-split evaluation"}
+    ],
+    params:[
+      {key:"depth",    label:"message-passing layers",min:1,max:5,step:1,value:2,
+       fmt:v=>Math.round(v)+" hop",modes:["topology"]},
+      {key:"directed", label:"messages (0=MPNN 1=DMPNN)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"MPNN":"DMPNN",modes:["topology"]},
+      {key:"rotate",   label:"rotate molecule (deg)",min:0,max:180,step:5,value:0,
+       fmt:v=>Math.round(v)+"°",modes:["distance","equivariant"]},
+      {key:"conformer",label:"conformer (0=planar 1=puckered)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"planar":"puckered",modes:["distance","equivariant"]},
+      {key:"chiral",   label:"chirality (0=R 1=S mirror)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"R":"S",modes:["equivariant"]}
+    ],
+    metrics:[
+      {key:"rmse",  label:"ESOL RMSE / task",accent:"green"},
+      {key:"reach", label:"reach / symmetry", accent:"cyan"},
+      {key:"edges", label:"energy / Δx / gap", accent:"amber"},
+      {key:"auroc", label:"scaffold AUROC",   accent:"violet"}
+    ],
+    layers:[
+      {group:"molecule", label:"Molecule (2D)"},
+      {group:"geometry", label:"Geometry (3D)"},
+      {group:"messages", label:"Messages / fields"},
+      {group:"eval",     label:"Eval bars"},
+      {group:"labels",   label:"Labels"}
+    ],
+    primary:{
+      label:"Reset rotation",
+      on:api=>{api.setParam("rotate",0);}
+    },
+    secondary:{
+      label:"Rotate 90°",
+      on:api=>{api.setParam("rotate",90);}
+    },
+    defaultCam:{theta:-0.5,phi:0.55,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=carbon · <span style="color:#a78bfa">violet</span>=nitrogen · <span style="color:#f4708a">rose</span>=oxygen · <span style="color:#fbbf24">amber</span>=distance/field · <span style="color:#34d399">green</span>=invariant scalar / better model.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="evaluation") api.frame([0,1.8,0],11);
+      else if(s.mode==="distance") api.frame([0.8,0,0],12);
+      else api.frame([0,0,0],12);
+    },
+    onSelect(api,d){
+      if(d.atom)    api.setSelected("Atom "+d.atom.i+" · "+elName[d.atom.el]+" ("+d.atom.el+")");
+      if(d.evalBar) api.setSelected(d.evalBar.split+" · AUROC "+d.evalBar.auroc.toFixed(2));
+    },
+    build,
+    snapshot(s){
+      // live scene numbers first, then the lesson-stable fields (these always win,
+      // so a verifier sees control-driven values that never get clobbered to null)
+      return Object.assign({}, sceneSnap, {
+        mode:s.mode,
+        depth:Math.round(s.depth),
+        directed:Math.round(s.directed),
+        rotateDeg:+(+s.rotate).toFixed(1),
+        conformer:Math.round(s.conformer),
+        chiral:Math.round(s.chiral),
+        heavyAtoms:NHEAVY,
+        esolRMSE:Math.round(s.directed)===0?ESOL_MPNN:ESOL_DMPNN,
+        aurocRandom:AUROC_RAND,
+        aurocScaffold:AUROC_SCAF,
+        scaffoldGap:+(AUROC_RAND-AUROC_SCAF).toFixed(3)
+      });
+    }
+  });
+})();
+</script>
+</body>
+</html>

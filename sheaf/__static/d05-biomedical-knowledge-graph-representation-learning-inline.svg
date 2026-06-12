@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 900 230" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-label="Figure D05 inline">
+<rect x="0" y="0" width="900" height="230" fill="#070b14"/>
+<text x="40" y="30" fill="#4dd7ff" font-size="11" font-weight="700" letter-spacing="2.2">D05 · BLOCK D · BIOLOGY GRAPHS</text>
+<text x="40" y="56" fill="#8a99ad" font-size="11">φ(Bari,inhibits,JAK1)</text>
+<rect x="40" y="80" width="22" height="70" rx="2" fill="#4dd7ff"/>
+<text x="51" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">Tr</text>
+<rect x="68" y="139.07" width="22" height="10.93" rx="2" fill="#fb7185"/>
+<text x="79" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">DM</text>
+<rect x="96" y="82.07" width="22" height="67.93" rx="2" fill="#a78bfa"/>
+<text x="107" y="164" fill="#8a99ad" font-size="9" text-anchor="middle">Ro</text>
+<line x1="40" y1="80" x2="124" y2="80" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="270" y="124" fill="#8a99ad" font-size="26" text-anchor="middle">→</text>
+<rect x="310" y="78" width="70" height="40" rx="6" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<text x="345" y="93" fill="#8a99ad" font-size="9" text-anchor="middle">DistMult φ</text>
+<text x="345" y="110" fill="#fda4b0" font-size="13" font-weight="700" text-anchor="middle">0.37</text>
+<rect x="388" y="78" width="70" height="40" rx="6" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<text x="423" y="93" fill="#8a99ad" font-size="9" text-anchor="middle">RotatE comp</text>
+<text x="423" y="110" fill="#c4b5fd" font-size="13" font-weight="700" text-anchor="middle">0.48</text>
+<line x1="470" y1="60" x2="470" y2="178" stroke="rgba(150,170,200,.2)" stroke-width="1"/>
+<text x="500" y="86" fill="#34d399" font-size="11.5" font-weight="700">binds</text>
+<text x="620" y="86" fill="#9fb4cc" font-size="11.5">0.95 DistMult</text>
+<text x="500" y="110" fill="#4dd7ff" font-size="11.5" font-weight="700">regulates</text>
+<text x="620" y="110" fill="#9fb4cc" font-size="11.5">0.08 RotatE</text>
+<text x="500" y="134" fill="#fbbf24" font-size="11.5" font-weight="700">treats</text>
+<text x="620" y="134" fill="#9fb4cc" font-size="11.5">0.00 TransE</text>
+<text x="500" y="158" fill="#a78bfa" font-size="11.5" font-weight="700">rule</text>
+<text x="620" y="158" fill="#9fb4cc" font-size="11.5">match geometry</text>
+<text x="450" y="210" fill="#c7d2dd" font-size="12" text-anchor="middle">Pick the KGE geometry from the relation's symmetry — wrong bias means the relation cannot be represented at…</text>
+</svg>

@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F19 — Sparse links: AUROC misleads, AUPRC and EP@K do not</title>
+<desc id="d">Four-panel captioned figure: Sparse links: AUROC misleads, AUPRC and EP@K do not</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F19 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Sparse links: AUROC misleads, AUPRC and EP@K do not</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The sparse GRN setup</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">candidate edges</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">1,000,000</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">real edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">10,000</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">positive rate π</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">0.01</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">negatives : pos</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">99 : 1</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">AUROC misleads</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">AUROC = P(score_pos &gt; score_neg)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">baseline = 0.50  (NOT π)</text>
+<text x="502" y="187.5" fill="#fbbf24" font-size="11.5" font-weight="700">A AUROC</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.782</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">AUPRC &amp; EP@50</text>
+<text x="56" y="301.5" fill="#fb7185" font-size="11.5" font-weight="700">AUPRC random</text>
+<text x="196" y="301.5" fill="#9fb4cc" font-size="11.5">0.01</text>
+<text x="56" y="321.5" fill="#34d399" font-size="11.5" font-weight="700">C AUPRC</text>
+<text x="196" y="321.5" fill="#9fb4cc" font-size="11.5">0.219</text>
+<text x="56" y="341.5" fill="#34d399" font-size="11.5" font-weight="700">C EP@50</text>
+<text x="196" y="341.5" fill="#9fb4cc" font-size="11.5">0.64</text>
+<rect x="56" y="396" width="10" height="28" rx="2" fill="#fbbf24"/>
+<text x="61" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">A</text>
+<rect x="72" y="380" width="10" height="44" rx="2" fill="#4dd7ff"/>
+<text x="77" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">B</text>
+<rect x="88" y="360" width="10" height="64" rx="2" fill="#34d399"/>
+<text x="93" y="436" fill="#8a99ad" font-size="9" text-anchor="middle">C</text>
+<line x1="56" y1="423" x2="104" y2="423" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Takeaway</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">AUROC</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">wrong primary</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">AUPRC</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">primary · ÷ π</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">EP@K</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">practical yield</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">budget 50</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">C: 32 vs A: 14</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F19. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">5,000-gene </text>
+<text x="249.09" y="538" fill="#c7d2dd" font-size="13">T-cell </text>
+<text x="306.72" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="342.59" y="538" fill="#c7d2dd" font-size="13">has </text>
+<text x="374.83" y="538" fill="#c7d2dd" font-size="13">1,000,000 </text>
+<text x="455.43" y="538" fill="#c7d2dd" font-size="13">candidate </text>
+<text x="536.03" y="538" fill="#c7d2dd" font-size="13">edges </text>
+<text x="584.39" y="538" fill="#c7d2dd" font-size="13">but </text>
+<text x="616.63" y="538" fill="#c7d2dd" font-size="13">only </text>
+<text x="656.93" y="538" fill="#c7d2dd" font-size="13">10,000 </text>
+<text x="713.35" y="538" fill="#c7d2dd" font-size="13">real </text>
+<text x="753.65" y="538" fill="#c7d2dd" font-size="13">ones </text>
+<text x="793.95" y="538" fill="#c7d2dd" font-size="13">(π=0.01).</text>
+<text x="40" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="73.53" y="559" fill="#c7d2dd" font-size="13">Extreme </text>
+<text x="139.22" y="559" fill="#c7d2dd" font-size="13">99:1 </text>
+<text x="179.52" y="559" fill="#c7d2dd" font-size="13">imbalance </text>
+<text x="260.12" y="559" fill="#c7d2dd" font-size="13">sets </text>
+<text x="300.42" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="332.66" y="559" fill="#c7d2dd" font-size="13">rules. </text>
+<text x="389.08" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="422.61" y="559" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="477.01" y="559" fill="#c7d2dd" font-size="13">rises </text>
+<text x="525.37" y="559" fill="#c7d2dd" font-size="13">modestly </text>
+<text x="597.91" y="559" fill="#c7d2dd" font-size="13">across </text>
+<text x="654.33" y="559" fill="#c7d2dd" font-size="13">methods </text>
+<text x="718.81" y="559" fill="#c7d2dd" font-size="13">(0.782→0.912) </text>
+<text x="838.1" y="559" fill="#c7d2dd" font-size="13">and</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">hides </text>
+<text x="88.36" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="120.6" y="580" fill="#c7d2dd" font-size="13">real </text>
+<text x="160.9" y="580" fill="#c7d2dd" font-size="13">gap, </text>
+<text x="201.2" y="580" fill="#c7d2dd" font-size="13">because </text>
+<text x="265.68" y="580" fill="#c7d2dd" font-size="13">its </text>
+<text x="297.92" y="580" fill="#c7d2dd" font-size="13">baseline </text>
+<text x="370.46" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="394.64" y="580" fill="#c7d2dd" font-size="13">0.50 </text>
+<text x="434.94" y="580" fill="#c7d2dd" font-size="13">and </text>
+<text x="467.18" y="580" fill="#c7d2dd" font-size="13">FPR </text>
+<text x="503.05" y="580" fill="#c7d2dd" font-size="13">is </text>
+<text x="527.23" y="580" fill="#c7d2dd" font-size="13">dominated </text>
+<text x="607.83" y="580" fill="#c7d2dd" font-size="13">by </text>
+<text x="632.01" y="580" fill="#c7d2dd" font-size="13">negatives. </text>
+<text x="720.67" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="754.2" y="580" fill="#c7d2dd" font-size="13">AUPRC </text>
+<text x="808.6" y="580" fill="#c7d2dd" font-size="13">has</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">baseline </text>
+<text x="112.54" y="601" fill="#c7d2dd" font-size="13">π=0.01; </text>
+<text x="177.02" y="601" fill="#c7d2dd" font-size="13">it </text>
+<text x="201.2" y="601" fill="#c7d2dd" font-size="13">triples </text>
+<text x="265.68" y="601" fill="#c7d2dd" font-size="13">(0.074→0.219) </text>
+<text x="384.97" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="417.21" y="601" fill="#c7d2dd" font-size="13">EP@50 </text>
+<text x="474.43" y="601" fill="#c7d2dd" font-size="13">jumps </text>
+<text x="522.79" y="601" fill="#c7d2dd" font-size="13">0.28→0.64. </text>
+<text x="617.9" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="651.43" y="601" fill="#c7d2dd" font-size="13">Report </text>
+<text x="709.06" y="601" fill="#c7d2dd" font-size="13">AUPRC </text>
+<text x="763.47" y="601" fill="#c7d2dd" font-size="13">(÷π) </text>
+<text x="810.21" y="601" fill="#c7d2dd" font-size="13">and</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">EP@K: </text>
+<text x="98.44" y="622" fill="#c7d2dd" font-size="13">at </text>
+<text x="122.62" y="622" fill="#c7d2dd" font-size="13">a </text>
+<text x="138.74" y="622" fill="#c7d2dd" font-size="13">50-edge </text>
+<text x="203.22" y="622" fill="#c7d2dd" font-size="13">budget </text>
+<text x="259.64" y="622" fill="#c7d2dd" font-size="13">method </text>
+<text x="316.06" y="622" fill="#c7d2dd" font-size="13">C </text>
+<text x="333.38" y="622" fill="#c7d2dd" font-size="13">yields </text>
+<text x="389.8" y="622" fill="#c7d2dd" font-size="13">32 </text>
+<text x="413.98" y="622" fill="#c7d2dd" font-size="13">real </text>
+<text x="454.28" y="622" fill="#c7d2dd" font-size="13">edges </text>
+<text x="502.64" y="622" fill="#c7d2dd" font-size="13">versus </text>
+<text x="559.06" y="622" fill="#c7d2dd" font-size="13">14 </text>
+<text x="583.24" y="622" fill="#c7d2dd" font-size="13">for </text>
+<text x="615.48" y="622" fill="#c7d2dd" font-size="13">method </text>
+<text x="671.9" y="622" fill="#c7d2dd" font-size="13">A.</text>
+</svg>

@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C07 · Cellular sheaves from first principles</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random helper (no nondeterministic time/entropy) ─
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+
+  // ── FACTS: the note's Section-5 worked example (TF1, GeneA, GeneB) ───────
+  // 2D stalks hold [expression, accessibility]. Restriction maps face each
+  // other at every edge; the coboundary is the head-side minus tail-side map.
+  const F={
+    R_TF_e1:[[0.8,0.1],[0.0,0.9]],   // TF1 -> e1 (expr 80% + acc 10%)
+    R_A_e1 :[[1.0,0.0],[0.0,1.0]],   // GeneA -> e1 (identity)
+    R_TF_e2:[[0.7,0.2],[0.1,0.8]],   // TF1 -> e2 (weaker drive to GeneB)
+    R_B_e2 :[[1.0,0.0],[0.0,1.0]],   // GeneB -> e2 (identity)
+    xTF_ref:[0.90,0.70],             // TF1 observed [expr, acc]
+    xA_ref :[0.72,0.63],             // GeneA observed (near-consistent)
+    xB_ref :[0.50,0.40]              // GeneB observed (inconsistent)
+    // δe1=[-0.07,0.00]  δe2=[-0.27,-0.25]  energy≈0.1403
+  };
+
+  // 2x2 matrix * 2-vector
+  function mv(M,x){return [M[0][0]*x[0]+M[0][1]*x[1], M[1][0]*x[0]+M[1][1]*x[1]];}
+  function sub(a,b){return [a[0]-b[0],a[1]-b[1]];}
+  function nrm2(v){return v[0]*v[0]+v[1]*v[1];}
+
+  // TF1 vector scaled by the "drive" slider (ref drive = 1.0)
+  function xTF(drive){return [F.xTF_ref[0]*drive, F.xTF_ref[1]*drive];}
+
+  // R_TF1->e2 row-0 coupling knob: how much of the accessibility channel
+  // leaks into GeneB's expected expression. ref = 0.2 (the note's value).
+  function R_TF_e2(coupling){return [[0.7,coupling],[0.1,0.8]];}
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const drive=s.drive;            // 0.4..1.3   TF1 magnitude
+    const blend=s.blend;            // 0..1       observed -> global section
+    const coupling=s.coupling;      // 0..0.6     R_TF1->e2 accessibility leak
+
+    const gNet  =api.group("network");
+    const gMaps =api.group("maps");
+    const gResid=api.group("residual");
+    const gBars =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");  // TF1 / source
+    const GR=new T.Color("#34d399");  // consistent / section
+    const AM=new T.Color("#fbbf24");  // GeneA
+    const VI=new T.Color("#a78bfa");  // residual / coboundary
+    const RO=new T.Color("#f87171");  // inconsistency
+    const SL=new T.Color("#54667c");
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // node world positions (star: TF1 centre-left, GeneA up-right, GeneB down-right)
+    const P={TF:[-3.0,0,0], A:[2.6,0,2.2], B:[2.6,0,-2.2]};
+
+    // ── current stalk vectors (depend on drive + section blend) ──────────
+    const xtf=xTF(drive);
+    const Rte2=R_TF_e2(coupling);
+    // global-section targets: x_A* = R_TF->e1 x_TF, x_B* = R_TF->e2 x_TF
+    const xAstar=mv(F.R_TF_e1,xtf);
+    const xBstar=mv(Rte2,xtf);
+    // observed (note refs)
+    const xAobs=F.xA_ref.slice();
+    const xBobs=F.xB_ref.slice();
+    // in global-section mode, blend observed -> section target
+    const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
+    let xA, xB;
+    if(mode==="section"){xA=lerp(xAobs,xAstar,blend); xB=lerp(xBobs,xBstar,blend);}
+    else {xA=xAobs.slice(); xB=xBobs.slice();}
+
+    // coboundary residuals  (δx)_e = head-side − tail-side
+    const tail1=mv(F.R_TF_e1,xtf), head1=mv(F.R_A_e1,xA);
+    const tail2=mv(Rte2,xtf),      head2=mv(F.R_B_e2,xB);
+    const d1=sub(head1,tail1), d2=sub(head2,tail2);
+    const e1=nrm2(d1), e2=nrm2(d2);
+    const energy=e1+e2;
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: coboundary — the worked example, residual vectors at edges
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="coboundary"){
+      api.edge(P.TF,P.A,{color:"#28506e",width:0.07,group:"network"});
+      api.edge(P.TF,P.B,{color:"#28506e",width:0.07,group:"network"});
+
+      api.node(P.TF,{r:0.55,color:"#4dd7ff",label:"TF1",group:"network",pick:{node:"TF1",x:xtf}});
+      api.node(P.A ,{r:0.46,color:"#fbbf24",label:"GeneA",group:"network",pick:{node:"GeneA",x:xA}});
+      api.node(P.B ,{r:0.46,color:"#f87171",label:"GeneB",group:"network",pick:{node:"GeneB",x:xB}});
+
+      // restriction-map plaques facing each other along each edge
+      function plaque(from,to,fr,txt,colHex){
+        const px=from[0]+(to[0]-from[0])*fr, pz=from[2]+(to[2]-from[2])*fr;
+        const pl=new T.Mesh(new T.BoxGeometry(0.62,0.10,0.62),new T.MeshStandardMaterial({color:colHex,emissive:new T.Color(colHex).multiplyScalar(0.5),emissiveIntensity:0.7,roughness:0.4}));
+        pl.position.set(px,0.0,pz); gMaps.add(pl);
+        slbl(txt,"#cfe0f0",0.34,px,0.55,pz);
+      }
+      plaque(P.TF,P.A,0.34,"R_TF→e1","#4dd7ff");
+      plaque(P.A,P.TF,0.34,"R_A→e1","#fbbf24");
+      plaque(P.TF,P.B,0.34,"R_TF→e2","#4dd7ff");
+      plaque(P.B,P.TF,0.34,"R_B→e2","#f87171");
+
+      // residual vector at each edge mid, drawn vertically (height ∝ |δx|)
+      function residual(mid,d,enr){
+        const mag=Math.sqrt(enr);
+        const h=Math.min(3.2,mag*5.5);
+        const cHex=enr<0.0025?"#34d399":"#a78bfa";
+        api.arrow([mid[0],0.1,mid[2]],[mid[0],0.1+h,mid[2]],{color:cHex,width:0.06,head:0.28,group:"residual"});
+        lbl("‖δx‖="+mag.toFixed(2),cHex,0.95,mid[0],0.2+h+0.4,mid[2]);
+        slbl("δ=["+d[0].toFixed(2)+", "+d[1].toFixed(2)+"]","#9fb3c8",0.32,mid[0],0.1+h+0.95,mid[2]);
+      }
+      const mid1=[(P.TF[0]+P.A[0])/2,0,(P.TF[2]+P.A[2])/2];
+      const mid2=[(P.TF[0]+P.B[0])/2,0,(P.TF[2]+P.B[2])/2];
+      residual(mid1,d1,e1);
+      residual(mid2,d2,e2);
+
+      lbl("(δx)_e = R_head x_head − R_tail x_tail","#a78bfa",1.05,-0.2,3.7,0);
+      slbl("stalk F(v)=R²  ·  [expression, accessibility]","#7f93a8",0.42,-3.0,-0.95,0);
+
+      sceneSnap={mode,drive:+drive.toFixed(3),coupling:+coupling.toFixed(3),blend:0,
+        resid_e1_0:+d1[0].toFixed(3),resid_e1_1:+d1[1].toFixed(3),
+        resid_e2_0:+d2[0].toFixed(3),resid_e2_1:+d2[1].toFixed(3),
+        energy_e1:+e1.toFixed(4),energy_e2:+e2.toFixed(4),energy:+energy.toFixed(4),isSection:energy<1e-4};
+
+      return {
+        badge:"Coboundary δ · drive "+drive.toFixed(2)+" · energy "+energy.toFixed(3),
+        formula:"(δx)<sub>e1</sub> = I·x<sub>A</sub> − R<sub>TF→e1</sub>x<sub>TF</sub> = ["+d1[0].toFixed(2)+", "+d1[1].toFixed(2)+"]  ·  (δx)<sub>e2</sub> = ["+d2[0].toFixed(2)+", "+d2[1].toFixed(2)+"]",
+        insight:"Two restriction maps face each other on every edge. The coboundary subtracts the tail projection from the head projection. Edge e1 (TF1→GeneA) is nearly consistent — a tiny residual in the expression channel only. Edge e2 (TF1→GeneB) is loud: GeneB sits far below what TF1's map predicts — a candidate non-functional or blocked regulatory edge.",
+        state:"δe1=["+d1[0].toFixed(2)+", "+d1[1].toFixed(2)+"]  δe2=["+d2[0].toFixed(2)+", "+d2[1].toFixed(2)+"]  ·  total inconsistency energy ‖δx‖² = "+energy.toFixed(4),
+        metrics:{energy:energy.toFixed(4),residE1:Math.sqrt(e1).toFixed(3),residE2:Math.sqrt(e2).toFixed(3),sections:energy<1e-4?"1":"0"},
+        focus:{center:[0,1.4,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: section — drive observed vectors to a global section (δ→0)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="section"){
+      api.edge(P.TF,P.A,{color:"#28506e",width:0.07,group:"network"});
+      api.edge(P.TF,P.B,{color:"#28506e",width:0.07,group:"network"});
+
+      const consistent=energy<5e-3;
+      const aCol=consistent?"#34d399":"#fbbf24";
+      const bCol=consistent?"#34d399":"#f87171";
+      api.node(P.TF,{r:0.55,color:"#4dd7ff",label:"TF1 (free)",group:"network",pick:{node:"TF1",x:xtf}});
+      api.node(P.A ,{r:0.46,color:aCol,label:"GeneA",group:"network",pick:{node:"GeneA",x:xA}});
+      api.node(P.B ,{r:0.46,color:bCol,label:"GeneB",group:"network",pick:{node:"GeneB",x:xB}});
+
+      // ghost markers at the section-target positions (where δ=0 lands the vectors)
+      function ghost(p,col){const m=new T.Mesh(new T.SphereGeometry(0.16,12,10),new T.MeshBasicMaterial({color:col,transparent:true,opacity:0.4}));m.position.set(p[0],1.1,p[2]);gMaps.add(m);}
+      ghost(P.A,GR.getHex()); ghost(P.B,GR.getHex());
+
+      // residual arrows shrink as blend -> 1
+      function resid(mid,d,enr){
+        const mag=Math.sqrt(enr);
+        if(mag<0.01)return;
+        const h=Math.min(3.0,mag*5.5);
+        api.arrow([mid[0],0.1,mid[2]],[mid[0],0.1+h,mid[2]],{color:"#a78bfa",width:0.055,head:0.26,group:"residual"});
+      }
+      const mid1=[(P.TF[0]+P.A[0])/2,0,(P.TF[2]+P.A[2])/2];
+      const mid2=[(P.TF[0]+P.B[0])/2,0,(P.TF[2]+P.B[2])/2];
+      resid(mid1,d1,e1); resid(mid2,d2,e2);
+
+      lbl(consistent?"GLOBAL SECTION  δx = 0":"section blend "+(blend*100).toFixed(0)+"%",consistent?"#34d399":"#a78bfa",1.25,-0.2,3.7,0);
+      slbl("x_A → R_TF→e1 x_TF   ·   x_B → R_TF→e2 x_TF","#7f93a8",0.42,-3.0,-0.95,0);
+
+      sceneSnap={mode,drive:+drive.toFixed(3),coupling:+coupling.toFixed(3),blend:+blend.toFixed(3),
+        resid_e1_0:+d1[0].toFixed(3),resid_e1_1:+d1[1].toFixed(3),
+        resid_e2_0:+d2[0].toFixed(3),resid_e2_1:+d2[1].toFixed(3),
+        energy_e1:+e1.toFixed(4),energy_e2:+e2.toFixed(4),energy:+energy.toFixed(4),isSection:consistent};
+
+      return {
+        badge:"Global section · blend "+(blend*100).toFixed(0)+"% · energy "+energy.toFixed(4),
+        formula:"δx = 0  ⇔  R<sub>head</sub>x<sub>head</sub> = R<sub>tail</sub>x<sub>tail</sub>  for every edge  ⇔  x ∈ ker(δ)",
+        insight:"A global section is a configuration with zero inconsistency everywhere. Because the graph is a star, TF1's vector is free — once it is fixed, the two targets are determined by the restriction maps. Drag the section blend from observed (left) toward the ker(δ) target (right): the violet residual arrows shrink to nothing and both genes turn green.",
+        state:"blend "+(blend*100).toFixed(0)+"% → energy "+energy.toFixed(4)+(consistent?"  ·  x ∈ ker(δ): a global section.":"  ·  still inconsistent."),
+        metrics:{energy:energy.toFixed(4),residE1:Math.sqrt(e1).toFixed(3),residE2:Math.sqrt(e2).toFixed(3),sections:consistent?"1":"0"},
+        focus:{center:[0,1.4,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: laplacian — scalar L (d=1, R=I) vs sheaf L_F side by side
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="laplacian"){
+      // scalar energy = Σ (x_head − x_tail)² on expression channel, R=identity scalar
+      const sc_e1=Math.pow(xA[0]-xtf[0],2);
+      const sc_e2=Math.pow(xB[0]-xtf[0],2);
+      const scalarEnergy=sc_e1+sc_e2;
+
+      function bar(x,z,h,col,pickD){
+        const hh=Math.max(0.05,h);
+        const m=new T.Mesh(new T.BoxGeometry(0.9,hh,0.9),new T.MeshStandardMaterial({color:col,emissive:new T.Color(col).multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        m.position.set(x,hh/2,z); gBars.add(m); api.pick(m,pickD); return m;
+      }
+      const yS=6.0;
+      // scalar (left): two bars e1, e2
+      bar(-3.2,1.4,sc_e1*yS,SL.getHex(),{bar:"scalar e1",val:sc_e1});
+      bar(-3.2,-1.4,sc_e2*yS,SL.getHex(),{bar:"scalar e2",val:sc_e2});
+      lbl("scalar L","#8a99ad",1.2,-3.2,scalarEnergy*yS+0.6,0);
+      slbl("(x_u−x_v)²  ·  d=1, R=1","#7f93a8",0.4,-3.2,-0.85,0);
+
+      // sheaf (right): two bars e1, e2
+      bar(2.0,1.4,e1*yS,VI.getHex(),{bar:"sheaf e1",val:e1});
+      bar(2.0,-1.4,e2*yS,RO.getHex(),{bar:"sheaf e2",val:e2});
+      lbl("sheaf L_F","#a78bfa",1.3,2.0,energy*yS+0.6,0);
+      slbl("‖R_v x_v − R_u x_u‖²  ·  d=2","#7f93a8",0.4,2.0,-0.85,0);
+
+      api.node([-0.6,0,3.4],{r:0.30,color:"#4dd7ff",label:"TF1",group:"network",halo:false,pick:{node:"TF1",x:xtf}});
+
+      lbl("L = D − A   is the  R=I, d=1  special case of  L_F = δᵀδ","#a78bfa",0.95,-0.6,energy*yS+1.7,0);
+
+      sceneSnap={mode,drive:+drive.toFixed(3),coupling:+coupling.toFixed(3),blend:0,
+        resid_e1_0:+d1[0].toFixed(3),resid_e1_1:+d1[1].toFixed(3),
+        resid_e2_0:+d2[0].toFixed(3),resid_e2_1:+d2[1].toFixed(3),
+        energy_e1:+e1.toFixed(4),energy_e2:+e2.toFixed(4),energy:+energy.toFixed(4),
+        scalarEnergy:+scalarEnergy.toFixed(4),isSection:energy<1e-4};
+
+      return {
+        badge:"Laplacian · scalar "+scalarEnergy.toFixed(3)+"  vs  sheaf "+energy.toFixed(3),
+        formula:"xᵀL x = Σ (x<sub>u</sub>−x<sub>v</sub>)²   ⊂   xᵀL<sub>F</sub>x = Σ ‖R<sub>v</sub>x<sub>v</sub> − R<sub>u</sub>x<sub>u</sub>‖²",
+        insight:"The scalar graph Laplacian keeps one number per node and measures plain difference (x_u−x_v)². The sheaf Laplacian L_F=δᵀδ keeps a vector per node and measures difference modulo the restriction maps. With identity maps and d=1 the sheaf form collapses to the scalar form — the scalar Laplacian is a special case, not a different object.",
+        state:"scalar energy "+scalarEnergy.toFixed(4)+"  ·  sheaf energy "+energy.toFixed(4)+"  ·  the maps make GeneB's edge the dominant inconsistency.",
+        metrics:{energy:energy.toFixed(4),residE1:Math.sqrt(e1).toFixed(3),residE2:Math.sqrt(e2).toFixed(3),sections:energy<1e-4?"1":"0"},
+        focus:{center:[-0.4,1.6,0],radius:13}
+      };
+    }
+
+    return {badge:"C07",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"c07",
+    kind:"cellular-sheaves",
+    eyebrow:"Block C · Geometric and Topological DL",
+    title:"C07 · Cellular sheaves from first principles",
+    subtitle:"A 3-gene GRN (TF1, GeneA, GeneB) with 2D stalks [expression, accessibility]. Restriction maps face each other on every edge; the coboundary δ measures how much they disagree. Three views: the coboundary residuals, the global section, and the scalar→sheaf Laplacian.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, residual, or bar.",
+    modes:[
+      {value:"coboundary", label:"Coboundary δ (residual per edge)"},
+      {value:"section",    label:"Global section (δ → 0)"},
+      {value:"laplacian",  label:"Scalar L vs sheaf L_F"}
+    ],
+    params:[
+      {key:"drive",   label:"TF1 drive (×x_TF)",min:0.4,max:1.3,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)},
+      {key:"blend",   label:"section blend (observed→ker δ)",min:0,max:1,step:0.02,value:0,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["section"]},
+      {key:"coupling",label:"R_TF→e2 accessibility leak",min:0,max:0.6,step:0.02,value:0.2,
+       fmt:v=>v.toFixed(2),modes:["coboundary","laplacian"]}
+    ],
+    metrics:[
+      {key:"energy",  label:"Inconsistency energy ‖δx‖²",accent:"violet"},
+      {key:"residE1", label:"‖δx‖ at e1 (TF1→GeneA)",accent:"amber"},
+      {key:"residE2", label:"‖δx‖ at e2 (TF1→GeneB)",accent:"rose"},
+      {key:"sections",label:"global sections (δ=0)",accent:"green"}
+    ],
+    layers:[
+      {group:"network", label:"Genes & edges"},
+      {group:"maps",    label:"Restriction maps"},
+      {group:"residual",label:"Coboundary residuals"},
+      {group:"bars",    label:"Energy bars"},
+      {group:"labels",  label:"Labels"}
+    ],
+    primary:{
+      label:"Reset to worked example",
+      on:api=>{api.setParam("drive",1.0);api.setParam("coupling",0.2);api.setParam("blend",0);}
+    },
+    secondary:{
+      label:"Make a global section",
+      on:api=>{api.setMode("section");api.setParam("blend",1);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF1 (source) · <span style="color:#fbbf24">amber</span>=GeneA (near-consistent) · <span style="color:#f87171">rose</span>=GeneB (inconsistent) · <span style="color:#a78bfa">violet</span>=coboundary residual δx · <span style="color:#34d399">green</span>=consistent / global section.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="laplacian") api.frame([-0.4,1.6,0],13);
+      else api.frame([0,1.4,0],12);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node+" · x = ["+d.x[0].toFixed(2)+", "+d.x[1].toFixed(2)+"]  [expr, acc]");
+      if(d.bar)  api.setSelected(d.bar+" · energy "+d.val.toFixed(4));
+    },
+    build,
+    snapshot(s){
+      const drive=s.drive, coupling=s.coupling;
+      const mode=s.mode;
+      const blend=(mode==="section")?s.blend:0;
+      const xtf=xTF(drive);
+      const Rte2=R_TF_e2(coupling);
+      const xAstar=mv(F.R_TF_e1,xtf), xBstar=mv(Rte2,xtf);
+      const lerp=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+      const xA=(mode==="section")?lerp(F.xA_ref,xAstar,blend):F.xA_ref.slice();
+      const xB=(mode==="section")?lerp(F.xB_ref,xBstar,blend):F.xB_ref.slice();
+      const d1=sub(mv(F.R_A_e1,xA),mv(F.R_TF_e1,xtf));
+      const d2=sub(mv(F.R_B_e2,xB),mv(Rte2,xtf));
+      const e1=nrm2(d1), e2=nrm2(d2);
+      const scalarEnergy=Math.pow(xA[0]-xtf[0],2)+Math.pow(xB[0]-xtf[0],2);
+      return {
+        mode,
+        drive:+drive.toFixed(3),
+        coupling:+coupling.toFixed(3),
+        blend:+blend.toFixed(3),
+        resid_e1:[+d1[0].toFixed(3),+d1[1].toFixed(3)],
+        resid_e2:[+d2[0].toFixed(3),+d2[1].toFixed(3)],
+        energy_e1:+e1.toFixed(4),
+        energy_e2:+e2.toFixed(4),
+        energy:+(e1+e2).toFixed(4),
+        scalarEnergy:+scalarEnergy.toFixed(4),
+        isGlobalSection:(e1+e2)<1e-4
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

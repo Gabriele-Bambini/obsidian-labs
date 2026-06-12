@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure I08 — A Sheaf-GRN prototype is restriction maps + a Laplacian + a loss</title>
+<desc id="d">Four-panel captioned figure: A Sheaf-GRN prototype is restriction maps + a Laplacian + a loss</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE I08 · BLOCK I · IMPLEMENTATION</text>
+<text x="40" y="62" fill="#e8eef6" font-size="20" font-weight="700">A Sheaf-GRN prototype is restriction maps + a Laplacian + a loss</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The prototype graph</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">genes (N)</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">20 TF + 80 tgt</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges (E)</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">~170 TF→tgt</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">stalk d_v</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">features</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">d_in = 32</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Restriction maps: GCN vs SNN</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">GCN:  R = I  (scalar)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">SNN:  R = MLP([x_u;x_v])</text>
+<rect x="502" y="178.72" width="12" height="25.28" rx="2" fill="#4dd7ff"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">GCN</text>
+<rect x="528" y="178" width="12" height="26" rx="2" fill="#a78bfa"/>
+<text x="534" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">SNN</text>
+<line x1="502" y1="178.72" x2="554" y2="178.72" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Diffuse, then diagnose</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">x_new = x − α·L_F(R)·x</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">E_e = ‖R_u·x_u − R_v·x_v‖²</text>
+<text x="56" y="349.5" fill="#fbbf24" font-size="11.5" font-weight="700">L_F size</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">400×400</text>
+<text x="56" y="369.5" fill="#4dd7ff" font-size="11.5" font-weight="700">α step</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.05</text>
+<text x="56" y="389.5" fill="#34d399" font-size="11.5" font-weight="700">energy drop</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">~85%</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Train end-to-end</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">loss</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">BCE + λ·E</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">grads</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">∂loss/∂R via L_F</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">clip</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">max_norm 1.0</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">AUROC</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">SNN ~0.86</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure I08. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">~200-line </text>
+<text x="241.03" y="538" fill="#c7d2dd" font-size="13">Sheaf-GRN </text>
+<text x="326.47" y="538" fill="#c7d2dd" font-size="13">prototype </text>
+<text x="407.07" y="538" fill="#c7d2dd" font-size="13">on </text>
+<text x="431.25" y="538" fill="#c7d2dd" font-size="13">a </text>
+<text x="447.37" y="538" fill="#c7d2dd" font-size="13">simulated </text>
+<text x="527.97" y="538" fill="#c7d2dd" font-size="13">SCENIC </text>
+<text x="591.64" y="538" fill="#c7d2dd" font-size="13">graph </text>
+<text x="640" y="538" fill="#c7d2dd" font-size="13">(20 </text>
+<text x="672.24" y="538" fill="#c7d2dd" font-size="13">TFs, </text>
+<text x="714.96" y="538" fill="#c7d2dd" font-size="13">80 </text>
+<text x="739.14" y="538" fill="#c7d2dd" font-size="13">targets, </text>
+<text x="811.68" y="538" fill="#c7d2dd" font-size="13">~170</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">edges). </text>
+<text x="104.48" y="559" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="138.01" y="559" fill="#c7d2dd" font-size="13">Node </text>
+<text x="179.52" y="559" fill="#c7d2dd" font-size="13">features </text>
+<text x="252.06" y="559" fill="#c7d2dd" font-size="13">+ </text>
+<text x="268.18" y="559" fill="#c7d2dd" font-size="13">DoRothEA </text>
+<text x="345.55" y="559" fill="#c7d2dd" font-size="13">edges </text>
+<text x="393.91" y="559" fill="#c7d2dd" font-size="13">form </text>
+<text x="434.21" y="559" fill="#c7d2dd" font-size="13">one </text>
+<text x="466.45" y="559" fill="#c7d2dd" font-size="13">PyG </text>
+<text x="501.11" y="559" fill="#c7d2dd" font-size="13">graph </text>
+<text x="549.47" y="559" fill="#c7d2dd" font-size="13">with </text>
+<text x="589.77" y="559" fill="#c7d2dd" font-size="13">4-dim </text>
+<text x="638.13" y="559" fill="#c7d2dd" font-size="13">stalks. </text>
+<text x="702.61" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="736.14" y="559" fill="#c7d2dd" font-size="13">A </text>
+<text x="753.47" y="559" fill="#c7d2dd" font-size="13">GCN </text>
+<text x="789.34" y="559" fill="#c7d2dd" font-size="13">uses</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">identity </text>
+<text x="112.54" y="580" fill="#c7d2dd" font-size="13">restriction </text>
+<text x="209.26" y="580" fill="#c7d2dd" font-size="13">maps; </text>
+<text x="257.62" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="289.86" y="580" fill="#c7d2dd" font-size="13">SNN </text>
+<text x="325.73" y="580" fill="#c7d2dd" font-size="13">learns </text>
+<text x="382.15" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="398.27" y="580" fill="#c7d2dd" font-size="13">4×4 </text>
+<text x="436.96" y="580" fill="#c7d2dd" font-size="13">matrix </text>
+<text x="493.38" y="580" fill="#c7d2dd" font-size="13">per </text>
+<text x="525.62" y="580" fill="#c7d2dd" font-size="13">endpoint. </text>
+<text x="606.22" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="639.74" y="580" fill="#c7d2dd" font-size="13">The </text>
+<text x="673.19" y="580" fill="#c7d2dd" font-size="13">layer </text>
+<text x="721.55" y="580" fill="#c7d2dd" font-size="13">diffuses </text>
+<text x="794.09" y="580" fill="#c7d2dd" font-size="13">x </text>
+<text x="810.21" y="580" fill="#c7d2dd" font-size="13">−</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">α·L_F·x </text>
+<text x="119.79" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="152.03" y="601" fill="#c7d2dd" font-size="13">per-edge </text>
+<text x="224.57" y="601" fill="#c7d2dd" font-size="13">energy </text>
+<text x="280.99" y="601" fill="#c7d2dd" font-size="13">ranks </text>
+<text x="329.35" y="601" fill="#c7d2dd" font-size="13">regulatory </text>
+<text x="418.01" y="601" fill="#c7d2dd" font-size="13">complexity. </text>
+<text x="514.73" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="548.26" y="601" fill="#c7d2dd" font-size="13">Gradients </text>
+<text x="630.07" y="601" fill="#c7d2dd" font-size="13">flow </text>
+<text x="670.37" y="601" fill="#c7d2dd" font-size="13">through </text>
+<text x="734.85" y="601" fill="#c7d2dd" font-size="13">L_F </text>
+<text x="769.51" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="793.69" y="601" fill="#c7d2dd" font-size="13">the</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">restriction </text>
+<text x="136.72" y="622" fill="#c7d2dd" font-size="13">MLP; </text>
+<text x="180.65" y="622" fill="#c7d2dd" font-size="13">clipped, </text>
+<text x="253.19" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="285.43" y="622" fill="#c7d2dd" font-size="13">SNN </text>
+<text x="321.29" y="622" fill="#c7d2dd" font-size="13">reaches </text>
+<text x="385.77" y="622" fill="#c7d2dd" font-size="13">~0.86 </text>
+<text x="434.13" y="622" fill="#c7d2dd" font-size="13">AUROC.</text>
+</svg>

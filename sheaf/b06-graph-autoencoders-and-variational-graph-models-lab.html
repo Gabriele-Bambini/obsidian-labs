@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B06 · Graph Autoencoders &amp; VGAE</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac = x => { const v = Math.sin(x * 127.1 + 31.7) * 43758.5453; return v - Math.floor(v); };
+  const prand = (i, s) => frac(i * 73.1 + s * 17.3 + 1.7);
+
+  // ── sigmoid ──────────────────────────────────────────────────────────────
+  const sigmoid = x => 1 / (1 + Math.exp(-x));
+
+  // ── fixed biological graph node names/roles ───────────────────────────────
+  const GENE_NAMES = ["TF1","GeneA","GeneB","GeneC","GeneD","TF2","GeneE","GeneF"];
+  const GENE_ROLES = ["TF","target","target","target","target","TF","target","target"];
+
+  // ── Build edges for n nodes (deterministic) ──────────────────────────────
+  function buildGraph(n){
+    const edges = [];
+    for(let i=0;i<n;i++){
+      if(GENE_ROLES[i]==="TF"){
+        for(let j=0;j<n;j++){
+          if(i!==j && GENE_ROLES[j]==="target" && prand(i*10+j, 0) < 0.58){
+            edges.push([i,j]);
+          }
+        }
+      }
+    }
+    if(edges.length < 2){ edges.push([0,1]); if(n>2) edges.push([0,2]); }
+    return edges;
+  }
+
+  // ── GNN encoder: 2-D latent coords (deterministic) ───────────────────────
+  function computeLatent(n, spread){
+    const feats = [];
+    for(let i=0;i<n;i++) feats.push([prand(i,1)*2-1, prand(i,2)*2-1]);
+    const edges = buildGraph(n);
+    const adj = Array.from({length:n},()=>new Array(n).fill(0));
+    edges.forEach(([a,b])=>{ adj[a][b]=1; adj[b][a]=1; });
+    const W = [[prand(5,3)*0.8-0.4, prand(6,3)*0.8-0.4],
+               [prand(7,3)*0.8-0.4, prand(8,3)*0.8-0.4]];
+    const z = [];
+    for(let i=0;i<n;i++){
+      let fx=feats[i][0], fy=feats[i][1], cnt=1;
+      for(let j=0;j<n;j++){ if(adj[i][j]){fx+=feats[j][0];fy+=feats[j][1];cnt++;} }
+      fx/=cnt; fy/=cnt;
+      const zx = Math.tanh((W[0][0]*fx + W[0][1]*fy)*1.8) * spread * 3.5;
+      const zy = Math.tanh((W[1][0]*fx + W[1][1]*fy)*1.8) * spread * 3.5;
+      z.push([zx, zy]);
+    }
+    return {z, edges};
+  }
+
+  // ── scene cache for snapshot ──────────────────────────────────────────────
+  let sceneCache = {};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T = api.THREE, s = api.state;
+    const n   = Math.round(s.nodes);
+    const mode = s.mode;
+    const klW  = s.klWeight;
+    const decT = s.decodeThreshold;
+    const spread = mode==="variational" ? (0.3 + klW*0.7) : 1.0;
+
+    const {z, edges} = computeLatent(n, spread);
+
+    const nodeG  = api.group("nodes");
+    const edgeG  = api.group("edges");
+    const latentG= api.group("latent");
+    const labelG = api.group("labels");
+
+    const C = {
+      TF    : new T.Color("#4dd7ff"),
+      target: new T.Color("#34d399"),
+      eKnown: new T.Color("#4dd7ff"),
+      ePred : new T.Color("#a78bfa"),
+      eHeld : new T.Color("#fbbf24"),
+      cloud : new T.Color("#6ea8c8"),
+    };
+
+    const heldOutEdge = edges.length > 0 ? edges[edges.length-1] : null;
+    const trainEdges  = edges.slice(0, edges.length-1);
+
+    function dotScore(i,j){ return sigmoid(z[i][0]*z[j][0] + z[i][1]*z[j][1]); }
+
+    // ── ENCODE mode ─────────────────────────────────────────────────────────
+    if(mode==="encode"){
+      const inputPos = [], latentPos = [];
+      for(let i=0;i<n;i++){
+        const ang = (2*Math.PI*i/n) - Math.PI/2;
+        inputPos.push( new T.Vector3(Math.cos(ang)*3.0, Math.sin(ang)*3.0, -4.5));
+        latentPos.push(new T.Vector3(z[i][0]*1.6, z[i][1]*1.6,  2.5));
+      }
+
+      // separator plane
+      const sep = new T.Mesh(new T.PlaneGeometry(0.05,12),
+        new T.MeshBasicMaterial({color:0x2a3a50,transparent:true,opacity:0.5,side:T.DoubleSide}));
+      sep.position.set(-1.0, 0, -1.0); nodeG.add(sep);
+
+      // input edges
+      trainEdges.forEach(([a,b]) => edgeG.add(mkLine(api, inputPos[a], inputPos[b], C.eKnown, 0.55)));
+      if(heldOutEdge) edgeG.add(mkLine(api, inputPos[heldOutEdge[0]], inputPos[heldOutEdge[1]], C.eHeld, 0.3));
+
+      // input nodes
+      for(let i=0;i<n;i++){
+        const col = GENE_ROLES[i]==="TF" ? C.TF : C.target;
+        const m = mkSphere(api, 0.32, col);
+        m.position.copy(inputPos[i]);
+        nodeG.add(m);
+        labelG.add(setPos(api.label(GENE_NAMES[i], col.getStyle(), 0.3), inputPos[i].x, inputPos[i].y+0.55, inputPos[i].z));
+      }
+
+      // connector lines input→latent
+      for(let i=0;i<n;i++) edgeG.add(mkLine(api, inputPos[i], latentPos[i], new T.Color("#2e4055"), 0.18));
+
+      // latent nodes + edges
+      for(let i=0;i<n;i++){
+        const col = GENE_ROLES[i]==="TF" ? C.TF : C.target;
+        const m = mkSphere(api, 0.38, col, 0.5, 0.1);
+        m.position.copy(latentPos[i]);
+        latentG.add(m);
+        labelG.add(setPos(api.label("z_"+i, col.getStyle(), 0.28), latentPos[i].x, latentPos[i].y+0.58, latentPos[i].z));
+      }
+      trainEdges.forEach(([a,b]) => latentG.add(mkLine(api, latentPos[a], latentPos[b], C.eKnown, 0.38)));
+
+      labelG.add(setPos(api.bigLabel("Input graph","#7f93a8",1.3),  0, 4.8,-4.5));
+      labelG.add(setPos(api.bigLabel("Latent space Z","#7f93a8",1.3), 0, 4.8, 2.5));
+      labelG.add(setPos(api.bigLabel("GNN encoder","#4dd7ff",1.4), -1.0, 0.8,-1.0));
+
+      const heldSc = heldOutEdge ? dotScore(heldOutEdge[0], heldOutEdge[1]) : 0;
+      sceneCache = {mode:"encode", nodes:n, heldOutScore:+heldSc.toFixed(3), reconError:+(1-heldSc).toFixed(3), klTerm:0, farNonEdgeScore:0};
+
+      return {
+        badge:"Encode · "+n+" nodes → 2-D latent z",
+        formula:"Z = GNN(X, A) · z_i ∈ ℝ² (2-D for visualization)",
+        insight:"The GNN encoder propagates features along edges. Each node lands at a latent coordinate z_i. Nodes connected by known edges (TF→target) end up closer in latent space — topology is baked into Z.",
+        state:"Nodes: "+n+" · held-out edge score (amber): "+heldSc.toFixed(3),
+        metrics:{heldOutScore:heldSc.toFixed(3), reconError:(1-heldSc).toFixed(3), klTerm:"0.000", numNodes:""+n},
+        focus:{center:[0,0,-1.0], radius:14}
+      };
+    }
+
+    // ── DECODE mode ─────────────────────────────────────────────────────────
+    if(mode==="decode"){
+      const lpos = [];
+      for(let i=0;i<n;i++) lpos.push(new T.Vector3(z[i][0]*1.8, z[i][1]*1.8, 0));
+
+      // find far non-edge pair
+      let minSc=Infinity, minPair=null;
+      for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+        const isEdge = edges.some(([a,b])=>(a===i&&b===j)||(a===j&&b===i));
+        if(!isEdge){ const sc=dotScore(i,j); if(sc<minSc){minSc=sc;minPair=[i,j];} }
+      }
+
+      // draw all edge candidates
+      for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){
+        const sc = dotScore(i,j);
+        const predicted = sc >= decT;
+        const isHeld = heldOutEdge && ((heldOutEdge[0]===i&&heldOutEdge[1]===j)||(heldOutEdge[0]===j&&heldOutEdge[1]===i));
+        const isKnown = trainEdges.some(([a,b])=>(a===i&&b===j)||(a===j&&b===i));
+
+        if(isHeld){
+          edgeG.add(mkLine(api, lpos[i], lpos[j], predicted ? C.eHeld : new T.Color("#7a5a10"), predicted?0.6:0.22));
+          const mx=(lpos[i].x+lpos[j].x)/2, my=(lpos[i].y+lpos[j].y)/2;
+          labelG.add(setPos(api.bigLabel("held-out: "+sc.toFixed(2),"#fbbf24",1.1), mx, my+0.45, 0));
+        } else if(predicted){
+          edgeG.add(mkLine(api, lpos[i], lpos[j], isKnown ? C.eKnown : C.ePred, isKnown?0.52:0.3));
+        }
+      }
+
+      // far non-edge annotation
+      if(minPair){
+        const [pi,pj]=minPair;
+        labelG.add(setPos(api.bigLabel("non-edge: "+minSc.toFixed(2),"#fb7185",1.1),(lpos[pi].x+lpos[pj].x)/2,(lpos[pi].y+lpos[pj].y)/2-0.5,0));
+      }
+
+      // nodes
+      for(let i=0;i<n;i++){
+        const col = GENE_ROLES[i]==="TF" ? C.TF : C.target;
+        const m = mkSphere(api, 0.36, col);
+        m.position.copy(lpos[i]);
+        nodeG.add(m);
+        api.pick(m, {nodeIdx:i, name:GENE_NAMES[i], role:GENE_ROLES[i], zx:z[i][0].toFixed(2), zy:z[i][1].toFixed(2)});
+        labelG.add(setPos(api.label(GENE_NAMES[i], col.getStyle(), 0.3), lpos[i].x, lpos[i].y+0.62, lpos[i].z));
+      }
+
+      labelG.add(setPos(api.bigLabel("Latent space Z","#7f93a8",1.3),  0,  4.8, 0));
+      labelG.add(setPos(api.bigLabel("Â_ij = σ(z_i·z_j)","#a78bfa",1.3), 0, -4.2, 0));
+      labelG.add(setPos(api.bigLabel("threshold: "+decT.toFixed(2),"#fb7185",1.2), 4.2,-4.5, 0));
+
+      const heldSc = heldOutEdge ? dotScore(heldOutEdge[0], heldOutEdge[1]) : 0;
+      sceneCache = {mode:"decode", nodes:n, threshold:decT, heldOutScore:+heldSc.toFixed(3), farNonEdgeScore:minPair?+minSc.toFixed(3):0, reconError:+(1-heldSc).toFixed(3), klTerm:0};
+      const sane = heldSc > (minPair?minSc:0);
+
+      return {
+        badge:"Decode · Â = σ(Z·Zᵀ) · threshold "+decT.toFixed(2),
+        formula:"Â_ij = sigmoid(z_iᵀ z_j) · close → high prob",
+        insight:"The inner-product decoder scores every pair. The amber held-out true edge should score higher than the red far non-edge — that gap is link prediction. Lower the threshold to see more candidate edges appear.",
+        state:"held-out edge: "+heldSc.toFixed(3)+" · far non-edge: "+(minPair?minSc.toFixed(3):"n/a")+" · link-pred sane: "+(sane?"✓":"✗"),
+        metrics:{heldOutScore:heldSc.toFixed(3), reconError:(1-heldSc).toFixed(3), klTerm:"0.000", numNodes:""+n},
+        focus:{center:[0,0,0], radius:11}
+      };
+    }
+
+    // ── VARIATIONAL mode ─────────────────────────────────────────────────────
+    if(mode==="variational"){
+      const lpos = [];
+      for(let i=0;i<n;i++) lpos.push(new T.Vector3(z[i][0]*1.8, z[i][1]*1.8, 0));
+
+      const sigmaScale = 0.15 + klW*1.4;
+
+      // uncertainty clouds
+      for(let i=0;i<n;i++){
+        const sx = sigmaScale*(0.5+prand(i,5)*0.5);
+        const sy = sigmaScale*(0.5+prand(i,6)*0.5);
+        const maxR = Math.max(sx,sy);
+        const ring = new T.Mesh(
+          new T.RingGeometry(maxR*0.6, maxR*0.9+0.05, 32),
+          new T.MeshBasicMaterial({color:C.cloud, transparent:true, opacity:0.14+(1-klW)*0.06, side:T.DoubleSide})
+        );
+        ring.position.copy(lpos[i]);
+        ring.scale.set(sx/maxR, sy/maxR, 1);
+        latentG.add(ring);
+
+        const disc = new T.Mesh(
+          new T.CircleGeometry(maxR*0.65, 24),
+          new T.MeshBasicMaterial({color:C.cloud, transparent:true, opacity:0.05+klW*0.04, side:T.DoubleSide})
+        );
+        disc.position.copy(lpos[i]);
+        disc.scale.set(sx/maxR, sy/maxR, 1);
+        latentG.add(disc);
+      }
+
+      // edges
+      trainEdges.forEach(([a,b]) => edgeG.add(mkLine(api, lpos[a], lpos[b], C.eKnown, 0.38*(1-klW*0.5))));
+      if(heldOutEdge){
+        const sc = dotScore(heldOutEdge[0], heldOutEdge[1]);
+        edgeG.add(mkLine(api, lpos[heldOutEdge[0]], lpos[heldOutEdge[1]], sc>=0.5?C.eHeld:new T.Color("#7a5a10"), 0.4));
+      }
+
+      // nodes
+      for(let i=0;i<n;i++){
+        const col = GENE_ROLES[i]==="TF" ? C.TF : C.target;
+        const m = mkSphere(api, 0.34, col);
+        m.position.copy(lpos[i]);
+        nodeG.add(m);
+        api.pick(m, {nodeIdx:i, name:GENE_NAMES[i], sigmaScale:sigmaScale.toFixed(2)});
+        labelG.add(setPos(api.label(GENE_NAMES[i], col.getStyle(), 0.28), lpos[i].x, lpos[i].y+0.60, lpos[i].z));
+      }
+
+      const klTerm = klW * (0.1 + klW*0.5);
+      const heldSc = heldOutEdge ? dotScore(heldOutEdge[0], heldOutEdge[1]) : 0;
+      const klDesc = klW<0.3 ? "overfit risk" : klW>0.7 ? "prior collapse" : "balanced";
+
+      labelG.add(setPos(api.bigLabel("z ~ N(μ,σ²)","#a78bfa",1.5), 0, 4.8, 0));
+      labelG.add(setPos(api.bigLabel("KL: "+klTerm.toFixed(3)+" ("+klDesc+")","#fb7185",1.2), 0,-4.5, 0));
+
+      sceneCache = {mode:"variational", nodes:n, klWeight:klW, klTerm:+klTerm.toFixed(3), heldOutScore:+heldSc.toFixed(3), reconError:+(1-heldSc).toFixed(3), sigmaScale:+sigmaScale.toFixed(3), farNonEdgeScore:0};
+
+      return {
+        badge:"VGAE · z ~ N(μ,σ²) · KL="+klTerm.toFixed(3),
+        formula:"L = L_recon + β·KL(q(Z|X,A) ∥ N(0,I))",
+        insight: klW<0.3
+          ? "Low KL: encoder ignores the prior. Latent clouds are tight — good fit but overfit risk. Rare regulatory edges may be memorized as isolated clusters."
+          : klW>0.7
+          ? "High KL: prior pressure collapses means toward 0. Uncertainty clouds grow large, reconstruction softens, and rare edges may vanish — the biology smoothed away."
+          : "Balanced KL: clouds visible but not overwhelming. The latent space is smooth yet informative — the sweet spot for biological generalization.",
+        state:"σ-scale: "+sigmaScale.toFixed(2)+" · KL: "+klTerm.toFixed(3)+" · held-out: "+heldSc.toFixed(3)+" · "+klDesc,
+        metrics:{heldOutScore:heldSc.toFixed(3), reconError:(1-heldSc).toFixed(3), klTerm:klTerm.toFixed(3), numNodes:""+n},
+        focus:{center:[0,0,0], radius:11}
+      };
+    }
+
+    return {badge:"B06", formula:"", insight:"", state:"", metrics:{heldOutScore:"0",reconError:"0",klTerm:"0",numNodes:""+n}, focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── geometry helpers ──────────────────────────────────────────────────────
+  function mkLine(api, p0, p1, col, opacity){
+    const T=api.THREE;
+    const dir = new T.Vector3().subVectors(p1,p0);
+    const len = dir.length();
+    if(len<0.01) return new T.Object3D();
+    const mid = new T.Vector3().addVectors(p0,p1).multiplyScalar(0.5);
+    const m = new T.Mesh(
+      new T.CylinderGeometry(0.025,0.025,len,8),
+      new T.MeshBasicMaterial({color:col, transparent:true, opacity:Math.min(1,opacity)})
+    );
+    m.position.copy(mid);
+    m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), dir.normalize());
+    return m;
+  }
+
+  function mkSphere(api, r, col, emissiveMul, metalness){
+    const T=api.THREE;
+    return new T.Mesh(
+      new T.SphereGeometry(r,16,12),
+      new T.MeshStandardMaterial({color:col, emissive:col.clone().multiplyScalar(emissiveMul||0.45), roughness:0.38, metalness:metalness||0})
+    );
+  }
+
+  function setPos(sp, x, y, z){ sp.position.set(x,y,z); return sp; }
+
+  // ── MathLab.create ─────────────────────────────────────────────────────────
+  MathLab.create({
+    id: "b06",
+    kind: "graph-autoencoder",
+    eyebrow: "Block B · GNN Architectures",
+    title: "B06 · Graph Autoencoders &amp; VGAE",
+    subtitle: "Encode nodes to latent z, decode edges from inner products, add KL regularization for VGAE. Watch link prediction live.",
+    selectedLabel: "Node",
+    selectedHint: "Click a node to see its latent coordinates.",
+    modes:[
+      {value:"encode",       label:"Encode (GNN → latent z)"},
+      {value:"decode",       label:"Decode (Â = σ(z·zᵀ)) + link pred"},
+      {value:"variational",  label:"Variational (z ~ N(μ,σ²) + KL)"}
+    ],
+    params:[
+      {key:"nodes",           label:"nodes in graph",    min:4,max:8,step:1,    value:5,   fmt:v=>Math.round(v)+""},
+      {key:"klWeight",        label:"KL weight / noise", min:0,max:1,step:0.05, value:0.3, fmt:v=>v.toFixed(2), modes:["variational"]},
+      {key:"decodeThreshold", label:"decode threshold",  min:0,max:1,step:0.05, value:0.5, fmt:v=>v.toFixed(2), modes:["decode"]}
+    ],
+    metrics:[
+      {key:"heldOutScore", label:"Held-out edge score", accent:"amber"},
+      {key:"reconError",   label:"Reconstruction error",accent:"rose"},
+      {key:"klTerm",       label:"KL term",             accent:"violet"},
+      {key:"numNodes",     label:"# nodes",             accent:"cyan"}
+    ],
+    layers:[
+      {group:"nodes",  label:"Nodes"},
+      {group:"edges",  label:"Edges"},
+      {group:"latent", label:"Latent"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Reset controls",
+      on:api=>{ api.setParam("klWeight",0.3); api.setParam("decodeThreshold",0.5); }
+    },
+    secondary:{
+      label:"Cycle mode",
+      on:api=>{
+        const o=["encode","decode","variational"];
+        const sel=document.getElementById("ml-mode");
+        sel.value=o[(o.indexOf(api.state.mode)+1)%3];
+        sel.dispatchEvent(new Event("change"));
+      }
+    },
+    defaultCam:{theta:-0.4, phi:0.6, r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF · <span style="color:#34d399">green</span>=target · <span style="color:#fbbf24">amber</span>=held-out edge (link pred) · <span style="color:#a78bfa">violet</span>=new predicted edge · <span style="color:#6ea8c8">ring</span>=latent σ (VGAE)',
+    onParam(api){ api.frame([0,0,0],12); },
+    onSelect(api,d){
+      if(d.name && d.zx!=null) api.setSelected(d.name+" ("+d.role+") · z=["+d.zx+","+d.zy+"]");
+      else if(d.name) api.setSelected(d.name+" · σ-scale="+d.sigmaScale);
+    },
+    build,
+    snapshot(s){
+      const c = sceneCache;
+      return {
+        mode: s.mode,
+        nodes: Math.round(s.nodes),
+        klWeight: +s.klWeight.toFixed(3),
+        decodeThreshold: +s.decodeThreshold.toFixed(3),
+        heldOutScore: c.heldOutScore||0,
+        reconError: c.reconError||0,
+        klTerm: c.klTerm||0,
+        farNonEdgeScore: c.farNonEdgeScore||0,
+        linkPredSane: (c.heldOutScore||0) > (c.farNonEdgeScore||0)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

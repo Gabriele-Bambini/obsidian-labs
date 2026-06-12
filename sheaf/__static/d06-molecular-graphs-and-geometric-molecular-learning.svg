@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure D06 — Caffeine, four ways — topology, distance, angle, equivariance</title>
+<desc id="d">Four-panel captioned figure: Caffeine, four ways — topology, distance, angle, equivariance</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE D06 · BLOCK D · BIOLOGY GRAPHS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="21" font-weight="700">Caffeine, four ways — topology, distance, angle, equivariance</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Caffeine molecular graph</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">heavy atoms</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">14</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">heavy bonds</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">14</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">dir. edges</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">~34</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">atom / bond d</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">72 / 14</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">2D: MPNN vs DMPNN</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">m_vw = Σ_{u∈N(v)\w} M(h_uv, e_uv)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">drop the reverse bond</text>
+<text x="502" y="187.5" fill="#fbbf24" font-size="11.5" font-weight="700">ESOL RMSE MPNN</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.58</text>
+<text x="502" y="207.5" fill="#34d399" font-size="11.5" font-weight="700">ESOL RMSE DMPNN</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">0.52</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">3D: invariant vs equivariant</text>
+<text x="56" y="301.5" fill="#4dd7ff" font-size="11.5" font-weight="700">SchNet</text>
+<text x="196" y="301.5" fill="#9fb4cc" font-size="11.5">dist only</text>
+<text x="56" y="321.5" fill="#34d399" font-size="11.5" font-weight="700">DimeNet</text>
+<text x="196" y="321.5" fill="#9fb4cc" font-size="11.5">dist + angle</text>
+<text x="56" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">EGNN</text>
+<text x="196" y="341.5" fill="#9fb4cc" font-size="11.5">equivariant</text>
+<text x="56" y="369" fill="#8a99ad" font-size="11">Scalar energy needs E(3)-invariance: f(T·G)=f(G). Forces</text>
+<text x="56" y="389" fill="#8a99ad" font-size="11">need equivariance: f(T·G)=T·f(G). Chiral drugs need</text>
+<text x="56" y="409" fill="#8a99ad" font-size="11">SE(3) (no reflections).</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Scaffold split honesty</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">random AUROC</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">0.87</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">scaffold AUROC</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">0.77</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">gap (memorize)</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">+0.10</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">report</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">scaffold split</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure D06. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Caffeine </text>
+<text x="216.85" y="538" fill="#c7d2dd" font-size="13">(14 </text>
+<text x="249.09" y="538" fill="#c7d2dd" font-size="13">heavy </text>
+<text x="297.45" y="538" fill="#c7d2dd" font-size="13">atoms, </text>
+<text x="353.87" y="538" fill="#c7d2dd" font-size="13">~34 </text>
+<text x="386.11" y="538" fill="#c7d2dd" font-size="13">directed </text>
+<text x="458.65" y="538" fill="#c7d2dd" font-size="13">edges) </text>
+<text x="515.07" y="538" fill="#c7d2dd" font-size="13">climbs </text>
+<text x="571.49" y="538" fill="#c7d2dd" font-size="13">the </text>
+<text x="603.73" y="538" fill="#c7d2dd" font-size="13">representation </text>
+<text x="724.63" y="538" fill="#c7d2dd" font-size="13">ladder. </text>
+<text x="789.11" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="822.64" y="538" fill="#c7d2dd" font-size="13">The</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">typed </text>
+<text x="88.36" y="559" fill="#c7d2dd" font-size="13">graph: </text>
+<text x="144.78" y="559" fill="#c7d2dd" font-size="13">atoms </text>
+<text x="193.14" y="559" fill="#c7d2dd" font-size="13">as </text>
+<text x="217.32" y="559" fill="#c7d2dd" font-size="13">nodes </text>
+<text x="265.68" y="559" fill="#c7d2dd" font-size="13">(d=72), </text>
+<text x="330.16" y="559" fill="#c7d2dd" font-size="13">bonds </text>
+<text x="378.52" y="559" fill="#c7d2dd" font-size="13">as </text>
+<text x="402.7" y="559" fill="#c7d2dd" font-size="13">edges </text>
+<text x="451.06" y="559" fill="#c7d2dd" font-size="13">(d=14). </text>
+<text x="515.54" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="549.07" y="559" fill="#c7d2dd" font-size="13">DMPNN </text>
+<text x="603.47" y="559" fill="#c7d2dd" font-size="13">drops </text>
+<text x="651.83" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="684.07" y="559" fill="#c7d2dd" font-size="13">reverse </text>
+<text x="748.55" y="559" fill="#c7d2dd" font-size="13">bond </text>
+<text x="788.85" y="559" fill="#c7d2dd" font-size="13">so </text>
+<text x="813.03" y="559" fill="#c7d2dd" font-size="13">ring</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">messages </text>
+<text x="112.54" y="580" fill="#c7d2dd" font-size="13">cannot </text>
+<text x="168.96" y="580" fill="#c7d2dd" font-size="13">cancel: </text>
+<text x="233.44" y="580" fill="#c7d2dd" font-size="13">ESOL </text>
+<text x="278.58" y="580" fill="#c7d2dd" font-size="13">RMSE </text>
+<text x="323.71" y="580" fill="#c7d2dd" font-size="13">0.52 </text>
+<text x="364.01" y="580" fill="#c7d2dd" font-size="13">vs </text>
+<text x="388.19" y="580" fill="#c7d2dd" font-size="13">MPNN </text>
+<text x="433.33" y="580" fill="#c7d2dd" font-size="13">0.58. </text>
+<text x="481.69" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="515.22" y="580" fill="#c7d2dd" font-size="13">3D </text>
+<text x="540.61" y="580" fill="#c7d2dd" font-size="13">models </text>
+<text x="597.03" y="580" fill="#c7d2dd" font-size="13">add </text>
+<text x="629.27" y="580" fill="#c7d2dd" font-size="13">distances </text>
+<text x="709.87" y="580" fill="#c7d2dd" font-size="13">(SchNet), </text>
+<text x="792.88" y="580" fill="#c7d2dd" font-size="13">angles</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">(DimeNet), </text>
+<text x="131.08" y="601" fill="#c7d2dd" font-size="13">then </text>
+<text x="171.38" y="601" fill="#c7d2dd" font-size="13">equivariant </text>
+<text x="268.1" y="601" fill="#c7d2dd" font-size="13">coordinate </text>
+<text x="356.76" y="601" fill="#c7d2dd" font-size="13">updates </text>
+<text x="421.24" y="601" fill="#c7d2dd" font-size="13">(EGNN). </text>
+<text x="490.55" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="524.08" y="601" fill="#c7d2dd" font-size="13">Random </text>
+<text x="581.71" y="601" fill="#c7d2dd" font-size="13">split </text>
+<text x="630.07" y="601" fill="#c7d2dd" font-size="13">flatters </text>
+<text x="702.61" y="601" fill="#c7d2dd" font-size="13">by </text>
+<text x="726.79" y="601" fill="#c7d2dd" font-size="13">0.10 </text>
+<text x="767.09" y="601" fill="#c7d2dd" font-size="13">AUROC </text>
+<text x="821.5" y="601" fill="#c7d2dd" font-size="13">(0.87 </text>
+<text x="869.86" y="601" fill="#c7d2dd" font-size="13">vs</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">scaffold </text>
+<text x="112.54" y="622" fill="#c7d2dd" font-size="13">0.77); </text>
+<text x="168.96" y="622" fill="#c7d2dd" font-size="13">report </text>
+<text x="225.38" y="622" fill="#c7d2dd" font-size="13">scaffold </text>
+<text x="297.92" y="622" fill="#c7d2dd" font-size="13">split.</text>
+</svg>

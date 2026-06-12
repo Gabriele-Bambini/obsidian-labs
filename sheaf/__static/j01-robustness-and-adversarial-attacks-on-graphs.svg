@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure J01 — One edge or a tiny feature nudge can flip a GRN prediction</title>
+<desc id="d">Four-panel captioned figure: One edge or a tiny feature nudge can flip a GRN prediction</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE J01 · BLOCK J · ADVANCED GNN THEORY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="22" font-weight="700">One edge or a tiny feature nudge can flip a GRN prediction</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">The TP53 module (clean)</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">genes</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edges</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">5</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">call</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">active program</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">confidence</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">0.88</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Topology attack (k=1)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">add e = BCL2–TP53</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">Δscore = argmax loss(v)</text>
+<rect x="502" y="178" width="12" height="26" rx="2" fill="#4dd7ff"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">clean</text>
+<rect x="536" y="188.93" width="12" height="15.07" rx="2" fill="#fb7185"/>
+<text x="542" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">k=1</text>
+<line x1="502" y1="189.23" x2="570" y2="189.23" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Feature attack (PGD, ε)</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">δ = Π_{‖δ‖∞≤ε} (δ + α·∇L)</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">ε = 0.15</text>
+<text x="56" y="349.5" fill="#a78bfa" font-size="11.5" font-weight="700">TP53 expr</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">2.10→1.95</text>
+<text x="56" y="369.5" fill="#a78bfa" font-size="11.5" font-weight="700">BAX expr</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">1.60→1.45</text>
+<text x="56" y="389.5" fill="#fb7185" font-size="11.5" font-weight="700">‖δ‖₂</text>
+<text x="196" y="389.5" fill="#9fb4cc" font-size="11.5">0.21</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Certified radius (smoothing)</text>
+<text x="502" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">r = (σ/2)(Φ⁻¹(pA) − Φ⁻¹(pB))</text>
+<text x="502" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">= 0.15 · 1.83 = 0.274</text>
+<text x="502" y="349.5" fill="#a78bfa" font-size="11.5" font-weight="700">σ</text>
+<text x="642" y="349.5" fill="#9fb4cc" font-size="11.5">0.30</text>
+<text x="502" y="369.5" fill="#a78bfa" font-size="11.5" font-weight="700">pA / pB</text>
+<text x="642" y="369.5" fill="#9fb4cc" font-size="11.5">0.82 / 0.18</text>
+<text x="502" y="389.5" fill="#a78bfa" font-size="11.5" font-weight="700">cert r</text>
+<text x="642" y="389.5" fill="#9fb4cc" font-size="11.5">0.274</text>
+<text x="502" y="409.5" fill="#a78bfa" font-size="11.5" font-weight="700">PGD ‖δ‖</text>
+<text x="642" y="409.5" fill="#9fb4cc" font-size="11.5">0.21 (inside)</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure J01. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="160.43" y="538" fill="#c7d2dd" font-size="13">5-gene </text>
+<text x="216.85" y="538" fill="#c7d2dd" font-size="13">TP53 </text>
+<text x="259.57" y="538" fill="#c7d2dd" font-size="13">module </text>
+<text x="315.99" y="538" fill="#c7d2dd" font-size="13">is </text>
+<text x="340.17" y="538" fill="#c7d2dd" font-size="13">classified </text>
+<text x="428.83" y="538" fill="#c7d2dd" font-size="13">as </text>
+<text x="453.01" y="538" fill="#c7d2dd" font-size="13">an </text>
+<text x="477.19" y="538" fill="#c7d2dd" font-size="13">active </text>
+<text x="533.61" y="538" fill="#c7d2dd" font-size="13">regulatory </text>
+<text x="622.27" y="538" fill="#c7d2dd" font-size="13">program </text>
+<text x="686.75" y="538" fill="#c7d2dd" font-size="13">with </text>
+<text x="727.05" y="538" fill="#c7d2dd" font-size="13">0.88 </text>
+<text x="767.35" y="538" fill="#c7d2dd" font-size="13">confidence. </text>
+<text x="864.07" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a)</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="73.45" y="559" fill="#c7d2dd" font-size="13">clean </text>
+<text x="121.81" y="559" fill="#c7d2dd" font-size="13">graph: </text>
+<text x="178.23" y="559" fill="#c7d2dd" font-size="13">TP53 </text>
+<text x="220.95" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="245.13" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="277.37" y="559" fill="#c7d2dd" font-size="13">hub </text>
+<text x="309.61" y="559" fill="#c7d2dd" font-size="13">TF. </text>
+<text x="344.27" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="377.79" y="559" fill="#c7d2dd" font-size="13">A </text>
+<text x="395.12" y="559" fill="#c7d2dd" font-size="13">targeted </text>
+<text x="467.66" y="559" fill="#c7d2dd" font-size="13">topology </text>
+<text x="540.2" y="559" fill="#c7d2dd" font-size="13">attack </text>
+<text x="596.62" y="559" fill="#c7d2dd" font-size="13">adds </text>
+<text x="636.92" y="559" fill="#c7d2dd" font-size="13">one </text>
+<text x="669.16" y="559" fill="#c7d2dd" font-size="13">biologically </text>
+<text x="773.94" y="559" fill="#c7d2dd" font-size="13">plausible </text>
+<text x="854.54" y="559" fill="#c7d2dd" font-size="13">edge</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">(BCL2–TP53); </text>
+<text x="157.27" y="580" fill="#c7d2dd" font-size="13">confidence </text>
+<text x="245.93" y="580" fill="#c7d2dd" font-size="13">drops </text>
+<text x="294.29" y="580" fill="#c7d2dd" font-size="13">0.88→0.51, </text>
+<text x="389.4" y="580" fill="#c7d2dd" font-size="13">flipping </text>
+<text x="461.94" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="494.18" y="580" fill="#c7d2dd" font-size="13">call. </text>
+<text x="542.54" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="576.07" y="580" fill="#c7d2dd" font-size="13">A </text>
+<text x="593.4" y="580" fill="#c7d2dd" font-size="13">PGD </text>
+<text x="629.27" y="580" fill="#c7d2dd" font-size="13">feature </text>
+<text x="693.75" y="580" fill="#c7d2dd" font-size="13">attack </text>
+<text x="750.17" y="580" fill="#c7d2dd" font-size="13">within </text>
+<text x="806.59" y="580" fill="#c7d2dd" font-size="13">ε=0.15</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">(TP53 </text>
+<text x="90.78" y="601" fill="#c7d2dd" font-size="13">2.1→1.95, </text>
+<text x="177.83" y="601" fill="#c7d2dd" font-size="13">BAX </text>
+<text x="213.69" y="601" fill="#c7d2dd" font-size="13">1.6→1.45, </text>
+<text x="300.74" y="601" fill="#c7d2dd" font-size="13">‖δ‖₂≈0.21) </text>
+<text x="395.85" y="601" fill="#c7d2dd" font-size="13">also </text>
+<text x="436.15" y="601" fill="#c7d2dd" font-size="13">flips </text>
+<text x="484.51" y="601" fill="#c7d2dd" font-size="13">it. </text>
+<text x="516.75" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="550.28" y="601" fill="#c7d2dd" font-size="13">Randomized </text>
+<text x="640.15" y="601" fill="#c7d2dd" font-size="13">smoothing </text>
+<text x="720.75" y="601" fill="#c7d2dd" font-size="13">certifies </text>
+<text x="801.35" y="601" fill="#c7d2dd" font-size="13">r=0.274 </text>
+<text x="865.83" y="601" fill="#c7d2dd" font-size="13">at</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">σ=0.30; </text>
+<text x="104.48" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="136.72" y="622" fill="#c7d2dd" font-size="13">attack </text>
+<text x="193.14" y="622" fill="#c7d2dd" font-size="13">(0.21) </text>
+<text x="249.56" y="622" fill="#c7d2dd" font-size="13">sits </text>
+<text x="289.86" y="622" fill="#c7d2dd" font-size="13">inside, </text>
+<text x="354.34" y="622" fill="#c7d2dd" font-size="13">so </text>
+<text x="378.52" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="410.76" y="622" fill="#c7d2dd" font-size="13">bound </text>
+<text x="459.12" y="622" fill="#c7d2dd" font-size="13">is </text>
+<text x="483.3" y="622" fill="#c7d2dd" font-size="13">conservative.</text>
+</svg>

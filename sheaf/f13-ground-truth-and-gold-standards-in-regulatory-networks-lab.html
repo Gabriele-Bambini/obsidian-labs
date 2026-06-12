@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F13 · Ground truth and gold standards in regulatory networks</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG, no clock; pure hash) ────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── lesson FACTS: the Section-5 4-gene worked example ────────────────────
+  //  Nodes: TF1, GeneA, GeneB, GeneC. The true (hidden) network has
+  //    TF1→GeneA (+), TF1→GeneB (+) real edges; TF1→GeneC is a true non-edge.
+  //  An identical predictor scores GeneA=0.90, GeneB=0.70, GeneC=0.30.
+  //  Three gold-standard regimes re-label the SAME ranking and yield
+  //  AUROC 1.00 / ~0.75 / ~0.95 for the SAME model.
+  const GENES=["GeneA","GeneB","GeneC"];
+
+  // map a slider [0..100] to a model score [0..1]
+  const sc=v=>Math.max(0,Math.min(1,v/100));
+
+  // ── AUROC over a labelled triple (rank-sum / Mann–Whitney form) ──────────
+  // items: [{score, pos:bool}]  → AUROC = (#correctly ordered +0.5 ties)/(P*N)
+  function auroc(items){
+    const P=items.filter(d=>d.pos), N=items.filter(d=>!d.pos);
+    if(!P.length||!N.length) return null;
+    let acc=0;
+    P.forEach(p=>N.forEach(n=>{ acc += p.score>n.score?1:(p.score===n.score?0.5:0); }));
+    return acc/(P.length*N.length);
+  }
+  // ── AUPRC (step / interpolation-free, ranking order) ─────────────────────
+  function auprc(items){
+    const arr=items.slice().sort((a,b)=>b.score-a.score);
+    const Pn=arr.filter(d=>d.pos).length;
+    if(!Pn) return null;
+    let tp=0,fp=0,prevR=0,area=0;
+    arr.forEach(d=>{
+      if(d.pos) tp++; else fp++;
+      const prec=tp/(tp+fp), rec=tp/Pn;
+      area += prec*(rec-prevR); prevR=rec;
+    });
+    return area;
+  }
+
+  // Build the labelled item list for a given gold-standard mode + sliders.
+  //  scoreA/B/C are model scores; fnMode: GeneB labelled neg in mode B.
+  function items(mode,scoreA,scoreB,scoreC,easyGap){
+    if(mode==="goldB"){
+      // P={A}, N={B,C}: GeneB is a FALSE NEGATIVE (true edge, labelled neg)
+      return [
+        {g:"GeneA",score:scoreA,pos:true ,truth:true },
+        {g:"GeneB",score:scoreB,pos:false,truth:true },  // mislabelled
+        {g:"GeneC",score:scoreC,pos:false,truth:false}
+      ];
+    }
+    if(mode==="goldC"){
+      // P={A,B}, N = 3 random background genes from a 100-gene pool. At high
+      // separation they score far below the targets (trivially separable →
+      // AUROC≈1). At low separation a background gene can drift up near a weak
+      // positive and overtake it, so AUROC dips — that is the only honest signal.
+      const sep=easyGap*0.01;                 // 0..1 separation knob
+      const neg=[0,1,2].map(k=>{
+        const noise=prand(k*9+3);             // deterministic 0..1
+        const base=0.55-sep*0.40;             // high sep → low background score
+        return {g:"bg"+(k+1),score:Math.max(0,Math.min(1,base+noise*0.18-0.09)),pos:false,truth:false};
+      });
+      return [
+        {g:"GeneA",score:scoreA,pos:true,truth:true},
+        {g:"GeneB",score:scoreB,pos:true,truth:true}
+      ].concat(neg);
+    }
+    // goldA — complete & correct: P={A,B}, N={C}
+    return [
+      {g:"GeneA",score:scoreA,pos:true ,truth:true },
+      {g:"GeneB",score:scoreB,pos:true ,truth:true },
+      {g:"GeneC",score:scoreC,pos:false,truth:false}
+    ];
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const scoreA=sc(s.scoreA), scoreB=sc(s.scoreB), scoreC=sc(s.scoreC);
+    const easyGap=s.easyGap;
+
+    const gGraph =api.group("graph");   // the 4-gene network
+    const gScore =api.group("scores");  // ranked score bars
+    const gEval  =api.group("eval");     // ROC / metric panel
+    const gLabels=api.group("labels");
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", RO="#fb7185", VI="#a78bfa", SL="#54667c";
+
+    function big(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,api.col(c),sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const D=items(mode,scoreA,scoreB,scoreC,easyGap);
+    const AUR=auroc(D), APR=auprc(D);
+    const nP=D.filter(d=>d.pos).length, nN=D.filter(d=>!d.pos).length;
+    const baseAPR=nP/(nP+nN);                 // random-classifier AUPRC baseline
+    const mislabel=D.filter(d=>d.pos===false && d.truth===true).length; // hidden TPs in N
+
+    // ── (1) the 4-gene regulatory network (left) ───────────────────────────
+    const tfPos=[-5.2,1.4,0];
+    const tgtPos={
+      GeneA:[-2.4, 2.6,0],
+      GeneB:[-2.4, 0.6,0],
+      GeneC:[-2.4,-1.4,0]
+    };
+    api.node(tfPos,{color:VI,r:0.46,label:"TF1",labelColor:VI,group:"graph",pick:{kind:"tf"}});
+    GENES.forEach(g=>{
+      const d=D.find(x=>x.g===g);
+      if(!d) return;   // gene absent in this gold standard (e.g. GeneC not present in Gold C)
+      const isPosLbl=d.pos, isTrue=d.truth;
+      // colour: green = labelled positive · rose = labelled negative · amber = mislabelled (hidden TP in N)
+      const c = (mislabel && d===D.find(x=>x.g==="GeneB") && mode==="goldB") ? AM : (isPosLbl?GR:RO);
+      api.node(tgtPos[g],{color:c,r:0.40,label:g,labelColor:c,group:"graph",pick:{kind:"gene",g:g,score:d.score,pos:isPosLbl,truth:isTrue}});
+      // true biological edge solid; true non-edge dashed faint
+      api.arrow(tfPos,[tgtPos[g][0]-0.5,tgtPos[g][1],0],{
+        color:isTrue?CY:SL, width:isTrue?0.05:0.035, head:0.2,
+        opacity:isTrue?0.95:0.5, dashed:!isTrue, group:"graph"
+      });
+    });
+    big("regulator",VI,0.95,-5.2,2.2,0);
+    big("targets",CY,0.95,-2.4,3.7,0);
+    big("solid = real edge · dashed = true non-edge",SL,0.8,-3.6,-2.6,0);
+
+    // ── (2) ranked score bars (centre) — the IDENTICAL predictor ──────────
+    const ranked=D.slice().sort((a,b)=>b.score-a.score);
+    const bx0=0.4, bw=0.9, bgap=1.15, byBase=-1.8, bScale=4.4;
+    ranked.forEach((d,i)=>{
+      const x=bx0+i*bgap;
+      const h=0.1+d.score*bScale;
+      const isPosLbl=d.pos;
+      const isMis=(d.pos===false && d.truth===true);
+      const c=isMis?AM:(isPosLbl?GR:RO);
+      const bar=new T.Mesh(new T.BoxGeometry(bw,h,bw),api.mat(c,{emissive:0.5}));
+      bar.position.set(x,byBase+h/2,0);
+      gScore.add(bar);
+      api.pick(bar,{kind:"bar",g:d.g,score:d.score,pos:isPosLbl,truth:d.truth});
+      big(d.score.toFixed(2),c,1.1,x,byBase+h+0.45,0);
+      big(d.g.length>5?d.g.replace("Gene","G."):d.g,c,0.78,x,byBase-0.45,0);
+    });
+    big("ranked model score (same predictor)",CY,0.92,bx0+(ranked.length-1)*bgap/2,byBase+bScale+1.0,0);
+    // baseline line
+    gScore.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(bx0-0.7,byBase,0),new T.Vector3(bx0+(ranked.length-1)*bgap+0.7,byBase,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+
+    // ── (3) ROC curve panel (right) — AUROC as area under the step path ────
+    const ox=4.6, oy=-1.8, axW=3.4, axH=3.4;
+    // axes
+    gEval.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(ox,oy,0),new T.Vector3(ox+axW,oy,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+    gEval.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(ox,oy,0),new T.Vector3(ox,oy+axH,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+    // chance diagonal (dashed)
+    const diag=new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(ox,oy,0),new T.Vector3(ox+axW,oy+axH,0)]),new T.LineDashedMaterial({color:0x3a4a5e,dashSize:0.18,gapSize:0.12}));
+    diag.computeLineDistances(); gEval.add(diag);
+    // ROC step path from the ranking
+    const sortedR=D.slice().sort((a,b)=>b.score-a.score);
+    let tp=0,fp=0; const Pn=nP||1, Nn=nN||1;
+    const roc=[new T.Vector3(ox,oy,0)];
+    sortedR.forEach(d=>{ if(d.pos) tp++; else fp++; roc.push(new T.Vector3(ox+(fp/Nn)*axW, oy+(tp/Pn)*axH, 0)); });
+    const rocCol = mode==="goldB"?AM : (mode==="goldC"?VI:GR);
+    gEval.add(new T.Line(new T.BufferGeometry().setFromPoints(roc),new T.LineBasicMaterial({color:new T.Color(rocCol).getHex()})));
+    // markers at vertices
+    roc.forEach((p,i)=>{ if(i===0)return; const dot=new T.Mesh(new T.SphereGeometry(0.1,10,8),api.mat(rocCol,{emissive:0.7})); dot.position.copy(p); gEval.add(dot); });
+    big("ROC  AUROC="+(AUR==null?"—":AUR.toFixed(2)),rocCol,0.95,ox+axW*0.5,oy+axH+0.6,0);
+    big("FPR",SL,0.72,ox+axW*0.5,oy-0.5,0);
+    big("TPR",SL,0.72,ox-0.55,oy+axH*0.5,0);
+
+    // legend
+    api.legend([
+      {color:GR,label:"labelled positive"},
+      {color:RO,label:"labelled negative"},
+      {color:AM,label:"hidden TP in N"},
+      {color:CY,label:"real edge"}
+    ],{corner:"tr",group:"labels"});
+
+    // ── metrics + snapshot ─────────────────────────────────────────────────
+    const modeName={goldA:"Gold A · complete",goldB:"Gold B · incomplete",goldC:"Gold C · easy random"}[mode];
+    api.setMetric("auroc", AUR==null?"—":AUR.toFixed(2));
+    api.setMetric("auprc", APR==null?"—":APR.toFixed(2));
+    api.setMetric("posrate", (baseAPR*100).toFixed(0)+"%");
+    api.setMetric("mislabeled", String(mislabel));
+
+    sceneSnap={
+      mode,
+      scoreA:+scoreA.toFixed(2), scoreB:+scoreB.toFixed(2), scoreC:+scoreC.toFixed(2),
+      easyGap:Math.round(easyGap),
+      auroc:AUR==null?null:+AUR.toFixed(3),
+      auprc:APR==null?null:+APR.toFixed(3),
+      baselineAuprc:+baseAPR.toFixed(3),
+      nPos:nP, nNeg:nN, mislabeledNegatives:mislabel,
+      aurocInflated: mode==="goldA" ? false : (mislabel>0 ? false : true)
+    };
+
+    const formula={
+      goldA:"AUROC = Σ_{p∈P,n∈N} 1[s_p &gt; s_n] / (|P|·|N|) = 1.00",
+      goldB:"GeneB ∈ N though TF1→GeneB is real → measured AUROC ≈ 0.75",
+      goldC:"easy random N (no motif, no co-expr) → AUROC ≈ 0.95 for the same f"
+    }[mode];
+
+    const insight={
+      goldA:"Complete, correct gold standard: P={GeneA,GeneB}, N={GeneC}. The predictor ranks both true edges above the true non-edge, so AUROC=1.00. This is the only regime where the score means what it says.",
+      goldB:"Incomplete gold standard: GeneB is a real edge not yet in the database, so it sits in N as a hidden true positive (amber). The model is unchanged and biologically perfect, yet AUROC collapses toward ~0.75 — the open-world problem penalises a correct prediction.",
+      goldC:"DREAM-style easy negatives: the three real targets are scored against random background genes with no motif and no co-expression. They separate trivially, so AUROC ≈ 0.95 even for a mediocre predictor. The number looks great and means almost nothing."
+    }[mode];
+
+    return {
+      badge:modeName+" · "+nP+"P / "+nN+"N",
+      formula:formula,
+      insight:insight,
+      state:"AUROC "+(AUR==null?"—":AUR.toFixed(2))+" · AUPRC "+(APR==null?"—":APR.toFixed(2))+" (baseline "+baseAPR.toFixed(2)+") · positive rate "+(baseAPR*100).toFixed(0)+"% · hidden TPs in N: "+mislabel+". Same predictor, different gold standard.",
+      metrics:{
+        auroc:AUR==null?"—":AUR.toFixed(2),
+        auprc:APR==null?"—":APR.toFixed(2),
+        posrate:(baseAPR*100).toFixed(0)+"%",
+        mislabeled:String(mislabel)
+      },
+      focus:{center:[0,0.4,0],radius:13}
+    };
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f13",
+    kind:"grn-gold-standard",
+    eyebrow:"Block F · GRN Inference",
+    title:"F13 · Ground truth and gold standards",
+    subtitle:"One predictor (GeneA=0.90, GeneB=0.70, GeneC=0.30) scored against three gold standards. The model never changes — only the negative set does, and the reported AUROC swings from 1.00 to ~0.75 to ~0.95.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene node, score bar, or ROC point.",
+    modes:[
+      {value:"goldA", label:"Gold A · complete & correct (AUROC 1.00)"},
+      {value:"goldB", label:"Gold B · incomplete, hidden TP in N (~0.75)"},
+      {value:"goldC", label:"Gold C · easy random negatives (~0.95)"}
+    ],
+    params:[
+      {key:"scoreA", label:"model score · GeneA (true edge)",min:0,max:100,step:1,value:90,
+       fmt:v=>(v/100).toFixed(2)},
+      {key:"scoreB", label:"model score · GeneB (true edge)",min:0,max:100,step:1,value:70,
+       fmt:v=>(v/100).toFixed(2)},
+      {key:"scoreC", label:"model score · GeneC (true non-edge)",min:0,max:100,step:1,value:30,
+       fmt:v=>(v/100).toFixed(2)},
+      {key:"easyGap",label:"easy-negative separation",min:0,max:100,step:1,value:50,
+       fmt:v=>Math.round(v)+"%",modes:["goldC"]}
+    ],
+    metrics:[
+      {key:"auroc",     label:"AUROC (measured)",accent:"cyan"},
+      {key:"auprc",     label:"AUPRC",accent:"violet"},
+      {key:"posrate",   label:"Positive rate (AUPRC baseline)",accent:"green"},
+      {key:"mislabeled",label:"Hidden TPs in N",accent:"amber"}
+    ],
+    layers:[
+      {group:"graph", label:"4-gene network"},
+      {group:"scores",label:"Ranked scores"},
+      {group:"eval",  label:"ROC panel"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Reset scores (0.90/0.70/0.30)",
+      on:api=>{api.setParam("scoreA",90);api.setParam("scoreB",70);api.setParam("scoreC",30);}
+    },
+    secondary:{
+      label:"Exercise-2 scores (0.60/0.85/0.20)",
+      on:api=>{api.setParam("scoreA",60);api.setParam("scoreB",85);api.setParam("scoreC",20);}
+    },
+    defaultCam:{theta:-0.32,phi:0.42,r:13},
+    hint:'<span style="color:#34d399">green</span>=labelled positive · <span style="color:#fb7185">rose</span>=labelled negative · <span style="color:#fbbf24">amber</span>=hidden true positive sitting in N · <span style="color:#4dd7ff">cyan</span>=real regulatory edge · dashed grey=true non-edge.',
+    onParam(api){ api.frame([0,0.4,0],13); },
+    onSelect(api,d){
+      if(d.kind==="tf")   api.setSelected("TF1 · regulator · 2 real targets (GeneA, GeneB)");
+      if(d.kind==="gene"||d.kind==="bar"){
+        const tag=(d.pos?"labelled POSITIVE":"labelled NEGATIVE")+(d.truth&&!d.pos?" · but REAL edge (hidden TP)":"");
+        api.setSelected(d.g+" · score "+d.score.toFixed(2)+" · "+tag);
+      }
+    },
+    build,
+    snapshot(s){
+      const scoreA=sc(s.scoreA), scoreB=sc(s.scoreB), scoreC=sc(s.scoreC);
+      const D=items(s.mode,scoreA,scoreB,scoreC,s.easyGap);
+      const AUR=auroc(D), APR=auprc(D);
+      const nP=D.filter(d=>d.pos).length, nN=D.filter(d=>!d.pos).length;
+      const mis=D.filter(d=>d.pos===false&&d.truth===true).length;
+      return {
+        mode:s.mode,
+        scoreA:+scoreA.toFixed(2), scoreB:+scoreB.toFixed(2), scoreC:+scoreC.toFixed(2),
+        easyGap:Math.round(s.easyGap),
+        auroc:AUR==null?null:+AUR.toFixed(3),
+        auprc:APR==null?null:+APR.toFixed(3),
+        baselineAuprc:+(nP/(nP+nN)).toFixed(3),
+        nPos:nP, nNeg:nN, mislabeledNegatives:mis,
+        aurocInflatedByEasyNegatives:(s.mode==="goldC")
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -13,396 +13,326 @@
 (function(){
   "use strict";
 
-  /* ── deterministic pseudo-random (no Math.random / Date.now) ──────── */
-  function frac(x){ return x - Math.floor(x); }
-  // unused but available for future deterministic jitter
+  /* ── deterministic pseudo-random (no Math.random / Date) ──────────── */
+  const frac = x => x - Math.floor(x);
+  const prand = i => frac(Math.sin(i*127.1+31.7)*43758.5453);
 
-  /* ─────────────────────────────────────────────────────────────────────
-   * GRAPH CONSTRUCTION
-   * Default 4 nodes [T, G1, G2, H] in diamond layout.
-   * Extra nodes k = 4..7 attach to H (hub) to let hub degree grow.
-   * ─────────────────────────────────────────────────────────────────────*/
-  function buildGraph(n){
-    /* positions (2D xz plane) */
-    const corePos = [
-      [ 0,   2.8],   // 0 = T  (transcription factor, top)
-      [-2.4,  0  ],  // 1 = G1 (target gene, left)
-      [ 2.4,  0  ],  // 2 = G2 (target gene, right)
-      [ 0,  -2.8],   // 3 = H  (hub gene, bottom)
-    ];
-    const labels = ["T","G1","G2","H"];
-    const pos    = corePos.slice();
+  /* ── worked-example graph: 4 nodes [T,G1,G2,H], edges T-G1,T-G2,G1-H,G2-H ──
+     With self-loops every node has d̃ = 3, so P = (1/3)·Ã and every edge
+     coefficient is 1/√(3·3) = 1/3. From X=(1,0.2,0.1,0) one step gives
+     PX = (0.433,0.400,0.367,0.100) — reproduced exactly below.            */
+  const NODES   = ["T","G1","G2","H"];
+  const NCOL    = ["#4dd7ff","#34d399","#34d399","#fbbf24"]; // T cyan, targets green, hub amber
+  const NLONG   = ["transcription factor","target gene","target gene","hub gene"];
+  // node ring layout (T top, hub bottom, targets sides) — a tidy diamond
+  const POS = [[0,0, 2.6],[-2.6,0,0],[2.6,0,0],[0,0,-2.6]];
+  const BASE_EDGES = [[0,1],[0,2],[1,3],[2,3]]; // undirected pairs
+  const X0 = [1.0,0.2,0.1,0.0]; // initial worked-example signal
 
-    for(let k = 4; k < n; k++){
-      const a = (k - 4) / Math.max(1, n - 4) * Math.PI * 1.6 + Math.PI * 0.85;
-      pos.push([Math.cos(a) * 3.6, -2.8 + Math.sin(a) * 2.0]);
-      labels.push("X" + (k - 3));
+  /* ── linear-algebra helpers (dense, tiny) ─────────────────────────── */
+  function buildOperator(n, edges, selfLoops, normalize){
+    // adjacency (symmetric)
+    const A = Array.from({length:n},()=>new Array(n).fill(0));
+    edges.forEach(([a,b])=>{A[a][b]=1;A[b][a]=1;});
+    if(selfLoops) for(let i=0;i<n;i++) A[i][i]=1;
+    const deg = A.map(r=>r.reduce((s,v)=>s+v,0));
+    const P = Array.from({length:n},()=>new Array(n).fill(0));
+    for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+      if(A[i][j]===0) continue;
+      if(normalize){ const di=deg[i]||1, dj=deg[j]||1; P[i][j]=A[i][j]/Math.sqrt(di*dj); }
+      else P[i][j]=A[i][j];
     }
-
-    /* base edges: the 4-cycle (T-G1, T-G2, G1-H, G2-H) */
-    const edges = [[0,1],[0,2],[1,3],[2,3]];
-    /* extra nodes always connect to H */
-    for(let k = 4; k < n; k++) edges.push([3, k]);
-
-    /* adjacency list (undirected) */
-    const adj = Array.from({length: n}, () => []);
-    edges.forEach(([a,b]) => { adj[a].push(b); adj[b].push(a); });
-
-    return {n, labels, edges, adj, pos};
+    return {A,deg,P};
   }
+  function matVec(M,v){return M.map(r=>r.reduce((s,x,j)=>s+x*v[j],0));}
+  function applyL(P,x0,L){let v=x0.slice();for(let l=0;l<L;l++)v=matVec(P,v);return v;}
+  function variance(v){const m=v.reduce((s,x)=>s+x,0)/v.length;return v.reduce((s,x)=>s+(x-m)*(x-m),0)/v.length;}
+  function maxCoef(P){let m=0;for(const r of P)for(const x of r)if(x>m)m=x;return m;}
 
-  /* ─────────────────────────────────────────────────────────────────────
-   * DEGREE with / without self-loops (Ã = A + I)
-   * ─────────────────────────────────────────────────────────────────────*/
-  function computeDegrees(adj, n, selfLoops){
-    const d = new Float64Array(n);
-    for(let i = 0; i < n; i++) d[i] = adj[i].length + (selfLoops ? 1 : 0);
-    return d;
-  }
-
-  /* ─────────────────────────────────────────────────────────────────────
-   * ONE GCN PROPAGATION STEP
-   *   normalize=true  : h_i' = Σ_{j∈Ñ(i)} (1/√(d̃_i·d̃_j)) h_j
-   *   normalize=false : h_i' = Σ_{j∈Ñ(i)} h_j   (raw sum)
-   * where Ñ(i) = N(i) ∪ {i} when selfLoops=true, else N(i).
-   * ─────────────────────────────────────────────────────────────────────*/
-  function gcnStep(h, adj, deg, n, selfLoops, normalize){
-    const out = new Float64Array(n);
-    for(let i = 0; i < n; i++){
-      /* self contribution */
-      if(selfLoops){
-        const sc = normalize ? 1.0 / deg[i] : 1.0;   // j==i: 1/√(d̃_i·d̃_i)=1/d̃_i
-        out[i] += sc * h[i];
-      }
-      /* neighbor contributions */
-      adj[i].forEach(j => {
-        const c = normalize ? 1.0 / Math.sqrt(deg[i] * deg[j]) : 1.0;
-        out[i] += c * h[j];
-      });
+  /* ── build a larger graph for layers / raw-vs-norm with a clear hub ─── */
+  // returns {n, edges, pos, isHub[], col[]}: a central hub connected to `spokes`
+  // leaf nodes, plus a couple of leaf-leaf rim edges so degrees vary.
+  function hubGraph(graphSize){
+    const spokes = Math.max(3, Math.round(graphSize)); // leaves around the hub
+    const n = spokes + 1;                              // node 0 = hub
+    const edges=[], pos=[], col=[], isHub=new Array(n).fill(false);
+    isHub[0]=true; pos.push([0,0,0]); col.push("#fbbf24"); // hub at centre
+    const R = 3.4 + spokes*0.07;
+    for(let k=0;k<spokes;k++){
+      const ang = (k/spokes)*Math.PI*2;
+      pos.push([Math.cos(ang)*R, 0, Math.sin(ang)*R]);
+      col.push("#4dd7ff");
+      edges.push([0,k+1]); // hub-leaf spoke
     }
-    return out;
+    // a few rim edges (every 3rd leaf to its neighbour) for degree variety
+    for(let k=0;k<spokes;k+=3){ const a=k+1, b=((k+1)%spokes)+1; if(a!==b) edges.push([a,b]); }
+    return {n,edges,pos,col,isHub,spokes};
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-   * APPLY L LAYERS
-   * initAllOnes: when true, start from h=[1,1,…,1] (used in raw-vs-norm
-   *              mode so hub-domination contrast is visible at layer 1).
-   * ─────────────────────────────────────────────────────────────────────*/
-  function propagate(g, L, selfLoops, normalize, source, initAllOnes){
-    const deg = computeDegrees(g.adj, g.n, selfLoops);
-    let h = new Float64Array(g.n);
-    if(initAllOnes){
-      for(let i = 0; i < g.n; i++) h[i] = 1.0;
-    } else {
-      h[source] = 1.0;
-    }
-    for(let l = 0; l < L; l++){
-      h = gcnStep(h, g.adj, deg, g.n, selfLoops, normalize);
-    }
-    return {h, deg};
+  let snap={};
+
+  /* ════════════════════════════ BUILD ════════════════════════════════ */
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const selfLoops = s.selfLoops>=0.5, normalize = s.normalize>=0.5;
+
+    if(s.mode==="operator")      return buildOperator3D(api,T,s,selfLoops,normalize);
+    if(s.mode==="layers")        return buildLayers(api,T,s,selfLoops,normalize);
+    return buildRawVsNorm(api,T,s,selfLoops,normalize);
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-   * STATISTICS
-   * ─────────────────────────────────────────────────────────────────────*/
-  function nodeVariance(h){
-    const n = h.length;
-    let sum = 0; for(let i = 0; i < n; i++) sum += h[i];
-    const mean = sum / n;
-    let v = 0; for(let i = 0; i < n; i++) v += (h[i]-mean)*(h[i]-mean);
-    return v / n;
-  }
-
-  /* ─────────────────────────────────────────────────────────────────────
-   * SCENE STATE (shared across snapshot)
-   * ─────────────────────────────────────────────────────────────────────*/
-  let scene = {v:0, hubVal:0, targetVal:0, maxCoef:0, L:0};
-
-  /* ─────────────────────────────────────────────────────────────────────
-   * HELPER: stem bar below a sphere
-   * ─────────────────────────────────────────────────────────────────────*/
-  function stem(api, x, z, yTop){
-    const T = api.THREE;
-    const h = Math.max(0.02, yTop);
-    const m = new T.Mesh(
-      new T.CylinderGeometry(0.012, 0.012, h, 6),
-      new T.MeshBasicMaterial({color: 0x24384a})
-    );
-    m.position.set(x, h / 2, z);
+  /* helper: edge tube between two node positions */
+  function tube(T,p,q,color,rad,op){
+    const a=new T.Vector3(...p), b=new T.Vector3(...q);
+    const len=a.distanceTo(b), mid=a.clone().add(b).multiplyScalar(0.5);
+    const g=new T.CylinderGeometry(rad,rad,len,12,1,true);
+    const m=new T.Mesh(g,new T.MeshStandardMaterial({color,emissive:new T.Color(color).multiplyScalar(0.5),emissiveIntensity:0.55,roughness:0.45,transparent:true,opacity:op==null?0.92:op}));
+    m.position.copy(mid);
+    m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), b.clone().sub(a).normalize());
     return m;
   }
+  function setP(sp,x,y,z){sp.position.set(x,y,z);return sp;}
 
-  function setP(sp, x, y, z){ sp.position.set(x, y, z); return sp; }
+  /* ── MODE 1 · operator P on the worked-example graph ─────────────────── */
+  function buildOperator3D(api,T,s,selfLoops,normalize){
+    const {A,deg,P}=buildOperator(4,BASE_EDGES,selfLoops,normalize);
+    const x1=matVec(P,X0);                          // one propagation step
+    const eG=api.group("edges"), nG=api.group("nodes"), lG=api.group("labels"), fG=api.group("flow");
 
-  /* ─────────────────────────────────────────────────────────────────────
-   * BUILD — called by engine on every state change
-   * ─────────────────────────────────────────────────────────────────────*/
-  function build(api){
-    const T = api.THREE;
-    const s = api.state;
-    const mode      = s.mode;
-    const nNodes    = Math.round(s.nodes);
-    const L         = Math.round(s.layers);
-    const selfLoops = s.selfLoops  >= 0.5;
-    const normalize = s.normalize  >= 0.5;
-    const source    = Math.min(Math.round(s.signalSource), nNodes - 1);
-
-    const g          = buildGraph(nNodes);
-    const initAllOnes = (mode === "raw-vs-norm");
-    const {h, deg}   = propagate(g, L, selfLoops, normalize, source, initAllOnes);
-    const v          = nodeVariance(h);
-    const hubVal     = nNodes >= 4 ? h[3] : 0;
-    const targetVal  = h[source];
-
-    /* max edge coefficient */
-    let maxCoef = 0;
-    g.edges.forEach(([a,b]) => {
-      const c = normalize ? 1.0 / Math.sqrt(deg[a] * deg[b]) : 1.0;
-      if(c > maxCoef) maxCoef = c;
-    });
+    // self-loop rings (drawn as torus on top of each node) when enabled
     if(selfLoops){
-      for(let i = 0; i < g.n; i++){
-        const c = normalize ? 1.0 / deg[i] : 1.0;
-        if(c > maxCoef) maxCoef = c;
-      }
+      NODES.forEach((nm,i)=>{
+        const ring=new T.Mesh(new T.TorusGeometry(0.62,0.05,10,28),
+          new T.MeshStandardMaterial({color:0xa78bfa,emissive:0x4c3a8a,emissiveIntensity:0.8,roughness:0.5}));
+        ring.rotation.x=Math.PI/2; ring.position.set(POS[i][0],POS[i][1]+1.55,POS[i][2]); nG.add(ring);
+      });
     }
 
-    /* color range */
-    let maxV = 0, minV = Infinity;
-    for(let i = 0; i < g.n; i++){ if(h[i] > maxV) maxV = h[i]; if(h[i] < minV) minV = h[i]; }
-    if(maxV < 0.001) maxV = 0.001;
-
-    /* groups */
-    const nG = api.group("nodes");
-    const eG = api.group("edges");
-    const lG = api.group("labels");
-    const cG = api.group("coefs");
-
-    /* ── EDGES ─────────────────────────────────────────────────── */
-    g.edges.forEach(([a,b]) => {
-      const pa = new T.Vector3(g.pos[a][0], 0.12, g.pos[a][1]);
-      const pb = new T.Vector3(g.pos[b][0], 0.12, g.pos[b][1]);
-      const c  = normalize ? 1.0 / Math.sqrt(deg[a] * deg[b]) : 1.0;
-      const br = normalize ? Math.min(1.0, c * (deg[a] + deg[b]) * 0.5) : 0.35;
-      const col = new T.Color().setHSL(0.56, 0.55, 0.18 + br * 0.28);
-
-      const d  = pb.clone().sub(pa);
-      const Ln = d.length();
-      const m  = new T.Mesh(
-        new T.CylinderGeometry(0.032, 0.032, Ln, 8),
-        new T.MeshStandardMaterial({color: col, emissive: col.clone().multiplyScalar(0.22), roughness: 0.5})
-      );
-      m.position.copy(pa).add(pb).multiplyScalar(0.5);
-      m.quaternion.setFromUnitVectors(new T.Vector3(0,1,0), d.clone().normalize());
-      eG.add(m);
-
-      /* coefficient label in operator mode */
-      if(mode === "operator"){
-        const mx = (g.pos[a][0] + g.pos[b][0]) / 2;
-        const mz = (g.pos[a][1] + g.pos[b][1]) / 2;
-        const coefStr = normalize
-          ? "1/√(" + deg[a] + "·" + deg[b] + ")=" + c.toFixed(3)
-          : "raw=1";
-        cG.add(setP(api.label(coefStr, "#fbbf24", 0.21), mx, 0.55, mz));
-      }
+    // edges with coefficient labels
+    BASE_EDGES.forEach(([a,b])=>{
+      eG.add(tube(T,POS[a],POS[b],"#46627e",0.05,0.85));
+      const c = P[a][b]; // coefficient 1/√(d̃a d̃b)
+      const mid=[(POS[a][0]+POS[b][0])/2,(POS[a][1]+POS[b][1])/2+0.55,(POS[a][2]+POS[b][2])/2];
+      const txt = normalize ? coefText(c) : "1";
+      lG.add(setP(api.bigLabel(txt, normalize?"#9fe0ff":"#fda4b0", 0.95), mid[0],mid[1],mid[2]));
     });
 
-    /* ── SELF-LOOPS (small tori) ──────────────────────────────── */
-    if(selfLoops){
-      for(let i = 0; i < g.n; i++){
-        const px = g.pos[i][0];
-        const pz = g.pos[i][1];
-        const sc  = normalize ? 1.0 / deg[i] : 1.0;
-        const col = new T.Color("#a78bfa");
-        const loop = new T.Mesh(
-          new T.TorusGeometry(0.30, 0.042, 8, 24, Math.PI * 1.3),
-          new T.MeshStandardMaterial({color: col, emissive: col.clone().multiplyScalar(0.45), roughness: 0.5})
-        );
-        loop.position.set(px, 0.36, pz);
-        loop.rotation.x = Math.PI / 2;
-        loop.rotation.z = -Math.PI * 0.25;
-        eG.add(loop);
-
-        if(mode === "operator"){
-          cG.add(setP(api.label("self=" + sc.toFixed(3), "#c4b5fd", 0.20), px + 0.6, 0.65, pz));
-        }
-      }
-    }
-
-    /* ── NODES ─────────────────────────────────────────────────── */
-    g.pos.forEach((p, i) => {
-      const val      = h[i];
-      const norm_v   = (val - minV) / (maxV - minV);
-      const yv       = 0.12 + val * 2.4;
-      const isSource = (i === source);
-      const isHub    = (i === 3 && nNodes >= 4);
-
-      let col;
-      if(isSource) col = new T.Color("#fbbf24");
-      else if(isHub) col = api.ramp(Math.min(1, norm_v), "#16233a", "#fb7185");
-      else           col = api.ramp(Math.min(1, norm_v), "#16233a", "#4dd7ff");
-
-      const radius = (isSource || isHub) ? 0.30 : 0.22;
-      const m = new T.Mesh(
-        new T.SphereGeometry(radius, 22, 22),
-        new T.MeshStandardMaterial({
-          color: col, emissive: col.clone().multiplyScalar(0.4),
-          emissiveIntensity: 0.5, roughness: 0.35
-        })
-      );
-      m.position.set(p[0], yv, p[1]);
-      api.pick(m, {node: {id: g.labels[i], v: val, deg: deg[i], role: isSource ? "source" : (isHub ? "hub" : "")}});
+    // nodes: height encodes the value AFTER one step; color = identity
+    NODES.forEach((nm,i)=>{
+      const v=x1[i], h=0.3+v*3.4;
+      const col=new T.Color(NCOL[i]);
+      const m=new T.Mesh(new T.CylinderGeometry(0.55,0.55,h,30),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.55),emissiveIntensity:0.7,roughness:0.38,metalness:0.1}));
+      m.position.set(POS[i][0],POS[i][1]+h/2,POS[i][2]);
+      api.pick(m,{node:i});
       nG.add(m);
-      nG.add(stem(api, p[0], p[1], yv));
-
-      /* label: node id + degree in operator mode + current value */
-      const degStr   = (mode === "operator") ? (" d̃=" + deg[i]) : "";
-      const labelClr = isSource ? "#fde68a" : (isHub ? "#fda4b0" : "#cfe0f0");
-      lG.add(setP(
-        api.label(g.labels[i] + degStr + " " + val.toFixed(3), labelClr, 0.32),
-        p[0], yv + 0.38, p[1]
-      ));
+      // before→after stack: ghost of the initial value
+      const h0=0.3+X0[i]*3.4;
+      const ghost=new T.Mesh(new T.CylinderGeometry(0.58,0.58,h0,30),
+        new T.MeshBasicMaterial({color:col,transparent:true,opacity:0.12,wireframe:true}));
+      ghost.position.set(POS[i][0],POS[i][1]+h0/2,POS[i][2]); nG.add(ghost);
+      // labels: name on top, value floating
+      lG.add(setP(api.bigLabel(nm,NCOL[i],1.05),POS[i][0],POS[i][1]+h+0.85,POS[i][2]));
+      lG.add(setP(api.bigLabel(v.toFixed(3),"#e8eef6",0.85),POS[i][0],POS[i][1]+h+0.42,POS[i][2]));
     });
 
-    /* ── MODE-SPECIFIC TEXT ─────────────────────────────────────── */
-    let badge, formula, insight, state;
+    const allEqualThird = normalize && selfLoops; // the canonical worked-example case
+    const mc = maxCoef(P);
+    const sum = x1.reduce((a,b)=>a+b,0);
 
-    if(mode === "operator"){
-      badge   = "Operator · L=" + L;
-      formula = "h_i'=Σ_{j∈Ñ(i)} (1/√(d̃_i·d̃_j)) h_j · Ã=A+I";
-      insight = "Each edge carries the symmetric coefficient 1/√(d̃_i·d̃_j). In the default 4-cycle all degrees equal 3 after self-loops, so every coefficient is 1/3. Add extra nodes to H: its degree rises, its coefficient shrinks, and hub domination is tamed.";
-      state   = "src=" + g.labels[source] + " · hubH=" + hubVal.toFixed(3) + " · maxCoef=" + maxCoef.toFixed(3) + " · L=" + L + (selfLoops ? " self-ON" : " self-OFF") + (normalize ? " norm-ON" : " norm-OFF");
-    } else if(mode === "layers"){
-      badge   = "Diffusion · P^" + L;
-      formula = "H^(L) = P^L H^(0)  →  low-pass smoothing";
-      insight = "Each layer applies P once. Node variance falls monotonically: at L=0 one node holds all signal; at large L the signal spreads uniformly — oversmoothing. This is the same variance collapse described in A12.";
-      state   = "L=" + L + " · variance=" + v.toFixed(4) + (v < 0.005 && L > 3 ? " ← oversmoothed" : "") + " · hubH=" + hubVal.toFixed(3);
+    snap={mode:s.mode, selfLoops:selfLoops?1:0, normalize:normalize?1:0,
+      maxCoef:+mc.toFixed(4), variance:+variance(x1).toFixed(4),
+      hubValue:+x1[3].toFixed(4), sum:+sum.toFixed(4), mean:+(sum/4).toFixed(4),
+      coefT:+P[0][1].toFixed(4), valT:+x1[0].toFixed(4), valG1:+x1[1].toFixed(4),
+      valG2:+x1[2].toFixed(4), valHub:+x1[3].toFixed(4)};
+
+    const coefStr = normalize ? (allEqualThird?"1/√(3·3) = 1/3 ≈ 0.333":maxCoef(P).toFixed(3))
+                              : "1 (unnormalized)";
+    let insight, state;
+    if(allEqualThird){
+      insight="Self-loops make every node degree d̃=3, so the symmetric coefficient on every edge is 1/√(d̃ᵢd̃ⱼ)=1/√9=1/3. One step of P on the active TF signal (T=1, G₁=0.2, G₂=0.1, H=0) pushes evidence one hop: T stays high, the two targets rise, the hub stays low because it never touches T directly.";
+      state="P = (1/3)Ã · after one step  T→0.433, G₁→0.400, G₂→0.367, H→0.100  (Σ="+sum.toFixed(3)+").";
+    } else if(!selfLoops){
+      insight="With self-loops OFF a node updates from neighbours only — it forgets its own measurement. Degrees drop to 2, so coefficients become 1/√(2·2)=1/2, and the TF no longer keeps its own high value. In biology the gene's own assay is usually the strongest evidence, so this is rarely what you want.";
+      state="no self-loops · max coefficient "+mc.toFixed(3)+" · after one step T→"+x1[0].toFixed(3)+", H→"+x1[3].toFixed(3)+".";
     } else {
-      /* raw-vs-norm */
-      badge   = (normalize ? "Normalized" : "Raw sum") + " · L=" + L;
-      formula = normalize
-        ? "P = D̃^{-½} Ã D̃^{-½}  (symmetric — tames hub)"
-        : "P = Ã  (raw — hub dominates)";
-      insight = "Toggle normalization: with raw adjacency the hub H accumulates a sum proportional to its degree and dominates. With symmetric normalization each message is scaled by 1/√(d̃_i·d̃_j) and the hub is tamed. Toggle self-loops to compare A vs Ã.";
-      state   = (normalize ? "NORM" : "RAW") + (selfLoops ? "+selfLoops" : "-selfLoops") + " · hubH=" + hubVal.toFixed(3) + " · variance=" + v.toFixed(4);
+      insight="Normalize OFF: every present edge contributes its raw weight 1 with no degree scaling. The update is a plain neighbour SUM, so values grow with degree instead of staying on a stable scale. Toggle normalize back on to recover the GCN operator P=D̃^(−1/2)ÃD̃^(−1/2).";
+      state="raw sum (no normalization) · max coefficient "+mc.toFixed(2)+" · H→"+x1[3].toFixed(3)+", Σ="+sum.toFixed(2)+".";
     }
 
-    scene = {v, hubVal, targetVal, maxCoef, L};
-
-    return {
-      badge, formula, insight, state,
-      metrics: {
-        hub:      hubVal.toFixed(3),
-        variance: v.toFixed(4),
-        maxCoef:  maxCoef.toFixed(3),
-        layer:    "L=" + L
-      },
-      focus: {center: [0, 0.8, 0], radius: Math.min(22, 11 + nNodes * 0.9)}
-    };
+    return {badge:"Operator P · 4-node example · "+(selfLoops?"Ã=A+I":"A only")+(normalize?" · symmetric norm":" · raw"),
+      formula:"P = D̃<sup>−1/2</sup> Ã D̃<sup>−1/2</sup> &nbsp;·&nbsp; coefficient<sub>ij</sub> = 1/√(d̃<sub>i</sub>d̃<sub>j</sub>) = "+coefStr,
+      insight, state,
+      metrics:{maxc:mc.toFixed(3),vari:variance(x1).toFixed(3),hub:x1[3].toFixed(3),sum:sum.toFixed(3)},
+      focus:{center:[0,1.4,0],radius:11}};
+  }
+  function coefText(c){
+    if(Math.abs(c-1/3)<1e-6) return "1/3";
+    if(Math.abs(c-1/2)<1e-6) return "1/2";
+    if(Math.abs(c-1/Math.sqrt(6))<1e-6) return "1/√6";
+    return c.toFixed(2);
   }
 
-  /* ─────────────────────────────────────────────────────────────────────
-   * MathLab config — mirrors a12 structure exactly
-   * ─────────────────────────────────────────────────────────────────────*/
-  MathLab.create({
-    id: "b01",
-    kind: "gcn-diffusion",
-
-    eyebrow:  "Block B · GNN Architectures",
-    title:    "B01 · GCN as normalized diffusion",
-    subtitle: "The operator P = D̃⁻¹⸝² Ã D̃⁻¹⸝² spreads one node's signal to its neighbors. Each layer lowers variance; too many layers oversmoothes. Remove normalization and watch the hub dominate.",
-
-    selectedLabel: "Node",
-    selectedHint:  "Click any node to inspect its value, degree, and role.",
-
-    modes: [
-      {value: "operator",    label: "Operator (coefficients)"},
-      {value: "layers",      label: "Layers (P^L diffusion)"},
-      {value: "raw-vs-norm", label: "Raw vs normalized"}
-    ],
-
-    params: [
-      {key: "nodes",
-       label: "graph size (nodes)",
-       min: 4, max: 8, step: 1, value: 4},
-
-      {key: "layers",
-       label: "diffusion layers L",
-       min: 0, max: 8, step: 1, value: 1},
-
-      {key: "signalSource",
-       label: "signal source (0=T…3=H)",
-       min: 0, max: 3, step: 1, value: 0},
-
-      {key: "selfLoops",
-       label: "self-loops  Ã = A+I",
-       min: 0, max: 1, step: 1, value: 1,
-       fmt: v => v >= 0.5 ? "ON" : "OFF"},
-
-      {key: "normalize",
-       label: "symmetric normalize",
-       min: 0, max: 1, step: 1, value: 1,
-       fmt: v => v >= 0.5 ? "ON" : "OFF",
-       modes: ["operator","raw-vs-norm"]}
-    ],
-
-    metrics: [
-      {key: "hub",      label: "Hub H value",      accent: "rose"},
-      {key: "variance", label: "Node variance",    accent: "cyan"},
-      {key: "maxCoef",  label: "Max coefficient",  accent: "amber"},
-      {key: "layer",    label: "Depth",            accent: "violet"}
-    ],
-
-    layers: [
-      {group: "edges",  label: "Edges / self-loops"},
-      {group: "nodes",  label: "Signal / height"},
-      {group: "labels", label: "Labels"},
-      {group: "coefs",  label: "Coefficients"}
-    ],
-
-    primary: {
-      label: "+1 layer",
-      on: api => { api.setParam("layers", Math.min(8, Math.round(api.state.layers) + 1)); }
-    },
-    secondary: {
-      label: "Toggle normalize",
-      on: api => { api.setParam("normalize", api.state.normalize >= 0.5 ? 0 : 1); }
-    },
-
-    defaultCam: {theta: -0.45, phi: 0.62, r: 13},
-
-    hint: '<span class="a">amber</span> = signal source · <span class="r">rose</span> = hub H · node height/colour = current value · <span style="color:#a78bfa">violet rings</span> = self-loops · edge labels show 1/√(d̃·d̃) in operator mode.',
-
-    onParam(api){
-      const n = Math.round(api.state.nodes);
-      api.frame([0, 0.8, 0], Math.min(22, 11 + n * 0.9));
-    },
-
-    onSelect(api, d){
-      if(d.node) api.setSelected(
-        d.node.id + (d.node.role ? " (" + d.node.role + ")" : "") +
-        " · val=" + d.node.v.toFixed(3) + " · d̃=" + d.node.deg
-      );
-    },
-
-    build,
-
-    snapshot(s){
-      const sc = scene;
-      return {
-        mode:       s.mode,
-        layers:     Math.round(s.layers),
-        nodes:      Math.round(s.nodes),
-        selfLoops:  s.selfLoops  >= 0.5,
-        normalize:  s.normalize  >= 0.5,
-        source:     Math.round(s.signalSource),
-        hubVal:     sc.hubVal   != null ? +sc.hubVal.toFixed(4)   : 0,
-        variance:   sc.v        != null ? +sc.v.toFixed(4)        : 0,
-        maxCoef:    sc.maxCoef  != null ? +sc.maxCoef.toFixed(4)  : 0
-      };
+  /* ── MODE 2 · iterate P^L → low-pass smoothing / oversmoothing ───────── */
+  function buildLayers(api,T,s,selfLoops,normalize){
+    const G=hubGraph(s.graphSize);
+    const {P}=buildOperator(G.n,G.edges,selfLoops,normalize);
+    const L=Math.round(s.layers);
+    // Initial graph SIGNAL (deterministic, distinct per node) so repeated P is a
+    // genuine low-pass filter and variance across nodes decays monotonically to 0.
+    //  source 0 = "TF-localized": hub bright, leaves dim → a sharp localized signal
+    //  source 1 = "alternating":  high-frequency ±pattern → killed fastest by P
+    const src=s.signalSource>=0.5 ? 1 : 0;
+    const x0=new Array(G.n);
+    for(let i=0;i<G.n;i++){
+      x0[i] = src===0 ? (G.isHub[i]?1.0:0.15+0.5*prand(i+7))
+                      : (i%2===0?0.9:0.1);
     }
-  });
+    const vL=applyL(P,x0,L), v0=x0.slice();
 
+    const eG=api.group("edges"), nG=api.group("nodes"), lG=api.group("labels");
+    // edges
+    G.edges.forEach(([a,b])=>eG.add(tube(T,G.pos[a],G.pos[b],"#33506e",0.035,0.6)));
+    // nodes: height = current value on a FIXED scale so convergence is visible
+    const mx=Math.max(...v0,1e-6);
+    G.pos.forEach((p,i)=>{
+      const v=vL[i], h=0.25+(v/mx)*3.2;
+      const col=api.ramp(v/mx,"#16324a","#4dd7ff");
+      const m=new T.Mesh(new T.CylinderGeometry(G.isHub[i]?0.6:0.42,G.isHub[i]?0.6:0.42,h,26),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.65,roughness:0.4}));
+      m.position.set(p[0],h/2,p[2]); api.pick(m,{node:i,val:v,hub:G.isHub[i]}); nG.add(m);
+      if(G.isHub[i]) lG.add(setP(api.bigLabel("hub",api.COL.amber,0.9),p[0],h+0.55,p[2]));
+    });
+    // a flat "mean" reference plane: oversmoothing collapses every node toward it
+    const mean=vL.reduce((a,b)=>a+b,0)/G.n;
+    const plane=new T.Mesh(new T.PlaneGeometry(11,11),
+      new T.MeshBasicMaterial({color:0xa78bfa,transparent:true,opacity:0.10,side:T.DoubleSide}));
+    plane.rotation.x=-Math.PI/2; plane.position.y=0.25+(mean/mx)*3.2; api.group("ref").add(plane);
+    lG.add(setP(api.bigLabel("steady state (flat)",api.COL.violet,1.4),0,0.25+(mean/mx)*3.2+0.35,0));
+
+    const var0=variance(v0), varL=variance(vL);
+    snap={mode:s.mode, layers:L, graphSize:Math.round(s.graphSize), selfLoops:selfLoops?1:0,
+      normalize:normalize?1:0, signalSource:src, variance:+varL.toFixed(6),
+      varianceL0:+var0.toFixed(6), maxCoef:+maxCoef(P).toFixed(4),
+      hubValue:+vL[0].toFixed(4), sum:+vL.reduce((a,b)=>a+b,0).toFixed(4),
+      mean:+mean.toFixed(4)};
+
+    const ratio = var0>1e-9 ? (varL/var0) : 0;
+    const insight = L===0
+      ? "L=0 is the raw signal: one node holds all the mass, every other node is flat. Variance across nodes is at its maximum. Raise L to watch each propagation step P·x average a node with its neighbours."
+      : "Each extra layer applies P once more. P is a low-pass filter, so high-frequency differences between nodes decay geometrically: variance across nodes shrinks toward zero and every node converges to the same value — this is oversmoothing. Deeper is not automatically more biological context.";
+    const state = "L="+L+" · variance across nodes "+varL.toFixed(4)+
+      (L>0?" (was "+var0.toFixed(4)+" at L=0 → "+(ratio*100).toFixed(0)+"% remains)":"")+
+      " · all heights collapse toward the violet steady-state plane.";
+
+    return {badge:"P^L smoothing · "+G.n+" nodes · L="+L,
+      formula:"H<sup>(L)</sup> = P<sup>L</sup>H<sup>(0)</sup> &nbsp;·&nbsp; variance(P<sup>L</sup>x) → 0 as L grows (low-pass / oversmoothing)",
+      insight, state,
+      metrics:{maxc:maxCoef(P).toFixed(3),vari:varL.toFixed(4),hub:vL[0].toFixed(3),sum:vL.reduce((a,b)=>a+b,0).toFixed(2)},
+      focus:{center:[0,1.2,0],radius:Math.min(18, 9+G.spokes*0.2)}};
+  }
+
+  /* ── MODE 3 · hub domination: raw ≫ normalized ──────────────────────── */
+  function buildRawVsNorm(api,T,s,selfLoops,normalize){
+    const G=hubGraph(s.graphSize);
+    const {deg,P}=buildOperator(G.n,G.edges,selfLoops,normalize);
+    // initialise ALL nodes to 1, take ONE aggregation step
+    const x0=new Array(G.n).fill(1.0);
+    const v1=matVec(P,x0);
+    const hubDeg=deg[0];
+
+    const eG=api.group("edges"), nG=api.group("nodes"), lG=api.group("labels");
+    G.edges.forEach(([a,b])=>eG.add(tube(T,G.pos[a],G.pos[b],"#33506e",0.04,0.6)));
+
+    // shared height scale so raw vs norm is visually comparable in absolute terms
+    const scale=3.0; // value 1.0 → height 3.0
+    G.pos.forEach((p,i)=>{
+      const v=v1[i], h=0.25+v*scale;
+      const isHub=G.isHub[i];
+      const col=isHub?new T.Color("#fbbf24"):new T.Color("#4dd7ff");
+      const m=new T.Mesh(new T.CylinderGeometry(isHub?0.65:0.4,isHub?0.65:0.4,h,28),
+        new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(isHub?0.7:0.45),emissiveIntensity:isHub?0.8:0.55,roughness:0.38}));
+      m.position.set(p[0],h/2,p[2]); api.pick(m,{node:i,val:v,hub:isHub}); nG.add(m);
+      if(isHub){
+        lG.add(setP(api.bigLabel("HUB",api.COL.amber,1.2),p[0],h+0.85,p[2]));
+        lG.add(setP(api.bigLabel(v1[i].toFixed(2),"#fff0c4",1.0),p[0],h+0.4,p[2]));
+      }
+    });
+    // reference line at value = 1 (where a well-behaved node should sit)
+    const refY=0.25+1.0*scale;
+    const ring=new T.Mesh(new T.TorusGeometry(G.spokes*0.07+3.6,0.03,8,64),
+      new T.MeshBasicMaterial({color:0x34d399,transparent:true,opacity:0.5}));
+    ring.rotation.x=Math.PI/2; ring.position.y=refY; api.group("ref").add(ring);
+    lG.add(setP(api.bigLabel("value = 1",api.COL.green,1.1),0,refY+0.3,G.spokes*0.07+3.6));
+
+    snap={mode:s.mode, normalize:normalize?1:0, selfLoops:selfLoops?1:0,
+      graphSize:Math.round(s.graphSize), hubDegree:hubDeg, hubValue:+v1[0].toFixed(4),
+      leafValue:+v1[1].toFixed(4), maxCoef:+maxCoef(P).toFixed(4),
+      variance:+variance(v1).toFixed(4), sum:+v1.reduce((a,b)=>a+b,0).toFixed(4),
+      mean:+(v1.reduce((a,b)=>a+b,0)/G.n).toFixed(4)};
+
+    const insight = normalize
+      ? "Symmetric normalization divides every message by √(d̃ᵢd̃ⱼ). Even though the hub has many edges, its value stays near 1 — degree no longer decides scale. The amber HUB column sits close to the green 'value = 1' ring, like every leaf."
+      : "RAW (unnormalized) aggregation is a plain neighbour SUM. The hub touches "+hubDeg+" nodes, so it accumulates ≈ "+hubDeg+" while leaves stay near 1. The amber HUB column towers far above the green 'value = 1' ring purely because of degree — exactly the bias normalization fixes.";
+    const state = normalize
+      ? "normalized · hub value "+v1[0].toFixed(2)+" ≈ leaf value "+v1[1].toFixed(2)+" ≈ 1 (degree no longer dominates)."
+      : "raw · hub value "+v1[0].toFixed(2)+" (≈ degree "+hubDeg+") ≫ leaf value "+v1[1].toFixed(2)+" — hub domination.";
+
+    return {badge:"Hub domination · raw vs normalized · hub degree "+hubDeg,
+      formula:normalize?"normalized:  Σ<sub>j</sub> x<sub>j</sub>/√(d̃<sub>i</sub>d̃<sub>j</sub>) → hub ≈ 1"
+                       :"raw sum:  Σ<sub>j∈N(i)</sub> x<sub>j</sub> → hub ≈ degree = "+hubDeg,
+      insight, state,
+      metrics:{maxc:maxCoef(P).toFixed(3),vari:variance(v1).toFixed(3),hub:v1[0].toFixed(2),sum:v1.reduce((a,b)=>a+b,0).toFixed(1)},
+      focus:{center:[0,1.2,0],radius:Math.min(18, 9+G.spokes*0.2)}};
+  }
+
+  /* ════════════════════════════ CONFIG ═══════════════════════════════ */
+  MathLab.create({
+    id:"b01", kind:"gcn-diffusion",
+    eyebrow:"Block B · GNN architectures", title:"B01 · GCN as normalized diffusion",
+    subtitle:"A GCN layer is normalized smoothing of evidence over a graph. Watch the propagation operator P = D̃⁻¹ᐟ²ÃD̃⁻¹ᐟ² move signal one hop, smooth it into oversmoothing as layers stack, and tame the hub that raw aggregation lets shout.",
+    selectedLabel:"Node", selectedHint:"Click a node to read its value.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"operator",label:"Operator P (one step)"},
+      {value:"layers",label:"Layers P^L (oversmoothing)"},
+      {value:"raw-vs-norm",label:"Raw vs normalized (hub)"}
+    ],
+    params:[
+      {key:"graphSize",label:"hub spokes (graph size)",min:4,max:16,step:1,value:8,fmt:v=>Math.round(v),modes:["layers","raw-vs-norm"]},
+      {key:"layers",label:"layers L",min:0,max:8,step:1,value:1,fmt:v=>Math.round(v),modes:["layers"]},
+      {key:"selfLoops",label:"self-loops Ã = A+I",min:0,max:1,step:1,value:1,fmt:v=>v>=0.5?"on":"off"},
+      {key:"normalize",label:"symmetric normalize",min:0,max:1,step:1,value:1,fmt:v=>v>=0.5?"on":"off"},
+      {key:"signalSource",label:"impulse on",min:0,max:1,step:1,value:0,fmt:v=>v>=0.5?"a leaf":"the hub",modes:["layers"]}
+    ],
+    metrics:[
+      {key:"maxc",label:"max coefficient",accent:"cyan"},
+      {key:"vari",label:"variance (smoothing)",accent:"violet"},
+      {key:"hub",label:"hub value",accent:"amber"},
+      {key:"sum",label:"Σ / mean",accent:"green"}
+    ],
+    layers:[
+      {group:"nodes",label:"Nodes"},
+      {group:"edges",label:"Edges"},
+      {group:"labels",label:"Labels"},
+      {group:"ref",label:"Reference"}
+    ],
+    primary:{label:"Toggle normalize",on:api=>{api.setParam("normalize",api.state.normalize>=0.5?0:1);}},
+    secondary:{label:"Toggle self-loops",on:api=>{api.setParam("selfLoops",api.state.selfLoops>=0.5?0:1);}},
+    defaultCam:{theta:-0.62,phi:0.74,r:11},
+    hint:'<span class="g">green</span> = target / well-behaved node · <span class="a">amber</span> = hub · cyan = TF / leaf · violet rings = self-loops & steady-state · height = node value. Drag to orbit, wheel to zoom, click a node.',
+    onSelect(api,d){
+      if(d.node!=null){
+        if(api.state.mode==="operator"){
+          api.setSelected(NODES[d.node]+" — "+NLONG[d.node]+" · value after one step "+(snap["val"+(["T","G1","G2","Hub"][d.node])]??"").toString());
+        } else {
+          api.setSelected((d.hub?"HUB":"leaf")+" node #"+d.node+" · value "+(d.val!=null?d.val.toFixed(3):"—"));
+        }
+      }
+    },
+    build,
+    snapshot(s){ return Object.assign({}, snap); }
+  });
 })();
 </script>
 </body>

@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure B08 — Transfer is a gain only after the leakage audit</title>
+<desc id="d">Four-panel captioned figure: Transfer is a gain only after the leakage audit</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE B08 · BLOCK B · GNN ARCHITECTURES</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Transfer is a gain only after the leakage audit</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Pretrain then adapt</text>
+<text x="56" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">theta* = argmin L_pre(f; G_src)</text>
+<text x="56" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">phi*   = adapt(theta*, D_tgt)</text>
+<text x="56" y="179.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">score  = eval(phi*, D_safe)</text>
+<text x="56" y="207" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">3 modes · 200 labels</text>
+<text x="502" y="139.5" fill="#fb7185" font-size="11.5" font-weight="700">scratch AP</text>
+<text x="642" y="139.5" fill="#9fb4cc" font-size="11.5">0.30</text>
+<text x="502" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">linear probe</text>
+<text x="642" y="159.5" fill="#9fb4cc" font-size="11.5">0.36</text>
+<text x="502" y="179.5" fill="#34d399" font-size="11.5" font-weight="700">adapter</text>
+<text x="642" y="179.5" fill="#9fb4cc" font-size="11.5">0.43</text>
+<text x="502" y="199.5" fill="#fbbf24" font-size="11.5" font-weight="700">full fine-tune</text>
+<text x="642" y="199.5" fill="#9fb4cc" font-size="11.5">0.39</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Gain vs negative transfer</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">gain = (0.43-0.30)/0.30 = 0.433</text>
+<text x="56" y="329.5" fill="#34d399" font-size="11.5" font-weight="700">GRN gain</text>
+<text x="196" y="329.5" fill="#9fb4cc" font-size="11.5">+43.3%</text>
+<text x="56" y="349.5" fill="#fbbf24" font-size="11.5" font-weight="700">drug scratch</text>
+<text x="196" y="349.5" fill="#9fb4cc" font-size="11.5">0.22</text>
+<text x="56" y="369.5" fill="#fb7185" font-size="11.5" font-weight="700">drug adapter</text>
+<text x="196" y="369.5" fill="#9fb4cc" font-size="11.5">0.21</text>
+<text x="56" y="397" fill="#8a99ad" font-size="11">Wrong source (cell graph -&gt; drugs) gives negative</text>
+<text x="56" y="417" fill="#8a99ad" font-size="11">transfer.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Audit before you claim</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">source match</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">needed</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">label budget</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">low-label</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">domain shift</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">test it</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">leakage</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">the killer</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure B08. </text>
+<text x="140.59" y="538" fill="#c7d2dd" font-size="13">A </text>
+<text x="156.71" y="538" fill="#c7d2dd" font-size="13">graph </text>
+<text x="205.07" y="538" fill="#c7d2dd" font-size="13">foundation </text>
+<text x="293.73" y="538" fill="#c7d2dd" font-size="13">model </text>
+<text x="342.09" y="538" fill="#c7d2dd" font-size="13">is </text>
+<text x="366.27" y="538" fill="#c7d2dd" font-size="13">pretrain-then-adapt, </text>
+<text x="535.53" y="538" fill="#c7d2dd" font-size="13">scored </text>
+<text x="591.95" y="538" fill="#c7d2dd" font-size="13">on </text>
+<text x="616.13" y="538" fill="#c7d2dd" font-size="13">a </text>
+<text x="632.25" y="538" fill="#c7d2dd" font-size="13">leakage-safe </text>
+<text x="737.03" y="538" fill="#c7d2dd" font-size="13">set. </text>
+<text x="777.33" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="810.86" y="538" fill="#c7d2dd" font-size="13">theta* </text>
+<text x="867.28" y="538" fill="#c7d2dd" font-size="13">is</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">pretrained </text>
+<text x="128.66" y="559" fill="#c7d2dd" font-size="13">on </text>
+<text x="152.84" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="168.96" y="559" fill="#c7d2dd" font-size="13">broad </text>
+<text x="217.32" y="559" fill="#c7d2dd" font-size="13">source </text>
+<text x="273.74" y="559" fill="#c7d2dd" font-size="13">graph, </text>
+<text x="330.16" y="559" fill="#c7d2dd" font-size="13">then </text>
+<text x="370.46" y="559" fill="#c7d2dd" font-size="13">a </text>
+<text x="386.58" y="559" fill="#c7d2dd" font-size="13">small </text>
+<text x="434.94" y="559" fill="#c7d2dd" font-size="13">head </text>
+<text x="475.24" y="559" fill="#c7d2dd" font-size="13">adapts </text>
+<text x="531.66" y="559" fill="#c7d2dd" font-size="13">it. </text>
+<text x="563.9" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="597.43" y="559" fill="#c7d2dd" font-size="13">With </text>
+<text x="637.73" y="559" fill="#c7d2dd" font-size="13">only </text>
+<text x="678.03" y="559" fill="#c7d2dd" font-size="13">200 </text>
+<text x="710.27" y="559" fill="#c7d2dd" font-size="13">labels, </text>
+<text x="774.75" y="559" fill="#c7d2dd" font-size="13">scratch </text>
+<text x="839.23" y="559" fill="#c7d2dd" font-size="13">AP</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">0.30 </text>
+<text x="80.3" y="580" fill="#c7d2dd" font-size="13">rises </text>
+<text x="128.66" y="580" fill="#c7d2dd" font-size="13">to </text>
+<text x="152.84" y="580" fill="#c7d2dd" font-size="13">0.36 </text>
+<text x="193.14" y="580" fill="#c7d2dd" font-size="13">(probe), </text>
+<text x="265.68" y="580" fill="#c7d2dd" font-size="13">0.43 </text>
+<text x="305.98" y="580" fill="#c7d2dd" font-size="13">(adapter, </text>
+<text x="386.58" y="580" fill="#c7d2dd" font-size="13">best), </text>
+<text x="443" y="580" fill="#c7d2dd" font-size="13">0.39 </text>
+<text x="483.3" y="580" fill="#c7d2dd" font-size="13">(fine-tune </text>
+<text x="571.96" y="580" fill="#c7d2dd" font-size="13">overfits). </text>
+<text x="660.62" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="694.15" y="580" fill="#c7d2dd" font-size="13">The </text>
+<text x="726.39" y="580" fill="#c7d2dd" font-size="13">adapter </text>
+<text x="790.87" y="580" fill="#c7d2dd" font-size="13">gain </text>
+<text x="831.17" y="580" fill="#c7d2dd" font-size="13">is</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">+43.3%, </text>
+<text x="104.48" y="601" fill="#c7d2dd" font-size="13">but </text>
+<text x="136.72" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="168.96" y="601" fill="#c7d2dd" font-size="13">same </text>
+<text x="209.26" y="601" fill="#c7d2dd" font-size="13">model </text>
+<text x="257.62" y="601" fill="#c7d2dd" font-size="13">on </text>
+<text x="281.8" y="601" fill="#c7d2dd" font-size="13">drug </text>
+<text x="322.1" y="601" fill="#c7d2dd" font-size="13">repurposing </text>
+<text x="418.82" y="601" fill="#c7d2dd" font-size="13">drops </text>
+<text x="467.18" y="601" fill="#c7d2dd" font-size="13">0.22 </text>
+<text x="507.48" y="601" fill="#c7d2dd" font-size="13">-&gt; </text>
+<text x="531.66" y="601" fill="#c7d2dd" font-size="13">0.21: </text>
+<text x="580.02" y="601" fill="#c7d2dd" font-size="13">negative </text>
+<text x="652.56" y="601" fill="#c7d2dd" font-size="13">transfer. </text>
+<text x="733.16" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="766.69" y="601" fill="#c7d2dd" font-size="13">The </text>
+<text x="798.93" y="601" fill="#c7d2dd" font-size="13">gain </text>
+<text x="839.23" y="601" fill="#c7d2dd" font-size="13">is</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">real </text>
+<text x="80.3" y="622" fill="#c7d2dd" font-size="13">only </text>
+<text x="120.6" y="622" fill="#c7d2dd" font-size="13">after </text>
+<text x="168.96" y="622" fill="#c7d2dd" font-size="13">auditing </text>
+<text x="241.5" y="622" fill="#c7d2dd" font-size="13">source </text>
+<text x="297.92" y="622" fill="#c7d2dd" font-size="13">match, </text>
+<text x="354.34" y="622" fill="#c7d2dd" font-size="13">label </text>
+<text x="402.7" y="622" fill="#c7d2dd" font-size="13">budget, </text>
+<text x="467.18" y="622" fill="#c7d2dd" font-size="13">domain </text>
+<text x="523.6" y="622" fill="#c7d2dd" font-size="13">shift, </text>
+<text x="580.02" y="622" fill="#c7d2dd" font-size="13">and </text>
+<text x="612.26" y="622" fill="#c7d2dd" font-size="13">leakage.</text>
+</svg>

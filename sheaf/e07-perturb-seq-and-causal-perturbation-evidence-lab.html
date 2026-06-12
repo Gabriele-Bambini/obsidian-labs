@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E07 · Perturb-seq and causal perturbation evidence</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic helpers (no Math.random / Date) ────────────────────────
+  const log2=x=>Math.log(Math.max(x,1e-9))/Math.LN2;
+
+  // ── FACTS: the note's Section-5 worked example (K562 erythroid) ──────────
+  // Mean counts per perturbation (cells normalised to 10,000 UMI).
+  const TARGETS=["HBB","GYPA","CD34","MYC"];
+  const NTC ={HBB:1500,GYPA:800,CD34:200,MYC:600};
+  const G1  ={HBB:180, GYPA:95, CD34:350,MYC:580};   // sgGATA1 knockdown
+  const G2  ={HBB:890, GYPA:420,CD34:450,MYC:610};   // sgGATA2 knockdown
+  // Self-knockdown (perturbed-gene own expression) for efficiency.
+  const SELF={GATA1:{ntc:850,kd:120}, GATA2:{ntc:300,kd:180}};
+  // GENIE3 associational importances (hypothetical baseline from the note).
+  const GENIE3={ "GATA1>HBB":0.89, "GATA1>CD34":0.71, "GATA2>HBB":0.65,
+                 "GATA1>GYPA":0.83, "GATA2>GYPA":0.58, "GATA1>MYC":0.34 };
+
+  function lfc(pert,gene){ const c=(pert==="GATA1")?G1:G2; return log2(c[gene]/NTC[gene]); }
+  function effLFC(tf){ const s=SELF[tf]; return log2(s.kd/s.ntc); }            // negative
+  function effPct(tf){ return Math.round((1-Math.pow(2,effLFC(tf)))*100); }    // % knockdown
+
+  let sceneSnap={};
+  const FOCUS={ lfc:[0,1.4,0,13], efficiency:[0,1.2,0,13], causal:[0,1.6,0,13.5] };
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const lfcThr  = s.lfcThr;                  // |LFC| edge threshold
+    const effThr  = s.effThr;                  // min knockdown % to trust a perturbation
+    const pertSel = Math.round(s.pertSel);     // 0 = GATA1, 1 = GATA2
+    const showAssoc = Math.round(s.showAssoc); // 0/1 overlay GENIE3 in causal mode
+
+    const gGraph =api.group("graph");
+    const gBars  =api.group("bars");
+    const gAux   =api.group("aux");
+    const gLabels=api.group("labels");
+
+    function addBig(t,c,sz,x,y,z){const sp=api.bigLabel(t,c,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+    function addSm (t,c,sz,x,y,z){const sp=api.label(t,c,sz);sp.position.set(x,y,z);gLabels.add(sp);return sp;}
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", RO="#fb7185", SL="#54667c";
+    const colCY=new T.Color(CY), colGR=new T.Color(GR), colAM=new T.Color(AM),
+          colSL=new T.Color(SL);
+
+    const pertName = pertSel===0?"GATA1":"GATA2";
+    const eff      = effPct(pertName);
+    const passEff  = eff>=effThr;
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: lfc — counts → signed LFC bars (the measurement)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="lfc"){
+      const xPos=[-3.6,-1.2,1.2,3.6];
+      let nEdge=0, maxAbs=0;
+      const yBase=0;
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-5.2,yBase,0),new T.Vector3(5.2,yBase,0)]),
+        new T.LineBasicMaterial({color:0x2a3d52})));
+
+      TARGETS.forEach((g,i)=>{
+        const v=lfc(pertName,g);                 // signed LFC
+        maxAbs=Math.max(maxAbs,Math.abs(v));
+        const x=xPos[i];
+        const h=Math.abs(v)*1.05;
+        const sig=Math.abs(v)>=lfcThr;
+        if(sig) nEdge++;
+        const c=(v<0)?colCY.clone():colAM.clone();   // activation (neg LFC) cyan; de-repression amber
+        const dim=!sig;
+        const bar=new T.Mesh(
+          new T.BoxGeometry(1.3,Math.max(h,0.04),1.3),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(dim?0.18:0.7),
+            emissiveIntensity:dim?0.2:0.72,roughness:0.4,transparent:dim,opacity:dim?0.42:1.0})
+        );
+        const cy=(v<0)?(yBase-h/2):(yBase+h/2);
+        bar.position.set(x,cy,0);
+        gBars.add(bar);
+        api.pick(bar,{lfcBar:{gene:g,lfc:+v.toFixed(2),sig:sig}});
+
+        const ly=(v<0)?(yBase-h-0.55):(yBase+h+0.55);
+        addBig((v>=0?"+":"")+v.toFixed(2),c.getStyle(),1.45,x,ly,0);
+        addSm(g,"#cfe0f0",0.4,x,yBase+(v<0?0.42:-0.42),0);
+      });
+
+      // dashed threshold guides at ±lfcThr
+      [lfcThr,-lfcThr].forEach(tv=>{
+        const y=yBase+tv*1.05;
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+          [new T.Vector3(-5.0,y,0),new T.Vector3(5.0,y,0)]),
+          new T.LineBasicMaterial({color:new T.Color(VI).getHex(),transparent:true,opacity:0.55})));
+      });
+      addBig("|LFC| > "+lfcThr.toFixed(1),VI,1.1,4.7,yBase+lfcThr*1.05+0.4,0);
+      addBig("sg"+pertName+" knockdown",GR,1.45,0,4.0,0);
+      addBig("LFC = log2( mean_KD / mean_NTC )","#8a99ad",1.0,0,-4.0,0);
+
+      sceneSnap={mode,pert:pertName,lfcThr:+lfcThr.toFixed(2),effThr,
+        lfc_HBB:+lfc(pertName,"HBB").toFixed(2),lfc_GYPA:+lfc(pertName,"GYPA").toFixed(2),
+        lfc_CD34:+lfc(pertName,"CD34").toFixed(2),lfc_MYC:+lfc(pertName,"MYC").toFixed(2),
+        sigEdges:nEdge,maxAbsLFC:+maxAbs.toFixed(2),kdEff:eff};
+
+      return {
+        badge:"LFC measurement · sg"+pertName+" · "+nEdge+" of 4 pass",
+        formula:"LFC(g<sub>p</sub>→g<sub>t</sub>) = log<sub>2</sub> x̄<sub>t|perturbed</sub> − log<sub>2</sub> x̄<sub>t|NTC</sub>",
+        insight:"Each cell knows its CRISPR guide. Comparing mean expression of a target gene in sg"+pertName+" cells against non-targeting control gives a signed log2-fold-change. Negative LFC (cyan, KD lowers the gene) means "+pertName+" activates it; positive LFC (amber) means it represses it. Bars inside the violet ±"+lfcThr.toFixed(1)+" band are below threshold — no edge.",
+        state:"sg"+pertName+": HBB "+lfc(pertName,"HBB").toFixed(2)+", GYPA "+lfc(pertName,"GYPA").toFixed(2)+", CD34 "+(lfc(pertName,"CD34")>=0?"+":"")+lfc(pertName,"CD34").toFixed(2)+", MYC "+(lfc(pertName,"MYC")>=0?"+":"")+lfc(pertName,"MYC").toFixed(2)+". Significant edges: "+nEdge+"/4.",
+        metrics:{candidateEdges:nEdge+" / 4",knockdownEff:eff+"%",strongestLFC:maxAbs.toFixed(2),confidence:nEdge>0?"measured":"—"},
+        focus:{center:[FOCUS.lfc[0],FOCUS.lfc[1],FOCUS.lfc[2]],radius:FOCUS.lfc[3]}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: efficiency — gate edges by knockdown efficiency
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="efficiency"){
+      const e=effLFC(pertName);                 // negative self-LFC
+      const gaugeH=Math.min(Math.abs(e)*1.3,4.2);
+      const gx=-3.4;
+      const gc=passEff?colGR.clone():new T.Color(RO);
+      const gbar=new T.Mesh(new T.BoxGeometry(1.5,gaugeH,1.5),
+        new T.MeshStandardMaterial({color:gc,emissive:gc.clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.4}));
+      gbar.position.set(gx,gaugeH/2,0); gAux.add(gbar);
+      api.pick(gbar,{gauge:{tf:pertName,eff:eff,pass:passEff}});
+      addBig(eff+"% KD",gc.getStyle(),1.6,gx,gaugeH+0.55,0);
+      addSm("sg"+pertName+" self-LFC "+e.toFixed(2),"#cfe0f0",0.4,gx,-0.5,0);
+
+      // threshold line: effThr% knockdown → self-LFC = log2(1 - effThr/100)
+      const thrSelf=log2(1-effThr/100);
+      const thrY=Math.min(Math.abs(thrSelf)*1.3,4.2);
+      gAux.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(gx-1.3,thrY,0),new T.Vector3(gx+1.3,thrY,0)]),
+        new T.LineBasicMaterial({color:new T.Color(VI).getHex()})));
+      addBig("gate "+effThr+"%",VI,1.0,gx,thrY+0.35,0);
+
+      const xPos=[0.4,1.9,3.4,4.9];
+      let high=0,low=0;
+      TARGETS.forEach((g,i)=>{
+        const v=lfc(pertName,g);
+        const sig=Math.abs(v)>=lfcThr;
+        const x=xPos[i];
+        const h=Math.abs(v)*0.95;
+        let c, conf;
+        if(!sig){ c=colSL.clone(); conf="null"; }
+        else if(passEff){ c=colCY.clone(); conf="high"; high++; }
+        else { c=colAM.clone().lerp(colSL,0.35); conf="low"; low++; }
+        const bar=new T.Mesh(new T.BoxGeometry(1.0,Math.max(h,0.05),1.0),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(sig?0.65:0.2),
+            emissiveIntensity:sig?0.7:0.2,roughness:0.4,transparent:!sig,opacity:sig?1.0:0.4}));
+        bar.position.set(x,h/2,0); gBars.add(bar);
+        api.pick(bar,{edge:{src:pertName,dst:g,lfc:+v.toFixed(2),conf:conf}});
+        addBig((v>=0?"+":"")+v.toFixed(2),c.getStyle(),1.15,x,h+0.4,0);
+        addSm(pertName+"→"+g,"#9fb3c8",0.36,x,-0.42,0);
+      });
+
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(
+        [new T.Vector3(-0.2,0,0),new T.Vector3(5.6,0,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      addBig(passEff?"PASS → high-confidence edges":"FAIL → low-confidence only",
+        passEff?GR:RO,1.3,2.3,4.0,0);
+
+      sceneSnap={mode,pert:pertName,effThr,lfcThr:+lfcThr.toFixed(2),
+        kdEff:eff,effPass:passEff?1:0,highConfEdges:high,lowConfEdges:low,
+        selfLFC:+e.toFixed(2),gateSelfLFC:+thrSelf.toFixed(2)};
+
+      return {
+        badge:"Efficiency gate · sg"+pertName+" "+eff+"% · "+(passEff?"PASS":"FAIL"),
+        formula:"keep g<sub>p</sub> edges iff KD% ≥ "+effThr+"%  ( self-LFC ≤ "+thrSelf.toFixed(2)+" )",
+        insight:"A perturbation only earns high-confidence edges if it actually silenced its own gene. sgGATA1 reaches "+effPct("GATA1")+"% knockdown (self-LFC "+effLFC("GATA1").toFixed(2)+") and passes; sgGATA2 reaches only "+effPct("GATA2")+"% (self-LFC "+effLFC("GATA2").toFixed(2)+") and fails — its downstream LFCs survive only as low-confidence. Below-threshold |LFC| edges (grey) are dropped regardless.",
+        state:"sg"+pertName+" = "+eff+"% KD ("+(passEff?"≥":"<")+" "+effThr+"% gate). High-conf edges: "+high+", low-conf: "+low+".",
+        metrics:{candidateEdges:(high+low)+" / 4",knockdownEff:eff+"%",strongestLFC:Math.max(Math.abs(lfc(pertName,"HBB")),Math.abs(lfc(pertName,"GYPA"))).toFixed(2),confidence:passEff?"HIGH":"low"},
+        focus:{center:[FOCUS.efficiency[0],FOCUS.efficiency[1],FOCUS.efficiency[2]],radius:FOCUS.efficiency[3]}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: causal — G_perturb graph; causal vs associational (GENIE3)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="causal"){
+      const tfPos=new T.Vector3(-3.8,1.4,0);
+      api.node(tfPos,{r:0.5,color:passEff?GR:AM,label:pertName,labelColor:passEff?GR:AM,group:"graph",
+        pick:{tf:{name:pertName,eff:eff,pass:passEff}}});
+      addSm(eff+"% KD",passEff?GR:RO,0.4,tfPos.x,tfPos.y-0.95,0);
+
+      const tgtY=[3.4,1.6,-0.2,-2.0];
+      let causalEdges=0, agree=0, assocOnly=0;
+      TARGETS.forEach((g,i)=>{
+        const p=new T.Vector3(3.4,tgtY[i],0);
+        const v=lfc(pertName,g);
+        const sig=Math.abs(v)>=lfcThr;
+        if(sig) causalEdges++;
+        const ec=(v<0)?CY:AM;
+        const nodeC=sig?ec:SL;
+        api.node(p,{r:0.34,color:nodeC,label:g,labelColor:"#cfe0f0",group:"graph",
+          pick:{target:{gene:g,lfc:+v.toFixed(2),sig:sig}}});
+
+        if(sig){
+          const w=0.05+Math.min(Math.abs(v),3.2)*0.045;
+          api.arrow(tfPos,p,{color:ec,width:w,head:0.32,group:"graph",
+            label:(v>=0?"+":"")+v.toFixed(2),labelColor:ec});
+        }
+
+        const gimp=GENIE3[pertName+">"+g];
+        if(showAssoc===1 && gimp!=null){
+          const off=new T.Vector3(0,0,1.4);
+          api.edge(tfPos.clone().add(off),p.clone().add(off),
+            {color:VI,dashed:true,opacity:0.85,width:0.03,group:"aux"});
+          addSm("g3 "+gimp.toFixed(2),VI,0.32,(tfPos.x+p.x)/2+0.4,(tfPos.y+p.y)/2-0.3,1.4);
+          if(sig) agree++; else assocOnly++;
+        }
+      });
+
+      addBig(pertName+" → targets (G_perturb)",passEff?GR:AM,1.4,0,4.3,0);
+      addBig(showAssoc===1?"solid = causal (Perturb-seq) · dashed = GENIE3 (assoc.)":"solid = causal Perturb-seq edges",
+        "#8a99ad",1.0,0,-3.4,0);
+      api.legend([
+        {color:CY,label:"activator (neg LFC)"},
+        {color:AM,label:"repressor (pos LFC)"},
+        {color:SL,label:"below threshold"},
+        {color:VI,label:"GENIE3 assoc."}
+      ],{corner:"bl",group:"labels"});
+
+      sceneSnap={mode,pert:pertName,lfcThr:+lfcThr.toFixed(2),effThr,
+        causalEdges:causalEdges,assocOverlay:showAssoc,genie3Agree:agree,
+        assocOnlyEdges:assocOnly,kdEff:eff,effPass:passEff?1:0};
+
+      const overlap=(showAssoc===1)?(agree+" agree, "+assocOnly+" assoc-only"):"hidden";
+      return {
+        badge:"Causal graph · "+pertName+" → "+causalEdges+" edges"+(showAssoc===1?" · vs GENIE3":""),
+        formula:"E_perturb = { g<sub>p</sub>→g<sub>t</sub> : |LFC| > "+lfcThr.toFixed(1)+" ∧ FDR < 0.05 }",
+        insight:"This is the causal perturbation graph: an intervention, not a correlation. Each solid arrow is a measured downstream consequence of silencing "+pertName+", signed by direction (cyan activator, amber repressor). The dashed violet GENIE3 overlay shows where association alone would draw edges — it can fire where Perturb-seq finds no causal effect (e.g. MYC), the false positives that interventional evidence rejects.",
+        state:"Causal edges from "+pertName+": "+causalEdges+". GENIE3 overlap: "+overlap+".",
+        metrics:{candidateEdges:causalEdges+" / 4",knockdownEff:eff+"%",strongestLFC:Math.max(Math.abs(lfc(pertName,"HBB")),Math.abs(lfc(pertName,"GYPA"))).toFixed(2),confidence:showAssoc===1?("agree "+agree):"causal"},
+        focus:{center:[FOCUS.causal[0],FOCUS.causal[1],FOCUS.causal[2]],radius:FOCUS.causal[3]}
+      };
+    }
+
+    return {badge:"E07",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e07",
+    kind:"perturb-seq-causal-evidence",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E07 · Perturb-seq and causal perturbation evidence",
+    subtitle:"A 4-gene GATA1/GATA2 knockdown in K562 erythroid cells. Three views: measuring LFC from counts, gating edges by knockdown efficiency, and the causal graph vs associational GENIE3.",
+    selectedLabel:"Element",
+    selectedHint:"Click a bar, node, or edge.",
+    modes:[
+      {value:"lfc",        label:"LFC measurement (counts → log2-fold-change)"},
+      {value:"efficiency", label:"Efficiency gate (knockdown quality)"},
+      {value:"causal",     label:"Causal graph (vs GENIE3 association)"}
+    ],
+    params:[
+      {key:"pertSel",  label:"perturbation (0=sgGATA1 1=sgGATA2)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"sgGATA1":"sgGATA2"},
+      {key:"lfcThr",   label:"|LFC| edge threshold",min:0.2,max:2.0,step:0.1,value:0.5,
+       fmt:v=>v.toFixed(1)},
+      {key:"effThr",   label:"min knockdown % (efficiency gate)",min:20,max:90,step:5,value:50,
+       fmt:v=>Math.round(v)+"%",modes:["efficiency","causal"]},
+      {key:"showAssoc",label:"GENIE3 overlay (0=off 1=on)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"off":"on",modes:["causal"]}
+    ],
+    metrics:[
+      {key:"candidateEdges",label:"Edges above threshold",accent:"cyan"},
+      {key:"knockdownEff",  label:"Knockdown efficiency",accent:"green"},
+      {key:"strongestLFC",  label:"Strongest |LFC|",accent:"amber"},
+      {key:"confidence",    label:"Edge confidence",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"Causal graph"},
+      {group:"bars",   label:"LFC / edge bars"},
+      {group:"aux",    label:"Efficiency / GENIE3"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"sgGATA1 (good KD)",
+      on:api=>{api.setParam("pertSel",0);}
+    },
+    secondary:{
+      label:"sgGATA2 (poor KD)",
+      on:api=>{api.setParam("pertSel",1);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=activator (neg LFC) · <span style="color:#fbbf24">amber</span>=repressor (pos LFC) · <span style="color:#34d399">green</span>=passes KD gate · <span style="color:#fb7185">rose</span>=fails gate · <span style="color:#a78bfa">violet</span>=threshold / GENIE3 · grey=below threshold.',
+    onParam(api){
+      const F=FOCUS[api.state.mode]||[0,1.4,0,13];
+      api.frame([F[0],F[1],F[2]],F[3]);
+    },
+    onSelect(api,d){
+      if(d.lfcBar) api.setSelected(d.lfcBar.gene+" · LFC "+(d.lfcBar.lfc>=0?"+":"")+d.lfcBar.lfc+(d.lfcBar.sig?" · edge":" · below threshold"));
+      if(d.gauge)  api.setSelected("sg"+d.gauge.tf+" · "+d.gauge.eff+"% knockdown · "+(d.gauge.pass?"PASS gate":"FAIL gate"));
+      if(d.edge)   api.setSelected(d.edge.src+"→"+d.edge.dst+" · LFC "+(d.edge.lfc>=0?"+":"")+d.edge.lfc+" · "+d.edge.conf+"-confidence");
+      if(d.tf)     api.setSelected("TF "+d.tf.name+" · "+d.tf.eff+"% KD · "+(d.tf.pass?"good perturbation":"poor perturbation"));
+      if(d.target) api.setSelected(d.target.gene+" · LFC "+(d.target.lfc>=0?"+":"")+d.target.lfc+(d.target.sig?" · causal edge":" · no edge"));
+    },
+    build,
+    snapshot(s){
+      const pert=Math.round(s.pertSel)===0?"GATA1":"GATA2";
+      const lfcThr=s.lfcThr, effThr=s.effThr;
+      const lH=lfc(pert,"HBB"),lG=lfc(pert,"GYPA"),lC=lfc(pert,"CD34"),lM=lfc(pert,"MYC");
+      const arr=[lH,lG,lC,lM];
+      const sig=arr.filter(v=>Math.abs(v)>=lfcThr).length;
+      const eff=effPct(pert);
+      const pass=eff>=effThr?1:0;
+      const maxAbs=Math.max.apply(null,arr.map(Math.abs));
+      return {
+        mode:s.mode,
+        perturbation:pert,
+        lfcThreshold:+lfcThr.toFixed(2),
+        effThreshold:Math.round(effThr),
+        lfc_HBB:+lH.toFixed(2),
+        lfc_GYPA:+lG.toFixed(2),
+        lfc_CD34:+lC.toFixed(2),
+        lfc_MYC:+lM.toFixed(2),
+        significantEdges:sig,
+        strongestAbsLFC:+maxAbs.toFixed(2),
+        knockdownEff:eff,
+        effGatePass:pass,
+        highConfidence:(pass===1 && sig>0)?1:0,
+        assocOverlay:Math.round(s.showAssoc)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

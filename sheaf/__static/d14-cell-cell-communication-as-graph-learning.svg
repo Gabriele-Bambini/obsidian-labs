@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure D14 — Three lenses on cell-cell communication in the tumor microenvironment</title>
+<desc id="d">Four-panel captioned figure: Three lenses on cell-cell communication in the tumor microenvironment</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE D14 · BLOCK D · BIOLOGY GRAPHS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="19" font-weight="700">Three lenses on cell-cell communication in the tumor microenvironment</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">CCC graph (CRC TME)</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cell types</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">7</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">8243</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">LR axes</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">4</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edge</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">sender → receiver</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">CellChat (law of mass action)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">P(c_i→c_j) = hill(L)·hill(R)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">hill(x) = x² / (1 + x²)</text>
+<rect x="502" y="178" width="12" height="26" rx="2" fill="#4dd7ff"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">PD-L1</text>
+<rect x="539" y="178" width="12" height="26" rx="2" fill="#fbbf24"/>
+<text x="545" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">CD80</text>
+<rect x="576" y="180.25" width="12" height="23.75" rx="2" fill="#a78bfa"/>
+<text x="582" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">IL10</text>
+<rect x="613" y="180.89" width="12" height="23.11" rx="2" fill="#34d399"/>
+<text x="619" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">TGFb</text>
+<line x1="502" y1="187.95" x2="650" y2="187.95" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Spatial gating exp(−d²/2σ²)</text>
+<text x="56" y="301.5" fill="#fb7185" font-size="11.5" font-weight="700">contact 30µm</text>
+<text x="196" y="301.5" fill="#9fb4cc" font-size="11.5">0.00</text>
+<text x="56" y="321.5" fill="#fbbf24" font-size="11.5" font-weight="700">paracrine 200µm</text>
+<text x="196" y="321.5" fill="#9fb4cc" font-size="11.5">0.71</text>
+<text x="56" y="341.5" fill="#34d399" font-size="11.5" font-weight="700">endocrine ∞</text>
+<text x="196" y="341.5" fill="#9fb4cc" font-size="11.5">0.81</text>
+<text x="56" y="369" fill="#9fb4cc" font-size="11">Proximity gates PD-L1 → PD-1: contact-only σ kills</text>
+<text x="56" y="389" fill="#9fb4cc" font-size="11">non-adjacent channels; paracrine restores them.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">NicheNet (prior network)</text>
+<text x="502" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">L → receptor → TF → target gene</text>
+<text x="502" y="329.5" fill="#4dd7ff" font-size="11.5" font-weight="700">PD-L1→TOX</text>
+<text x="642" y="329.5" fill="#9fb4cc" font-size="11.5">r=0.38</text>
+<text x="502" y="349.5" fill="#34d399" font-size="11.5" font-weight="700">TGFβ→LAG3</text>
+<text x="642" y="349.5" fill="#9fb4cc" font-size="11.5">r=0.31</text>
+<text x="502" y="369.5" fill="#a78bfa" font-size="11.5" font-weight="700">IL10→PDCD1</text>
+<text x="642" y="369.5" fill="#9fb4cc" font-size="11.5">r=0.22</text>
+<text x="502" y="397" fill="#8a99ad" font-size="11">Links ligands to downstream exhaustion genes; CellChat</text>
+<text x="502" y="417" fill="#8a99ad" font-size="11">scores strength only.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure D14. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Cell-cell </text>
+<text x="224.91" y="538" fill="#c7d2dd" font-size="13">communication </text>
+<text x="337.75" y="538" fill="#c7d2dd" font-size="13">in </text>
+<text x="361.93" y="538" fill="#c7d2dd" font-size="13">a </text>
+<text x="378.05" y="538" fill="#c7d2dd" font-size="13">CRC </text>
+<text x="413.92" y="538" fill="#c7d2dd" font-size="13">microenvironment </text>
+<text x="550.94" y="538" fill="#c7d2dd" font-size="13">(7 </text>
+<text x="575.12" y="538" fill="#c7d2dd" font-size="13">cell </text>
+<text x="615.42" y="538" fill="#c7d2dd" font-size="13">types), </text>
+<text x="679.9" y="538" fill="#c7d2dd" font-size="13">three </text>
+<text x="728.26" y="538" fill="#c7d2dd" font-size="13">ways. </text>
+<text x="776.62" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="810.15" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="843.6" y="538" fill="#c7d2dd" font-size="13">CCC</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">graph: </text>
+<text x="96.42" y="559" fill="#c7d2dd" font-size="13">cell </text>
+<text x="136.72" y="559" fill="#c7d2dd" font-size="13">types </text>
+<text x="185.08" y="559" fill="#c7d2dd" font-size="13">are </text>
+<text x="217.32" y="559" fill="#c7d2dd" font-size="13">nodes, </text>
+<text x="273.74" y="559" fill="#c7d2dd" font-size="13">LR </text>
+<text x="300.34" y="559" fill="#c7d2dd" font-size="13">pairs </text>
+<text x="348.7" y="559" fill="#c7d2dd" font-size="13">are </text>
+<text x="380.94" y="559" fill="#c7d2dd" font-size="13">typed </text>
+<text x="429.3" y="559" fill="#c7d2dd" font-size="13">directed </text>
+<text x="501.84" y="559" fill="#c7d2dd" font-size="13">edges. </text>
+<text x="558.26" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="591.79" y="559" fill="#c7d2dd" font-size="13">CellChat </text>
+<text x="666.75" y="559" fill="#c7d2dd" font-size="13">scores </text>
+<text x="723.17" y="559" fill="#c7d2dd" font-size="13">each </text>
+<text x="763.47" y="559" fill="#c7d2dd" font-size="13">channel </text>
+<text x="827.95" y="559" fill="#c7d2dd" font-size="13">by </text>
+<text x="852.13" y="559" fill="#c7d2dd" font-size="13">mass</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">action; </text>
+<text x="104.48" y="580" fill="#c7d2dd" font-size="13">PD-L1 </text>
+<text x="156.47" y="580" fill="#c7d2dd" font-size="13">→ </text>
+<text x="179.03" y="580" fill="#c7d2dd" font-size="13">PD-1 </text>
+<text x="221.75" y="580" fill="#c7d2dd" font-size="13">(Cancer_epi </text>
+<text x="319.68" y="580" fill="#c7d2dd" font-size="13">→ </text>
+<text x="342.25" y="580" fill="#c7d2dd" font-size="13">CTL) </text>
+<text x="386.18" y="580" fill="#c7d2dd" font-size="13">tops </text>
+<text x="426.48" y="580" fill="#c7d2dd" font-size="13">out </text>
+<text x="458.72" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="482.9" y="580" fill="#c7d2dd" font-size="13">P </text>
+<text x="500.23" y="580" fill="#c7d2dd" font-size="13">= </text>
+<text x="516.35" y="580" fill="#c7d2dd" font-size="13">0.81. </text>
+<text x="564.71" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="598.24" y="580" fill="#c7d2dd" font-size="13">Spatial </text>
+<text x="663.92" y="580" fill="#c7d2dd" font-size="13">gating </text>
+<text x="720.34" y="580" fill="#c7d2dd" font-size="13">drops </text>
+<text x="768.7" y="580" fill="#c7d2dd" font-size="13">PD-L1 </text>
+<text x="820.69" y="580" fill="#c7d2dd" font-size="13">from</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">0.81 </text>
+<text x="80.3" y="601" fill="#c7d2dd" font-size="13">to </text>
+<text x="104.48" y="601" fill="#c7d2dd" font-size="13">≈0.00 </text>
+<text x="159.29" y="601" fill="#c7d2dd" font-size="13">at </text>
+<text x="183.47" y="601" fill="#c7d2dd" font-size="13">contact </text>
+<text x="247.95" y="601" fill="#c7d2dd" font-size="13">range. </text>
+<text x="304.37" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="337.9" y="601" fill="#c7d2dd" font-size="13">NicheNet </text>
+<text x="412.86" y="601" fill="#c7d2dd" font-size="13">traces </text>
+<text x="469.28" y="601" fill="#c7d2dd" font-size="13">PD-L1 </text>
+<text x="521.26" y="601" fill="#c7d2dd" font-size="13">→ </text>
+<text x="543.83" y="601" fill="#c7d2dd" font-size="13">NFATC1 </text>
+<text x="606.3" y="601" fill="#c7d2dd" font-size="13">→ </text>
+<text x="628.86" y="601" fill="#c7d2dd" font-size="13">TOX </text>
+<text x="664.73" y="601" fill="#c7d2dd" font-size="13">(r </text>
+<text x="688.91" y="601" fill="#c7d2dd" font-size="13">= </text>
+<text x="705.03" y="601" fill="#c7d2dd" font-size="13">0.38), </text>
+<text x="761.45" y="601" fill="#c7d2dd" font-size="13">a </text>
+<text x="777.57" y="601" fill="#c7d2dd" font-size="13">mechanism</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">CellChat </text>
+<text x="114.96" y="622" fill="#c7d2dd" font-size="13">omits.</text>
+</svg>

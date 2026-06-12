@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>F07 · GRGNN and supervised / semi-supervised graph inference</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hashed sine; no RNG, no clock) ──────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — the note's Section-5 worked example (6-gene erythroid GRN).
+  // Genes: GATA1, KLF1, HBB, ALAS2, PU1, LYZ.  TFs: GATA1, KLF1, PU1.
+  // ════════════════════════════════════════════════════════════════════════
+  const GENE=[
+    // name   x      z     isTF  meanExpr var  deg  program (0=erythroid,1=myeloid)
+    {n:"GATA1",x:-3.2,z:-2.4,tf:1,me:1.5,vr:0.6,dg:2,prog:0},
+    {n:"KLF1", x:-3.2,z: 2.4,tf:1,me:1.2,vr:0.5,dg:2,prog:0},
+    {n:"HBB",  x: 0.4,z:-2.6,tf:0,me:2.1,vr:0.9,dg:2,prog:0},
+    {n:"ALAS2",x: 0.4,z: 2.6,tf:0,me:1.8,vr:0.7,dg:2,prog:0},
+    {n:"PU1",  x: 3.6,z:-2.2,tf:1,me:0.9,vr:0.4,dg:1,prog:1},
+    {n:"LYZ",  x: 3.6,z: 2.2,tf:0,me:1.1,vr:0.5,dg:1,prog:1}
+  ];
+  const IDX={GATA1:0,KLF1:1,HBB:2,ALAS2:3,PU1:4,LYZ:5};
+
+  // labeled prior edges from ENCODE ChIP-seq (positives, y=1)
+  const POS=[["GATA1","HBB"],["GATA1","ALAS2"],["KLF1","HBB"],["KLF1","ALAS2"],["PU1","LYZ"]];
+  // randomly sampled training negatives (y=0)
+  const NEG=[["GATA1","LYZ"],["PU1","HBB"],["KLF1","LYZ"]];
+  // unlabeled candidate edges (corr>0.3) used only by message passing in semi-sup
+  const UNLAB=[["GATA1","ALAS2"],["KLF1","HBB"],["HBB","ALAS2"]];
+
+  // trained edge scores from the note (high = regulatory)
+  const SCORE={
+    "GATA1>HBB":0.95,"GATA1>ALAS2":0.93,"KLF1>HBB":0.91,"KLF1>ALAS2":0.90,"PU1>LYZ":0.88,
+    "GATA1>LYZ":0.12,"PU1>HBB":0.09,"KLF1>LYZ":0.07
+  };
+
+  // ── GCN layer-1 message passing (degree-normalised mean over A_hat = A+I) ──
+  function neighbours(i){
+    const nb=new Set([i]);
+    POS.forEach(([a,b])=>{const ai=IDX[a],bi=IDX[b];if(ai===i)nb.add(bi);if(bi===i)nb.add(ai);});
+    return [...nb];
+  }
+  function h1(i){ // [mean,var,isTF,degree] averaged over neighbours (A_hat = A+I)
+    const nb=neighbours(i); const acc=[0,0,0,0];
+    nb.forEach(j=>{const g=GENE[j];acc[0]+=g.me;acc[1]+=g.vr;acc[2]+=g.tf;acc[3]+=g.dg;});
+    return acc.map(v=>v/nb.length);
+  }
+  function embDist(i,j){const a=h1(i),b=h1(j);let s=0;for(let k=0;k<4;k++)s+=(a[k]-b[k])*(a[k]-b[k]);return Math.sqrt(s);}
+
+  // ── supervised metrics on the 8 scored edges at a threshold ───────────────
+  function edgeKey(a,b){return a+">"+b;}
+  function classify(thr){
+    let tp=0,fp=0,fn=0,tn=0;
+    POS.forEach(([a,b])=>{const s=SCORE[edgeKey(a,b)];(s>=thr?tp++:fn++);});
+    NEG.forEach(([a,b])=>{const s=SCORE[edgeKey(a,b)];(s>=thr?fp++:tn++);});
+    const prec=(tp+fp>0)?tp/(tp+fp):1;
+    const rec=(tp+fn>0)?tp/(tp+fn):0;
+    return {tp,fp,fn,tn,prec,rec};
+  }
+  function auroc(){
+    let above=0,tot=0;
+    POS.forEach(([a,b])=>{const sp=SCORE[edgeKey(a,b)];NEG.forEach(([c,d])=>{const sn=SCORE[edgeKey(c,d)];tot++;if(sp>sn)above+=1;else if(sp===sn)above+=0.5;});});
+    return tot>0?above/tot:0;
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const thr=s.threshold;
+    const posWeight=s.posWeight;
+    const lambda=s.lambda;
+    const candCorr=s.candCorr;
+
+    const gGraph =api.group("graph");
+    const gMsg   =api.group("msg");
+    const gScore =api.group("score");
+    const gLabels=api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");
+    const GR=new T.Color("#34d399");
+    const AM=new T.Color("#fbbf24");
+    const VI=new T.Color("#a78bfa");
+    const RO=new T.Color("#fb7185");
+    const SL=new T.Color("#54667c");
+
+    function addBig(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSm(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    function geneCol(g){ if(g.tf) return g.prog===0?CY.clone():RO.clone(); return g.prog===0?AM.clone():RO.clone().lerp(SL,0.35); }
+
+    function drawGenes(){
+      GENE.forEach((g,i)=>{
+        const col=geneCol(g);
+        const r=g.tf?0.40:0.32;
+        const m=new T.Mesh(new T.SphereGeometry(r,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        m.position.set(g.x,0,g.z);
+        gGraph.add(m);
+        api.pick(m,{gene:{i,name:g.n,tf:!!g.tf,prog:g.prog,me:g.me}});
+        addSm(g.n,col.getStyle(),0.40,g.x,(g.tf?0.62:0.54),g.z);
+      });
+    }
+    function drawEdges(list,col,op){
+      list.forEach(([a,b])=>{
+        const ga=GENE[IDX[a]],gb=GENE[IDX[b]];
+        const A=new T.Vector3(ga.x,0,ga.z);
+        const B=new T.Vector3(gb.x,0,gb.z);
+        const dir=B.clone().sub(A); dir.normalize();
+        const start=A.clone().add(dir.clone().multiplyScalar(0.45));
+        const end=B.clone().sub(dir.clone().multiplyScalar(0.42));
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([start,end]),
+          new T.LineBasicMaterial({color:col.getHex(),transparent:true,opacity:op})));
+        const cone=new T.Mesh(new T.ConeGeometry(0.10,0.30,8),new T.MeshBasicMaterial({color:col.getHex(),transparent:true,opacity:op}));
+        cone.position.copy(end);
+        const q=new T.Quaternion().setFromUnitVectors(new T.Vector3(0,1,0),dir);
+        cone.quaternion.copy(q);
+        gGraph.add(cone);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: message — GCN message passing builds contextual embeddings
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="message"){
+      drawGenes();
+      drawEdges(POS,GR,0.85);
+
+      const focals=["HBB","ALAS2","LYZ"];
+      focals.forEach(name=>{
+        const i=IDX[name]; const g=GENE[i]; const nb=neighbours(i);
+        nb.forEach(j=>{
+          if(j===i) return;
+          const a=new T.Vector3(GENE[j].x,0,GENE[j].z);
+          const b=new T.Vector3(g.x,0,g.z);
+          const mid=a.clone().add(b).multiplyScalar(0.5); mid.y=1.05;
+          const curve=new T.QuadraticBezierCurve3(a.clone(),mid,b.clone()).getPoints(14);
+          gMsg.add(new T.Line(new T.BufferGeometry().setFromPoints(curve),
+            new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.55})));
+        });
+      });
+
+      const dAA=embDist(IDX.HBB,IDX.ALAS2);
+      const dAL=embDist(IDX.HBB,IDX.LYZ);
+      const dTT=embDist(IDX.GATA1,IDX.KLF1);
+      const barX=[-1.2,1.2,3.6], barLbl=["z_HBB−z_ALAS2","z_HBB−z_LYZ","z_GATA1−z_KLF1"], barVal=[dAA,dAL,dTT], barCol=[GR,RO,CY];
+      barVal.forEach((d,k)=>{
+        const h=0.2+d*2.2;
+        const bar=new T.Mesh(new T.BoxGeometry(0.8,h,0.8),
+          new T.MeshStandardMaterial({color:barCol[k],emissive:barCol[k].clone().multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+        bar.position.set(barX[k],h/2,5.2);
+        gScore.add(bar);
+        addSm(d.toFixed(2),barCol[k].getStyle(),0.36,barX[k],h+0.35,5.2);
+        addSm(barLbl[k],barCol[k].getStyle(),0.28,barX[k],-0.35,5.2);
+      });
+      addBig("embedding distance after GCN layer 1","#8a99ad",1.0,1.2,2.5,5.2);
+
+      addBig("GCN message passing","#4dd7ff",1.6,0,2.9,-4.2);
+      addSm("HBB & ALAS2 share {GATA1,KLF1} → near-identical z","#9fb4cc",0.36,0,2.4,-4.2);
+
+      sceneSnap={mode,embDistHBB_ALAS2:+dAA.toFixed(3),embDistHBB_LYZ:+dAL.toFixed(3),embDistTF:+dTT.toFixed(3),
+                 threshold:thr,posWeight,lambda,candCorr,nPos:POS.length,nNeg:NEG.length};
+
+      return {
+        badge:"GCN message passing · H⁽¹⁾ = ReLU(D̂⁻¹ᐟ²Â D̂⁻¹ᐟ² H⁽⁰⁾W)",
+        formula:"z<sub>HBB</sub> ← mean(GATA1,KLF1,HBB) ≈ [1.60, 0.67, 0.67, 2.0]",
+        insight:"Two GCN layers aggregate each gene's regulatory neighbourhood. HBB and ALAS2 share the same TF neighbours {GATA1, KLF1}, so their layer-1 embeddings are near-identical (distance "+dAA.toFixed(2)+"). LYZ, whose only TF neighbour is PU1, lands far away ("+dAL.toFixed(2)+"). GATA1 and KLF1 also converge — they regulate the same erythroid targets. This contextual encoding is what GENIE3's per-edge scoring cannot produce.",
+        state:"‖z_HBB − z_ALAS2‖ = "+dAA.toFixed(2)+" (erythroid targets) · ‖z_HBB − z_LYZ‖ = "+dAL.toFixed(2)+" (cross-program) · ‖z_GATA1 − z_KLF1‖ = "+dTT.toFixed(2)+".",
+        metrics:{auprc:"—",auroc:"—",precRec:"—",posWeight:posWeight.toFixed(1)},
+        focus:{center:[0.5,1,0.5],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: supervised — binary edge classifier scores & metrics
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="supervised"){
+      drawGenes();
+      drawEdges(POS,GR,0.7);
+      drawEdges(NEG,RO,0.45);
+
+      const edges=[...POS.map(e=>({e,y:1})),...NEG.map(e=>({e,y:0}))]
+        .map(o=>({...o,s:SCORE[edgeKey(o.e[0],o.e[1])]}))
+        .sort((a,b)=>b.s-a.s);
+      const x0=-4.0,dx=1.05,yScale=4.4;
+      edges.forEach((o,k)=>{
+        const x=x0+k*dx, h=0.1+o.s*yScale;
+        const pass=o.s>=thr;
+        const correct=(pass&&o.y===1)||(!pass&&o.y===0);
+        const col=o.y===1?GR.clone():RO.clone();
+        const bar=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(correct?0.7:0.15),
+            emissiveIntensity:correct?0.7:0.15,roughness:0.4,transparent:!correct,opacity:correct?1:0.5}));
+        bar.position.set(x,h/2,5.0);
+        gScore.add(bar);
+        api.pick(bar,{edge:{tf:o.e[0],tgt:o.e[1],score:o.s,label:o.y,pred:pass?1:0}});
+        addSm(o.s.toFixed(2),col.getStyle(),0.32,x,h+0.32,5.0);
+        addSm(o.e[0]+"→"+o.e[1],col.getStyle(),0.26,x,-0.45,5.0);
+      });
+      const ty=0.1+thr*yScale;
+      const plane=new T.Mesh(new T.PlaneGeometry(edges.length*dx+0.6,0.04),
+        new T.MeshBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.85,side:T.DoubleSide}));
+      plane.rotation.x=-Math.PI/2; plane.position.set(x0+(edges.length-1)*dx/2,ty,5.0);
+      gScore.add(plane);
+      addSm("τ = "+thr.toFixed(2),"#a78bfa",0.40,x0+edges.length*dx,ty,5.0);
+
+      const c=classify(thr); const ar=auroc();
+      const auprc=(c.fp===0)?1.0:(c.tp/(c.tp+c.fp));
+
+      addBig("supervised edge classifier","#fbbf24",1.6,0,2.9,-4.2);
+      addSm("score = σ(MLP[z_TF ‖ z_gene]) — concatenation keeps TF→gene asymmetry","#9fb4cc",0.34,0,2.4,-4.2);
+
+      sceneSnap={mode,threshold:+thr.toFixed(2),precision:+c.prec.toFixed(3),recall:+c.rec.toFixed(3),
+                 auroc:+ar.toFixed(3),auprc:+auprc.toFixed(3),tp:c.tp,fp:c.fp,fn:c.fn,tn:c.tn,
+                 posWeight:+posWeight.toFixed(2),lambda,candCorr};
+
+      return {
+        badge:"Supervised link prediction · τ = "+thr.toFixed(2)+" · AUPRC ≈ "+auprc.toFixed(2),
+        formula:"score<sub>ij</sub> = σ(MLP([z<sub>TF</sub> ‖ z<sub>gene</sub>]))  ·  predict edge if score ≥ τ",
+        insight:"Concatenated embeddings feed an MLP that scores each TF→gene pair. The 5 ChIP-seq positives (green) score 0.88–0.95; the 3 random negatives (rose) score ≤ 0.12. At τ = "+thr.toFixed(2)+": precision = "+c.tp+"/"+(c.tp+c.fp)+" = "+c.prec.toFixed(2)+", recall = "+c.tp+"/"+(c.tp+c.fn)+" = "+c.rec.toFixed(2)+". The toy set is perfectly separable (AUROC ≈ "+ar.toFixed(2)+", AUPRC ≈ "+auprc.toFixed(2)+") — at real 0.25–1% positive rates AUPRC collapses far below AUROC.",
+        state:"TP "+c.tp+" · FP "+c.fp+" · FN "+c.fn+" · TN "+c.tn+" → precision "+c.prec.toFixed(2)+", recall "+c.rec.toFixed(2)+". pos_weight = |E_neg|/|E_pos| = "+posWeight.toFixed(1)+".",
+        metrics:{auprc:auprc.toFixed(2),auroc:ar.toFixed(2),precRec:c.prec.toFixed(2)+"/"+c.rec.toFixed(2),posWeight:posWeight.toFixed(1)},
+        focus:{center:[0,1,1],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: semi-supervised — unlabeled edges + Laplacian smoothing
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="semi"){
+      drawGenes();
+      drawEdges(POS,GR,0.6);
+
+      UNLAB.forEach(([a,b])=>{
+        const ga=GENE[IDX[a]],gb=GENE[IDX[b]];
+        const A=new T.Vector3(ga.x,0,ga.z),B=new T.Vector3(gb.x,0,gb.z);
+        const op=0.25+candCorr*0.55;
+        const dash=new T.Line(new T.BufferGeometry().setFromPoints([A,B]),
+          new T.LineDashedMaterial({color:VI.getHex(),dashSize:0.25,gapSize:0.18,transparent:true,opacity:op}));
+        if(dash.computeLineDistances) dash.computeLineDistances();
+        gMsg.add(dash);
+      });
+
+      const baseSep=1.0;
+      const informGain=candCorr;
+      const collapse=Math.min(1,lambda*4.0);
+      const sep=baseSep*(1+0.45*informGain*(1-collapse))-baseSep*0.85*collapse*(1-informGain*0.4);
+      const sepClamped=Math.max(0.05,sep);
+      const arSemi=Math.max(0.5,Math.min(1.0,0.5+0.5*Math.min(1,sepClamped)));
+      const arSup=auroc();
+      const delta=arSemi-arSup;
+
+      const pull=Math.min(0.9,lambda*candCorr*5.0);
+      [["HBB","ALAS2"],["GATA1","ALAS2"]].forEach(([a,b])=>{
+        const ga=GENE[IDX[a]],gb=GENE[IDX[b]];
+        const A=new T.Vector3(ga.x,1.4,ga.z),B=new T.Vector3(gb.x,1.4,gb.z);
+        const mid=A.clone().lerp(B,0.5);
+        const za=A.clone().lerp(mid,pull),zb=B.clone().lerp(mid,pull);
+        [za,zb].forEach(p=>{const m=new T.Mesh(new T.SphereGeometry(0.16,12,10),
+          new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.8,roughness:0.3}));m.position.copy(p);gMsg.add(m);});
+        gMsg.add(new T.Line(new T.BufferGeometry().setFromPoints([za,zb]),
+          new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.6})));
+      });
+
+      [["sup",arSup,SL],["semi",arSemi,delta>=0?GR:RO]].forEach((row,k)=>{
+        const lbl=row[0],v=row[1],col=row[2];
+        const x=-1.0+k*2.0,h=0.1+v*4.0;
+        const bar=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.55),emissiveIntensity:0.55,roughness:0.4}));
+        bar.position.set(x,h/2,5.2); gScore.add(bar);
+        addSm(v.toFixed(2),col.getStyle(),0.36,x,h+0.32,5.2);
+        addSm("AUROC "+lbl,col.getStyle(),0.30,x,-0.4,5.2);
+      });
+
+      addBig("semi-supervised smoothing","#a78bfa",1.6,0,2.9,-4.2);
+      addSm("L = L_BCE + λ·Σ‖z_i − z_j‖²  over labeled + unlabeled edges","#9fb4cc",0.34,0,2.4,-4.2);
+
+      const helps=delta>0.005;
+      sceneSnap={mode,lambda:+lambda.toFixed(3),candCorr:+candCorr.toFixed(2),aurocSup:+arSup.toFixed(3),
+                 aurocSemi:+arSemi.toFixed(3),aurocDelta:+delta.toFixed(3),semiHelps:helps,
+                 threshold:thr,posWeight,nUnlab:UNLAB.length};
+
+      return {
+        badge:"Semi-supervised · λ = "+lambda.toFixed(2)+" · "+(helps?"HELPS (+":"HURTS (")+(delta*100).toFixed(0)+"pp)",
+        formula:"L<sub>total</sub> = L<sub>BCE</sub> + λ·Σ<sub>(i,j)∈A<sub>full</sub></sub> ‖z<sub>i</sub> − z<sub>j</sub>‖²",
+        insight:"Dashed violet edges are unlabeled candidates (corr > 0.3) added to the message-passing graph. The Laplacian penalty pulls connected genes' embeddings together (violet pairs). When the unlabeled edges are informative (corr "+candCorr.toFixed(2)+") a modest λ raises AUROC from "+arSup.toFixed(2)+" to "+arSemi.toFixed(2)+". But a large λ over-smooths — embeddings collapse toward a common vector, classes merge, and AUROC drops. Semi-supervision is not a free lunch.",
+        state:"AUROC: supervised "+arSup.toFixed(2)+" → semi "+arSemi.toFixed(2)+" ("+(delta>=0?"+":"")+(delta*100).toFixed(0)+"pp). "+(helps?"Informative edges help.":"Noisy edges / over-smoothing hurt."),
+        metrics:{auprc:"—",auroc:arSemi.toFixed(2),precRec:(delta>=0?"+":"")+(delta*100).toFixed(0)+"pp",posWeight:posWeight.toFixed(1)},
+        focus:{center:[0,1,1],radius:13}
+      };
+    }
+
+    return {badge:"F07",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"f07",
+    kind:"grgnn-supervised-link-prediction",
+    eyebrow:"Block F · GRN Inference",
+    title:"F07 · GRGNN and supervised / semi-supervised graph inference",
+    subtitle:"GRN inference as supervised link prediction. Six erythroid/myeloid genes (GATA1, KLF1, HBB, ALAS2, PU1, LYZ): GCN message passing builds contextual embeddings, an MLP scores TF→gene edges, and unlabeled candidates feed semi-supervised smoothing.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene node or a score bar.",
+    modes:[
+      {value:"message",    label:"GCN message passing (contextual embeddings)"},
+      {value:"supervised", label:"Supervised edge classifier (scores · AUPRC)"},
+      {value:"semi",       label:"Semi-supervised smoothing (λ · unlabeled edges)"}
+    ],
+    params:[
+      {key:"threshold",label:"decision threshold τ",min:0.05,max:0.95,step:0.01,value:0.85,
+       fmt:v=>v.toFixed(2),modes:["supervised"]},
+      {key:"posWeight",label:"pos_weight = |E_neg|/|E_pos|",min:0.5,max:99,step:0.5,value:0.6,
+       fmt:v=>v.toFixed(1)},
+      {key:"lambda",label:"smoothness weight λ",min:0,max:0.30,step:0.005,value:0.05,
+       fmt:v=>v.toFixed(3),modes:["semi"]},
+      {key:"candCorr",label:"unlabeled-edge quality (corr)",min:0,max:1,step:0.05,value:0.7,
+       fmt:v=>v.toFixed(2),modes:["semi"]}
+    ],
+    metrics:[
+      {key:"auprc",    label:"AUPRC",accent:"green"},
+      {key:"auroc",    label:"AUROC",accent:"cyan"},
+      {key:"precRec",  label:"precision / recall · Δ",accent:"amber"},
+      {key:"posWeight",label:"pos_weight",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph", label:"Gene graph"},
+      {group:"msg",   label:"Message passing / smoothing"},
+      {group:"score", label:"Scores / bars"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"τ = 0.85 (note)",
+      on:api=>{api.setParam("threshold",0.85);}
+    },
+    secondary:{
+      label:"τ = 0.50",
+      on:api=>{api.setParam("threshold",0.50);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:14},
+    hint:'<span style="color:#4dd7ff">cyan</span>=erythroid TF · <span style="color:#fbbf24">amber</span>=erythroid target · <span style="color:#fb7185">rose</span>=myeloid / negative · <span style="color:#34d399">green</span>=positive edge · <span style="color:#a78bfa">violet</span>=embedding / smoothing.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="message") api.frame([0.5,1,0.5],13);
+      else api.frame([0,1,1],13);
+    },
+    onSelect(api,d){
+      if(d.gene)  api.setSelected(d.gene.name+" · "+(d.gene.tf?"TF":"target")+" · "+(d.gene.prog===0?"erythroid":"myeloid")+" · mean expr "+d.gene.me);
+      if(d.edge)  api.setSelected(d.edge.tf+"→"+d.edge.tgt+" · score "+d.edge.score.toFixed(2)+" · label "+d.edge.label+" · pred "+d.edge.pred);
+    },
+    build,
+    snapshot(s){
+      const c=classify(s.threshold); const ar=auroc();
+      const auprc=(c.fp===0)?1.0:(c.tp/(c.tp+c.fp));
+      return {
+        mode:s.mode,
+        threshold:+s.threshold.toFixed(2),
+        posWeight:+s.posWeight.toFixed(2),
+        lambda:+s.lambda.toFixed(3),
+        candCorr:+s.candCorr.toFixed(2),
+        precision:+c.prec.toFixed(3),
+        recall:+c.rec.toFixed(3),
+        auroc:+ar.toFixed(3),
+        auprc:+auprc.toFixed(3),
+        nPos:POS.length,
+        nNeg:NEG.length,
+        embDistHBB_ALAS2:+embDist(IDX.HBB,IDX.ALAS2).toFixed(3),
+        embDistHBB_LYZ:+embDist(IDX.HBB,IDX.LYZ).toFixed(3),
+        separableToySet:(c.fp===0&&c.fn===0)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

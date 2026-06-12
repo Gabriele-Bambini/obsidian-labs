@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G14 · Uncertainty-aware sheaf maps for noisy regulatory evidence</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random ──────────────────────────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);   // 0..1 deterministic
+
+  let sceneSnap={};
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — note Section 5 (three-gene GRN, MC-dropout on restriction-map MLP)
+  // ════════════════════════════════════════════════════════════════════════
+  // edges e1=(TF1,GeneA), e2=(TF1,GeneB), e3=(TF2,GeneA)
+  const xTF =[0.8,0.8,0.3];          // x_TF1, x_TF1, x_TF2  (per edge source)
+  const xGN =[0.7,0.2,0.7];          // x_GeneA, x_GeneB, x_GeneA (per edge target)
+  const Rmean=[0.884,0.196,0.482];   // mean restriction map per edge
+  const Rsig =[0.020,0.025,0.054];   // sigma(R) across T=5 dropout samples
+  const Pscore=[0.91,0.34,0.58];     // link-prediction score P_e (note §6 Pareto)
+  const EDGE=["e1 TF1→GeneA","e2 TF1→GeneB","e3 TF2→GeneA"];
+  const EDGES=["TF1→A","TF1→B","TF2→A"];
+  // §4 calibration curve (precision vs sigma bin)
+  const CAL=[{lab:"top-10%",p:0.82},{lab:"top-25%",p:0.71},
+             {lab:"top-50%",p:0.58},{lab:"all",p:0.44}];
+
+  // Bayesian MAP posterior variance (scalar):  Var = sn^2 / (sum_c xTF^2 + gamma*sn^2)
+  function postVar(xtf,gamma,sn,nCells){
+    const sumsq=xtf*xtf*nCells;
+    return (sn*sn)/(sumsq+gamma*sn*sn);
+  }
+  // MAP point estimate: weighted blend of data term and prior R0
+  function mapEstimate(xtf,xgn,gamma,sn,R0,nCells){
+    const data=(1/(sn*sn))*xtf*xgn*nCells;
+    const reg =gamma*R0;
+    const denom=(1/(sn*sn))*xtf*xtf*nCells+gamma;
+    return (data+reg)/denom;
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const Tsamp=Math.round(s.tDraws);       // 2..12 MC-dropout passes
+    const drop=s.dropRate;                  // 0.02..0.30 dropout rate
+    const gamma=s.gamma;                     // 0.1..6 prior strength
+    const sn=s.noise;                        // 0.05..0.6 observation noise
+    const sigThr=s.sigThr;                   // 0.01..0.08 uncertainty threshold
+
+    const gScene =api.group("scene");
+    const gBars  =api.group("bars");
+    const gFront =api.group("front");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");  // confident / low-uncertainty
+    const GR=new T.Color("#34d399");  // mean / data / frontier
+    const AM=new T.Color("#fbbf24");  // medium
+    const RO=new T.Color("#fb7185");  // uncertain / high-variance
+    const VI=new T.Color("#a78bfa");  // variance band / posterior
+    const SL=new T.Color("#54667c");
+
+    // edge-confidence colour from sigma vs threshold
+    function confCol(sig){return sig<=sigThr? CY.clone() : (sig<=sigThr*1.8? AM.clone() : RO.clone());}
+
+    // dropout-scaled sample spread: higher drop -> wider effective spread
+    const dropGain=0.4+drop/0.10;
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: mc-dropout  — T stochastic passes; per-edge R samples + sigma_e
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="mc-dropout"){
+      const xPos=[-3.4,0,3.4];
+      const sampSig=[0,0,0], sampMean=[0,0,0];
+      for(let e=0;e<3;e++){
+        const x=xPos[e];
+        let sum=0, sum2=0;
+        const base=Rmean[e], spread=Rsig[e]*dropGain;
+        const ys=[];
+        for(let k=0;k<Tsamp;k++){
+          const jitter=(prand(e*53+k*17+3)-0.5)*2;      // -1..1
+          const val=base+jitter*spread*1.7;
+          ys.push(val); sum+=val; sum2+=val*val;
+        }
+        const mean=sum/Tsamp;
+        const variance=Math.max(0,sum2/Tsamp-mean*mean);
+        const sig=Math.sqrt(variance);
+        sampMean[e]=mean; sampSig[e]=sig;
+
+        const col=confCol(sig);
+        const yMean=base*3.6;
+        const meanNode=new T.Mesh(new T.SphereGeometry(0.34,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.7),emissiveIntensity:0.6,roughness:0.35}));
+        meanNode.position.set(x,yMean,0);
+        gScene.add(meanNode);
+        api.pick(meanNode,{edge:{id:e,name:EDGE[e],mean:mean,sig:sig,R:base}});
+
+        for(let k=0;k<Tsamp;k++){
+          const yv=ys[k]*3.6;
+          const dot=new T.Mesh(new T.SphereGeometry(0.11,8,8),
+            new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:0.55,roughness:0.4,transparent:true,opacity:0.75}));
+          dot.position.set(x+(prand(e*91+k*7+1)-0.5)*0.7,yv,(prand(e*13+k*5+2)-0.5)*0.7);
+          gScene.add(dot);
+        }
+
+        const bandH=Math.max(0.12,sig*3.6*4.0);
+        const band=new T.Mesh(new T.BoxGeometry(1.2,bandH,1.2),
+          new T.MeshBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.16}));
+        band.position.set(x,yMean,0);
+        gScene.add(band);
+
+        const tf=new T.Mesh(new T.SphereGeometry(0.18,10,10),new T.MeshStandardMaterial({color:GR,emissive:GR,emissiveIntensity:0.5,roughness:0.4}));
+        tf.position.set(x,-0.9,0); gScene.add(tf);
+        gScene.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x,-0.9,0),new T.Vector3(x,yMean-0.3,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+
+        L(EDGES[e],col.getStyle(),1.5,x,yMean+0.7,0);
+        l("σ="+sig.toFixed(3),col.getStyle(),0.40,x,yMean+0.35,0);
+        l("R̄="+mean.toFixed(2),"#9fb4cc",0.36,x,-1.3,0);
+      }
+
+      gScene.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5.4,0,0),new T.Vector3(5.4,0,0)]),new T.LineBasicMaterial({color:0x1e3046})));
+      L("MC-dropout · T="+Tsamp+" passes","#a78bfa",1.25,0,4.7,0);
+
+      let mi=0; for(let e=1;e<3;e++) if(sampSig[e]>sampSig[mi]) mi=e;
+      const arw=new T.Mesh(new T.ConeGeometry(0.18,0.5,8),new T.MeshBasicMaterial({color:RO.getHex()}));
+      arw.position.set(xPos[mi],sampMean[mi]*3.6+1.3,0); arw.rotation.z=Math.PI;
+      gScene.add(arw);
+
+      const maxSig=Math.max(sampSig[0],sampSig[1],sampSig[2]);
+      const nConf=sampSig.filter(v=>v<=sigThr).length;
+      api.setMetric("meanR","R̄(e1) "+sampMean[0].toFixed(2));
+      api.setMetric("sigE",sampSig[0].toFixed(3));
+      api.setMetric("maxSig",maxSig.toFixed(3));
+      api.setMetric("confEdges",nConf+"/3");
+
+      sceneSnap={mode,tDraws:Tsamp,dropRate:+drop.toFixed(3),sigThr:+sigThr.toFixed(3),
+        sigE1:+sampSig[0].toFixed(4),sigE2:+sampSig[1].toFixed(4),sigE3:+sampSig[2].toFixed(4),
+        meanR1:+sampMean[0].toFixed(3),maxSig:+maxSig.toFixed(4),confEdges:nConf,
+        mostUncertain:mi+1};
+
+      return {
+        badge:"MC-dropout · T="+Tsamp+" · drop="+(drop*100).toFixed(0)+"% · "+nConf+"/3 confident",
+        formula:"R̂ = mean_t R^{(t)},   σ_e² = mean_{ij} Var_t[R^{(t)}_{ij}]",
+        insight:"Each edge's restriction map is sampled "+Tsamp+" times with dropout active at test time. The violet band is σ_e — the spread of the samples. e1 (strong motif, open chromatin) collapses to a tight, confident map; e3 (medium motif, long distance, ambiguous features) scatters widely → high σ_e, flagged for experimental follow-up. Raising the dropout rate widens every band.",
+        state:"σ(e1)="+sampSig[0].toFixed(3)+" σ(e2)="+sampSig[1].toFixed(3)+" σ(e3)="+sampSig[2].toFixed(3)+". Most uncertain: "+EDGES[mi]+". "+nConf+"/3 edges below σ-threshold "+sigThr.toFixed(2)+".",
+        metrics:{meanR:"R̄(e1) "+sampMean[0].toFixed(2),sigE:sampSig[0].toFixed(3),maxSig:maxSig.toFixed(3),confEdges:nConf+"/3"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: bayes-map  — posterior variance vs TF signal / prior / noise
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="bayes-map"){
+      const nCells=4;
+      const R0=[0.6,0.2,0.5];                 // prior means per edge (motif-derived)
+      const xPos=[-3.4,0,3.4];
+      const pv=[0,0,0], rmap=[0,0,0];
+      for(let e=0;e<3;e++){
+        const x=xPos[e];
+        const v=postVar(xTF[e],gamma,sn,nCells);
+        const rm=mapEstimate(xTF[e],xGN[e],gamma,sn,R0[e],nCells);
+        pv[e]=v; rmap[e]=rm;
+        const sig=Math.sqrt(v);
+        const col=sig<=0.18?CY.clone():(sig<=0.32?AM.clone():RO.clone());
+
+        const h=0.15+Math.min(1,Math.sqrt(v)*2.4)*4.0;
+        const bar=new T.Mesh(new T.BoxGeometry(1.5,h,1.3),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.55,roughness:0.4}));
+        bar.position.set(x,h/2,-0.6);
+        gBars.add(bar);
+        api.pick(bar,{post:{id:e,name:EDGE[e],pv:v,xtf:xTF[e],map:rm}});
+
+        const mk=new T.Mesh(new T.SphereGeometry(0.2,12,12),new T.MeshStandardMaterial({color:GR,emissive:GR,emissiveIntensity:0.85,roughness:0.25}));
+        mk.position.set(x,Math.max(0.2,rm*3.4),1.8); gBars.add(mk);
+        gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x,0,1.8),new T.Vector3(x,Math.max(0.2,rm*3.4),1.8)]),new T.LineBasicMaterial({color:0x2a4d3a})));
+
+        L(EDGES[e],col.getStyle(),1.45,x,h+0.6,-0.6);
+        l("Var="+v.toFixed(3),col.getStyle(),0.40,x,h+0.28,-0.6);
+        l("x_TF="+xTF[e].toFixed(1),"#9fb4cc",0.36,x,-0.45,-0.6);
+        l("R^MAP="+rm.toFixed(2),"#34d399",0.36,x,-0.45,1.8);
+      }
+
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5.4,0,-0.6),new T.Vector3(5.4,0,-0.6)]),new T.LineBasicMaterial({color:0x1e3046})));
+      L("Laplace posterior  Var = σ_n² / (Σx_TF² + γσ_n²)","#a78bfa",1.15,0,5.0,-0.6);
+      l("MAP estimates (green) →","#34d399",0.42,0,3.6,1.8);
+
+      let lowConf=0; for(let e=1;e<3;e++) if(pv[e]>pv[lowConf]) lowConf=e;
+      const maxSig=Math.sqrt(Math.max(pv[0],pv[1],pv[2]));
+      api.setMetric("meanR","R^MAP "+rmap[0].toFixed(2));
+      api.setMetric("sigE",Math.sqrt(pv[0]).toFixed(3));
+      api.setMetric("maxSig",maxSig.toFixed(3));
+      api.setMetric("confEdges","γ="+gamma.toFixed(1));
+
+      sceneSnap={mode,gamma:+gamma.toFixed(3),noise:+sn.toFixed(3),
+        postVar1:+pv[0].toFixed(4),postVar2:+pv[1].toFixed(4),postVar3:+pv[2].toFixed(4),
+        map1:+rmap[0].toFixed(3),map2:+rmap[1].toFixed(3),map3:+rmap[2].toFixed(3),
+        lowConfEdge:lowConf+1};
+
+      return {
+        badge:"Bayesian MAP · γ="+gamma.toFixed(1)+" · σ_n="+sn.toFixed(2),
+        formula:"R_e^{MAP}=[Σx_TF²/σ_n²+γ]⁻¹[Σx_TF·x_gene/σ_n²+γR₀],  Var=σ_n²/(Σx_TF²+γσ_n²)",
+        insight:"The MAP estimate (green markers) is a weighted blend of the data-driven fit and the motif prior R₀. The posterior-variance bars shrink when the TF is highly expressed (e1,e2 share x_TF1=0.8 → strong signal) and grow when it is barely expressed (e3 has x_TF2=0.3 → near-prior uncertainty). Raise γ to trust the prior more (lower variance); raise σ_n for noisier labels (higher variance).",
+        state:"Var(e1)="+pv[0].toFixed(3)+" Var(e3)="+pv[2].toFixed(3)+". R^MAP(e1)="+rmap[0].toFixed(2)+". Least confident: "+EDGES[lowConf]+" (low TF expression).",
+        metrics:{meanR:"R^MAP "+rmap[0].toFixed(2),sigE:Math.sqrt(pv[0]).toFixed(3),maxSig:maxSig.toFixed(3),confEdges:"γ="+gamma.toFixed(1)},
+        focus:{center:[0,2,0.4],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: pareto  — (link score P_e, uncertainty σ_e) frontier + calibration
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="pareto"){
+      const xOff=-4.2, yOff=0, xS=10.0, yS=4.4;     // x: sigma (low→left good), y: P_e
+      gFront.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff+xS,yOff,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gFront.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff,yOff+yS,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      l("σ_e  (uncertainty →)","#8a99ad",0.42,xOff+xS*0.5,-0.5,0);
+      l("P_e","#8a99ad",0.42,xOff-0.55,yOff+yS*0.5,0);
+
+      const sigMax=0.08;
+      const pts=[];
+      for(let e=0;e<3;e++){
+        pts.push({name:EDGES[e],sig:Rsig[e],P:Pscore[e],anchor:true,id:e});
+      }
+      for(let k=0;k<28;k++){
+        const sig=0.008+prand(k*31+5)*0.072;
+        const P=0.18+prand(k*47+11)*0.74;
+        pts.push({name:"cand",sig:sig,P:P,anchor:false,id:100+k});
+      }
+
+      pts.forEach(p=>{
+        p.front=!pts.some(q=>q!==p && q.P>p.P+1e-6 && q.sig<p.sig-1e-6);
+        p.actionable=p.front && p.sig<=sigThr && p.P>=0.5;
+      });
+
+      function px(sig){return xOff+(sig/sigMax)*xS;}
+      function py(P){return yOff+P*yS;}
+
+      pts.forEach(p=>{
+        const x=px(Math.min(sigMax,p.sig)), y=py(p.P);
+        let col=SL.clone();
+        if(p.actionable) col=CY.clone();
+        else if(p.front) col=GR.clone();
+        else if(p.sig>sigThr*1.8) col=RO.clone();
+        else col=SL.clone();
+        const r=p.anchor?0.26:0.13;
+        const dot=new T.Mesh(new T.SphereGeometry(r,p.anchor?16:8,p.anchor?12:8),
+          new T.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:p.anchor?0.85:0.5,roughness:0.4,transparent:!p.anchor&&!p.front,opacity:(!p.anchor&&!p.front)?0.6:1}));
+        dot.position.set(x,y,p.anchor?0.2:0);
+        gFront.add(dot);
+        if(p.anchor){api.pick(dot,{pt:{name:p.name,sig:p.sig,P:p.P,front:p.front,actionable:p.actionable}});L(p.name,col.getStyle(),1.2,x,y+0.4,0.2);}
+      });
+
+      const fr=pts.filter(p=>p.front).sort((a,b)=>a.sig-b.sig);
+      if(fr.length>1){
+        const fp=fr.map(p=>new T.Vector3(px(Math.min(sigMax,p.sig)),py(p.P),0.05));
+        gFront.add(new T.Line(new T.BufferGeometry().setFromPoints(fp),new T.LineBasicMaterial({color:GR.getHex()})));
+      }
+
+      const thrX=px(Math.min(sigMax,sigThr));
+      gFront.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(thrX,yOff,0),new T.Vector3(thrX,yOff+yS,0)]),new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.6})));
+      l("σ_thr","#a78bfa",0.36,thrX,yOff+yS+0.25,0);
+      const pY=py(0.5);
+      gFront.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,pY,0),new T.Vector3(xOff+xS,pY,0)]),new T.LineBasicMaterial({color:0x33415a})));
+
+      const reg=new T.Mesh(new T.PlaneGeometry(thrX-xOff,yOff+yS-pY),new T.MeshBasicMaterial({color:CY.getHex(),transparent:true,opacity:0.08,side:T.DoubleSide}));
+      reg.position.set((xOff+thrX)/2,(pY+yOff+yS)/2,-0.05);
+      gFront.add(reg);
+      l("actionable","#4dd7ff",0.4,(xOff+thrX)/2,yOff+yS-0.3,0);
+
+      const cx0=xOff, cz=-3.2;
+      CAL.forEach((c,i)=>{
+        const h=0.1+c.p*2.6;
+        const col=c.p>=0.7?CY.clone():(c.p>=0.55?AM.clone():RO.clone());
+        const b=new T.Mesh(new T.BoxGeometry(0.9,h,0.9),new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5),emissiveIntensity:0.5,roughness:0.4}));
+        b.position.set(cx0+i*1.4+0.6,h/2,cz); gFront.add(b);
+        l(c.lab,col.getStyle(),0.32,cx0+i*1.4+0.6,h+0.3,cz);
+        l((c.p*100).toFixed(0)+"%","#9fb4cc",0.3,cx0+i*1.4+0.6,-0.3,cz);
+      });
+      l("calibration: precision@100 vs σ-bin","#8a99ad",0.4,cx0+2.5,-0.7,cz);
+
+      const nAction=pts.filter(p=>p.actionable).length;
+      const nFront=pts.filter(p=>p.front).length;
+      let mono=true; for(let i=1;i<CAL.length;i++) if(CAL[i].p>CAL[i-1].p) mono=false;
+
+      api.setMetric("meanR","P(e1) "+Pscore[0].toFixed(2));
+      api.setMetric("sigE",Rsig[0].toFixed(3));
+      api.setMetric("maxSig",nFront+" front");
+      api.setMetric("confEdges",nAction+" act");
+
+      sceneSnap={mode,sigThr:+sigThr.toFixed(3),
+        nFrontier:nFront,nActionable:nAction,
+        e1OnFrontier:pts[0].front,e1Actionable:pts[0].actionable,
+        e3Actionable:pts[2].actionable,calibrationMonotonic:mono};
+
+      return {
+        badge:"Pareto frontier · "+nAction+" actionable · "+nFront+" on frontier",
+        formula:"e ∈ frontier ⇔ ∄ e′: P_{e′}>P_e ∧ σ_{e′}<σ_e",
+        insight:"Each candidate edge is a point: x = uncertainty σ_e (lower is better, left), y = link-prediction score P_e (higher is better). The green frontier is the upper-left boundary — the best score-vs-confidence tradeoffs. Cyan points in the shaded box (σ ≤ σ_thr and P ≥ 0.5) are actionable: prioritise these for Perturb-seq validation. e1 sits high-left (confident, strong); e3 is high-σ and falls off the actionable set. The calibration strip confirms precision drops monotonically as σ rises.",
+        state:nFront+" edges on the Pareto frontier, "+nAction+" actionable at σ_thr="+sigThr.toFixed(2)+". e1 "+(pts[0].actionable?"actionable":"off")+", e3 "+(pts[2].actionable?"actionable":"off")+". Calibration monotonic: "+(mono?"yes":"no")+".",
+        metrics:{meanR:"P(e1) "+Pscore[0].toFixed(2),sigE:Rsig[0].toFixed(3),maxSig:nFront+" front",confEdges:nAction+" act"},
+        focus:{center:[0,2,-0.6],radius:14}
+      };
+    }
+
+    return {badge:"G14",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g14",
+    kind:"uncertainty-aware-sheaf-maps",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G14 · Uncertainty-aware sheaf maps for noisy regulatory evidence",
+    subtitle:"Treat each restriction map as a distribution, not a point. Three views: MC-dropout sampling, the Bayesian MAP posterior, and the score-vs-uncertainty Pareto frontier for edge prioritisation.",
+    selectedLabel:"Element",
+    selectedHint:"Click an edge node, variance bar, or frontier point.",
+    insightLabel:"What this shows",
+    modes:[
+      {value:"mc-dropout", label:"MC-dropout (T stochastic passes)"},
+      {value:"bayes-map",  label:"Bayesian MAP (Laplace posterior)"},
+      {value:"pareto",     label:"Pareto frontier (score vs uncertainty)"}
+    ],
+    params:[
+      {key:"tDraws",  label:"# MC-dropout passes (T)",min:2,max:12,step:1,value:5,
+       fmt:v=>Math.round(v).toString(),modes:["mc-dropout"]},
+      {key:"dropRate",label:"dropout rate",min:0.02,max:0.30,step:0.01,value:0.10,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["mc-dropout"]},
+      {key:"gamma",   label:"prior strength γ",min:0.1,max:6,step:0.1,value:1.0,
+       fmt:v=>v.toFixed(1),modes:["bayes-map"]},
+      {key:"noise",   label:"obs noise σ_n",min:0.05,max:0.60,step:0.01,value:0.20,
+       fmt:v=>v.toFixed(2),modes:["bayes-map"]},
+      {key:"sigThr",  label:"σ confidence threshold",min:0.01,max:0.08,step:0.005,value:0.03,
+       fmt:v=>v.toFixed(3),modes:["mc-dropout","pareto"]}
+    ],
+    metrics:[
+      {key:"meanR",     label:"mean restriction map",accent:"green"},
+      {key:"sigE",      label:"σ_e (edge 1)",accent:"cyan"},
+      {key:"maxSig",    label:"max σ / frontier",accent:"rose"},
+      {key:"confEdges", label:"confident / actionable",accent:"violet"}
+    ],
+    layers:[
+      {group:"scene", label:"Edges / samples"},
+      {group:"bars",  label:"Variance bars"},
+      {group:"front", label:"Pareto frontier"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Low dropout (2%)",
+      on:api=>{api.setParam("dropRate",0.02);}
+    },
+    secondary:{
+      label:"High dropout (30%)",
+      on:api=>{api.setParam("dropRate",0.30);}
+    },
+    defaultCam:{theta:-0.45,phi:0.6,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=confident (low σ) · <span style="color:#34d399">green</span>=mean / MAP / frontier · <span style="color:#fbbf24">amber</span>=borderline · <span style="color:#fb7185">rose</span>=uncertain (high σ) · <span style="color:#a78bfa">violet</span>=σ band / posterior.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="pareto") api.frame([0,2,-0.6],14);
+      else api.frame([0,2,0],13);
+    },
+    onSelect(api,d){
+      if(d.edge) api.setSelected(d.edge.name+" · R̄="+d.edge.mean.toFixed(3)+" · σ_e="+d.edge.sig.toFixed(3));
+      if(d.post) api.setSelected(d.post.name+" · Var="+d.post.pv.toFixed(4)+" · x_TF="+d.post.xtf.toFixed(1)+" · R^MAP="+d.post.map.toFixed(2));
+      if(d.pt)   api.setSelected(d.pt.name+" · P="+d.pt.P.toFixed(2)+" · σ="+d.pt.sig.toFixed(3)+(d.pt.actionable?" · ACTIONABLE":d.pt.front?" · frontier":""));
+    },
+    build,
+    snapshot(s){
+      const out={mode:s.mode};
+      if(s.mode==="mc-dropout"){
+        out.tDraws=Math.round(s.tDraws); out.dropRate=+s.dropRate.toFixed(3); out.sigThr=+s.sigThr.toFixed(3);
+        if(sceneSnap.mode==="mc-dropout"){out.sigE1=sceneSnap.sigE1;out.sigE3=sceneSnap.sigE3;out.maxSig=sceneSnap.maxSig;out.confEdges=sceneSnap.confEdges;out.mostUncertain=sceneSnap.mostUncertain;}
+      } else if(s.mode==="bayes-map"){
+        out.gamma=+s.gamma.toFixed(3); out.noise=+s.noise.toFixed(3);
+        if(sceneSnap.mode==="bayes-map"){out.postVar1=sceneSnap.postVar1;out.postVar3=sceneSnap.postVar3;out.map1=sceneSnap.map1;out.lowConfEdge=sceneSnap.lowConfEdge;}
+      } else if(s.mode==="pareto"){
+        out.sigThr=+s.sigThr.toFixed(3);
+        if(sceneSnap.mode==="pareto"){out.nFrontier=sceneSnap.nFrontier;out.nActionable=sceneSnap.nActionable;out.e1Actionable=sceneSnap.e1Actionable;out.e3Actionable=sceneSnap.e3Actionable;out.calibrationMonotonic=sceneSnap.calibrationMonotonic;}
+      }
+      return out;
+    }
+  });
+})();
+</script>
+</body>
+</html>

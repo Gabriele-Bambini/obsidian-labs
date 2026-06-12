@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure G04 — Orthogonal maps rotate modality frames without stretching them</title>
+<desc id="d">Four-panel captioned figure: Orthogonal maps rotate modality frames without stretching them</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE G04 · BLOCK G · SHEAF GNN FOR BIOLOGY</text>
+<text x="40" y="62" fill="#e8eef6" font-size="21" font-weight="700">Orthogonal maps rotate modality frames without stretching them</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Connection sheaf on 4 cells</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">C1 C2 C3 C4</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">stalk dim</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">d = 2</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">frames</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">mRNA · ATAC</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edge O</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">θ = -45°</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Rotation aligns the frames</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">E_O = ‖O·x_C1 − x_C2‖²</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">−45° swap: 5.30 → 0.748</text>
+<rect x="502" y="200.33" width="12" height="3.67" rx="2" fill="#34d399"/>
+<text x="508" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">−45°</text>
+<rect x="531" y="178" width="12" height="26" rx="2" fill="#fb7185"/>
+<text x="537" y="216" fill="#8a99ad" font-size="9" text-anchor="middle">O=I</text>
+<line x1="502" y1="178" x2="560" y2="178" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">One angle, bounded spectrum</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">Oᵀ O = I  ⇒  spec(L̂_O) ⊂ [0,2]</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">d=2: 1 angle vs 4 R-entries</text>
+<rect x="56" y="388" width="10" height="16" rx="2" fill="#34d399"/>
+<text x="61" y="416" fill="#8a99ad" font-size="9" text-anchor="middle">O</text>
+<rect x="72" y="340" width="10" height="64" rx="2" fill="#fbbf24"/>
+<text x="77" y="416" fill="#8a99ad" font-size="9" text-anchor="middle">R</text>
+<line x1="56" y1="340" x2="88" y2="340" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="441" fill="#8a99ad" font-size="11">Orthogonality bounds the normalized Laplacian spectrum in</text>
+<text x="56" y="461" fill="#8a99ad" font-size="11">…</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Holonomy decides flatness</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">cycle Σθ</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">165°</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">flat if</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">≡ 0 (mod 360°)</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">here</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">non-flat</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">meaning</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">conflicting modalities</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure G04. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Four </text>
+<text x="184.61" y="538" fill="#c7d2dd" font-size="13">cells </text>
+<text x="232.97" y="538" fill="#c7d2dd" font-size="13">C1–C4 </text>
+<text x="290.2" y="538" fill="#c7d2dd" font-size="13">with </text>
+<text x="330.5" y="538" fill="#c7d2dd" font-size="13">2D </text>
+<text x="355.89" y="538" fill="#c7d2dd" font-size="13">stalks </text>
+<text x="412.31" y="538" fill="#c7d2dd" font-size="13">(mRNA, </text>
+<text x="472.35" y="538" fill="#c7d2dd" font-size="13">ATAC). </text>
+<text x="533.61" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="567.14" y="538" fill="#c7d2dd" font-size="13">Edge </text>
+<text x="608.65" y="538" fill="#c7d2dd" font-size="13">C1–C2 </text>
+<text x="665.88" y="538" fill="#c7d2dd" font-size="13">learns </text>
+<text x="722.3" y="538" fill="#c7d2dd" font-size="13">one </text>
+<text x="754.54" y="538" fill="#c7d2dd" font-size="13">orthogonal </text>
+<text x="843.2" y="538" fill="#c7d2dd" font-size="13">map</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">O, </text>
+<text x="65.39" y="559" fill="#c7d2dd" font-size="13">θ </text>
+<text x="81.51" y="559" fill="#c7d2dd" font-size="13">= </text>
+<text x="97.63" y="559" fill="#c7d2dd" font-size="13">-45°. </text>
+<text x="145.99" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="179.52" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="212.97" y="559" fill="#c7d2dd" font-size="13">rotation </text>
+<text x="285.51" y="559" fill="#c7d2dd" font-size="13">aligns </text>
+<text x="341.93" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="374.17" y="559" fill="#c7d2dd" font-size="13">frames, </text>
+<text x="438.65" y="559" fill="#c7d2dd" font-size="13">dropping </text>
+<text x="511.19" y="559" fill="#c7d2dd" font-size="13">‖O·x_C1 </text>
+<text x="584.53" y="559" fill="#c7d2dd" font-size="13">− </text>
+<text x="600.65" y="559" fill="#c7d2dd" font-size="13">x_C2‖² </text>
+<text x="655.86" y="559" fill="#c7d2dd" font-size="13">from </text>
+<text x="696.16" y="559" fill="#c7d2dd" font-size="13">5.30 </text>
+<text x="736.46" y="559" fill="#c7d2dd" font-size="13">(O=I) </text>
+<text x="787.24" y="559" fill="#c7d2dd" font-size="13">to </text>
+<text x="811.42" y="559" fill="#c7d2dd" font-size="13">0.748.</text>
+<text x="40" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="73.53" y="580" fill="#c7d2dd" font-size="13">d=2 </text>
+<text x="105.77" y="580" fill="#c7d2dd" font-size="13">needs </text>
+<text x="154.13" y="580" fill="#c7d2dd" font-size="13">1 </text>
+<text x="170.25" y="580" fill="#c7d2dd" font-size="13">angle </text>
+<text x="218.61" y="580" fill="#c7d2dd" font-size="13">vs </text>
+<text x="242.79" y="580" fill="#c7d2dd" font-size="13">4 </text>
+<text x="258.91" y="580" fill="#c7d2dd" font-size="13">R-entries; </text>
+<text x="348.78" y="580" fill="#c7d2dd" font-size="13">spectrum </text>
+<text x="421.32" y="580" fill="#c7d2dd" font-size="13">⊂ </text>
+<text x="437.44" y="580" fill="#c7d2dd" font-size="13">[0,2]. </text>
+<text x="493.86" y="580" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="527.39" y="580" fill="#c7d2dd" font-size="13">Cycle </text>
+<text x="576.96" y="580" fill="#c7d2dd" font-size="13">Σθ </text>
+<text x="601.14" y="580" fill="#c7d2dd" font-size="13">= </text>
+<text x="617.26" y="580" fill="#c7d2dd" font-size="13">165° </text>
+<text x="657.56" y="580" fill="#c7d2dd" font-size="13">(≠360k) </text>
+<text x="728.49" y="580" fill="#c7d2dd" font-size="13">→ </text>
+<text x="751.05" y="580" fill="#c7d2dd" font-size="13">non-flat,</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">globally </text>
+<text x="112.54" y="601" fill="#c7d2dd" font-size="13">inconsistent.</text>
+</svg>

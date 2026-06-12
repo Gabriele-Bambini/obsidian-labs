@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G03 · Neural Sheaf Diffusion</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin, fully reproducible) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── FACTS: the note's Section-5 worked example (3-gene GRN, d=2 stalks) ────
+  // TF1 activates GeneA (model must learn it); GeneB is unrelated.
+  const F={
+    hTF:[3.0,2.0],          // h_TF1^0  (expression, accessibility)
+    hA :[2.4,1.6],          // h_GeneA^0 (target of TF1)
+    hB :[0.5,1.8],          // h_GeneB^0 (unrelated)
+    // R_{TF1->e}^0 predicted 2x2 restriction map; head R_{GeneA->e}=I
+    Rtf:[[0.7,0.1],[0.05,0.6]],
+    alpha:0.5, lmax:2.0     // update step alpha/lambda_max = 0.25
+  };
+  // derived (all deterministic)
+  const RhTF=[F.Rtf[0][0]*F.hTF[0]+F.Rtf[0][1]*F.hTF[1],
+              F.Rtf[1][0]*F.hTF[0]+F.Rtf[1][1]*F.hTF[1]];     // [2.30,1.35]
+  const grad=[F.hA[0]-RhTF[0], F.hA[1]-RhTF[1]];               // [0.10,0.25]
+  const step=F.alpha/F.lmax;                                   // 0.25
+  const hA1=[F.hA[0]-step*grad[0], F.hA[1]-step*grad[1]];      // [2.375,1.5375]
+  const E1=grad[0]*grad[0]+grad[1]*grad[1];                    // 0.0725 (sheaf energy on edge)
+  const froGen=Math.sqrt(F.Rtf[0][0]**2+F.Rtf[0][1]**2+F.Rtf[1][0]**2+F.Rtf[1][1]**2); // 0.9287
+  const eigTr=F.Rtf[0][0]+F.Rtf[1][1], eigDet=F.Rtf[0][0]*F.Rtf[1][1]-F.Rtf[0][1]*F.Rtf[1][0];
+  const eigDisc=Math.sqrt(Math.max(0,eigTr*eigTr-4*eigDet));
+  const lamGen=[(eigTr+eigDisc)/2,(eigTr-eigDisc)/2];          // [0.737,0.563]
+  // params (note exercise 2): MLP Linear(4,16)+Linear(16,4)=148/dir, 296 both dirs, +W(6) ~302; SNN=6
+  const PARAMS={mlpDir:148, mlpBoth:296, nsdTot:302, snn:6};
+
+  let sceneSnap={};
+
+  // ── helpers used across modes ─────────────────────────────────────────────
+  function matvec(M,v){return [M[0][0]*v[0]+M[0][1]*v[1], M[1][0]*v[0]+M[1][1]*v[1]];}
+  function froNorm(M){return Math.sqrt(M[0][0]**2+M[0][1]**2+M[1][0]**2+M[1][1]**2);}
+  function eig2(M){const tr=M[0][0]+M[1][1],det=M[0][0]*M[1][1]-M[0][1]*M[1][0];
+    const d=Math.sqrt(Math.max(0,tr*tr-4*det));return [(tr+d)/2,(tr-d)/2];}
+
+  // mode-dependent restriction-map family for the (TF1,GeneA) edge.
+  // variant: 0=General (free 2x2)  1=Symmetric (L L^T, PD)  2=Diagonal (diag vector)
+  // strength s scales how far the learned map deviates from identity.
+  function predictMap(variant,s){
+    if(variant===2){               // Diagonal NSD: R = diag(g0,g1); d=1 => signed scalar
+      const g0=F.Rtf[0][0]*s, g1=F.Rtf[1][1]*s;
+      return [[g0,0],[0,g1]];
+    }
+    if(variant===1){               // Symmetric NSD: L lower-tri, R = L L^T (always PD)
+      const L=[[0.84*s,0],[0.18*s,0.78*s]];
+      const R=[[L[0][0]*L[0][0]+L[0][1]*L[0][1], L[0][0]*L[1][0]+L[0][1]*L[1][1]],
+               [L[1][0]*L[0][0]+L[1][1]*L[0][1], L[1][0]*L[1][0]+L[1][1]*L[1][1]]];
+      return R;
+    }
+    // General NSD: free 2x2 (the worked-example map, scaled by s)
+    return [[F.Rtf[0][0]*s,F.Rtf[0][1]*s],[F.Rtf[1][0]*s,F.Rtf[1][1]*s]];
+  }
+
+  // condition number of R^T R (well-conditioning differs across variants)
+  function condRtR(R){
+    const RtR=[[R[0][0]*R[0][0]+R[1][0]*R[1][0], R[0][0]*R[0][1]+R[1][0]*R[1][1]],
+               [R[0][1]*R[0][0]+R[1][1]*R[1][0], R[0][1]*R[0][1]+R[1][1]*R[1][1]]];
+    const ev=eig2(RtR).map(x=>Math.abs(x)).sort((a,b)=>b-a);
+    return ev[1]<1e-6?999:ev[0]/ev[1];
+  }
+
+  // ── build ──────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const variant=Math.round(s.variant);   // 0 gen 1 sym 2 diag
+    const strength=s.strength;              // 0.0..1.4  scales R deviation
+    const layers=Math.round(s.layers);      // 1..8 diffusion depth
+    const noise=s.noise;                    // 0..1 prior noise / heterophily mix
+
+    const gGraph =api.group("graph");
+    const gMatrix=api.group("matrix");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY="#4dd7ff";   // expression / activation / encoder
+    const GR="#34d399";   // activated target / fine outcome
+    const AM="#fbbf24";   // accessibility / scratch-baseline / warning
+    const VI="#a78bfa";   // restriction map / repression flag
+    const RO="#fb7185";   // repressor / negative eigenvalue
+    const SL="#54667c";   // muted
+
+    const variantName=["General (free 2×2)","Symmetric (LLᵀ, PD)","Diagonal (diag → signed scalar)"][variant];
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: predict  — the worked example: MLP predicts R, build Γ, diffuse GeneA
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="predict"){
+      const R=predictMap(variant,strength);
+      const RhTFc=matvec(R,F.hTF);
+      const gradc=[F.hA[0]-RhTFc[0], F.hA[1]-RhTFc[1]];
+      const Ec=gradc[0]*gradc[0]+gradc[1]*gradc[1];
+      const hAnew=[F.hA[0]-step*gradc[0], F.hA[1]-step*gradc[1]];
+      const fro=froNorm(R);
+
+      // node positions
+      const pTF=[-3.2,0,1.4], pA=[2.6,0,0.6], pB=[0.2,0,-3.2];
+      api.node(pTF,{color:CY,r:0.42,label:"TF1",group:"graph",pick:{node:"TF1",h:F.hTF}});
+      api.node(pA ,{color:GR,r:0.42,label:"GeneA",group:"graph",pick:{node:"GeneA",h:F.hA}});
+      api.node(pB ,{color:SL,r:0.34,label:"GeneB",group:"graph",pick:{node:"GeneB",h:F.hB}});
+
+      // the learned edge TF1 -> GeneA: thickness ~ Frobenius norm of R
+      api.edge(pTF,pA,{color:VI,width:0.05+0.09*Math.min(1.4,fro),group:"graph"});
+      api.arrow([pTF[0]+0.6,0.9,pTF[2]],[pA[0]-0.6,0.9,pA[2]],{color:VI,head:0.26,width:0.05,label:"R = MLP(h_TF‖h_A)",group:"graph"});
+      // GeneB sits unconnected (unrelated) — dashed faint
+      api.edge(pTF,pB,{color:SL,dashed:true,opacity:0.25,group:"graph"});
+
+      // small "MLP" box between the nodes feeding the map
+      const mlp=new T.Mesh(new T.BoxGeometry(0.9,0.5,0.5),api.mat(VI,{emissive:0.5}));
+      mlp.position.set((pTF[0]+pA[0])/2,1.8,(pTF[2]+pA[2])/2);gGraph.add(mlp);
+      addSlbl("MLP θ",VI,0.4,(pTF[0]+pA[0])/2,2.45,(pTF[2]+pA[2])/2);
+
+      // the predicted 2x2 restriction map as a matrix grid of bars
+      const mx0=-5.0, mz0=4.2, cell=1.05;
+      for(let i=0;i<2;i++)for(let j=0;j<2;j++){
+        const val=R[i][j];
+        const h=0.1+Math.abs(val)*2.4;
+        const c=val>=0?CY:RO;
+        const cube=new T.Mesh(new T.BoxGeometry(0.8,h,0.8),api.mat(c,{emissive:0.4}));
+        cube.position.set(mx0+j*cell, h/2, mz0+i*cell);gMatrix.add(cube);
+        api.pick(cube,{cell:{i,j,val}});
+        addSlbl(val.toFixed(2), c, 0.34, mx0+j*cell, h+0.4, mz0+i*cell);
+      }
+      addLbl("R_{TF1→e}",VI,1.15,mx0+cell*0.5,0.0,mz0-0.9);
+
+      // sheaf gradient vector at GeneA shown as an arrow nudging GeneA
+      const gscale=2.2;
+      api.arrow([pA[0],0.2,pA[2]],[pA[0]-gradc[0]*gscale,0.2,pA[2]-gradc[1]*gscale],
+                {color:AM,head:0.2,width:0.04,label:"−∇E·step",group:"graph"});
+
+      api.setMetric("energy",Ec.toFixed(3));
+      api.setMetric("frob",fro.toFixed(3));
+      api.setMetric("shift",Math.sqrt((hAnew[0]-F.hA[0])**2+(hAnew[1]-F.hA[1])**2).toFixed(4));
+      api.setMetric("params",PARAMS.nsdTot+" vs "+PARAMS.snn);
+
+      sceneSnap={mode,variant,strength:+strength.toFixed(3),layers,
+        edgeEnergy:+Ec.toFixed(4), frobR:+fro.toFixed(4), featShift:+Math.sqrt((hAnew[0]-F.hA[0])**2+(hAnew[1]-F.hA[1])**2).toFixed(5),
+        hA1_x:+hAnew[0].toFixed(4), hA1_y:+hAnew[1].toFixed(4)};
+
+      return {
+        badge:"Predict R · "+variantName,
+        formula:"R<sub>TF1→e</sub> = MLP<sub>θ</sub>(h<sub>TF1</sub>‖h<sub>GeneA</sub>) ,&nbsp; h<sub>A</sub>¹ = h<sub>A</sub> − (α/λ)·∇E",
+        insight:"An MLP reads both endpoint features and predicts the 2×2 restriction map R (the matrix grid). The head GeneA uses identity. The sheaf gradient ∇E = h_A − R·h_TF (amber arrow) nudges GeneA toward the map-predicted value. At the canonical map the nudge is small because TF1 already nearly explains GeneA.",
+        state:"R·h_TF = ["+RhTFc.map(x=>x.toFixed(2)).join(", ")+"] · ∇E@GeneA = ["+gradc.map(x=>x.toFixed(2)).join(", ")+"] · h_A¹ = ["+hAnew.map(x=>x.toFixed(3)).join(", ")+"] · edge energy ‖δ‖² = "+Ec.toFixed(3)+".",
+        metrics:{energy:Ec.toFixed(3),frob:fro.toFixed(3),shift:Math.sqrt((hAnew[0]-F.hA[0])**2+(hAnew[1]-F.hA[1])**2).toFixed(4),params:PARAMS.nsdTot+" vs "+PARAMS.snn},
+        focus:{center:[-1.0,1.0,0.5],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: variants — General vs Symmetric vs Diagonal: expressivity vs cond.
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="variants"){
+      const labels=["General","Symmetric","Diagonal"];
+      const cols=[CY,GR,AM];
+      const xPos=[-3.4,0,3.4];
+      // expressivity score (free DOF) and conditioning (lower=better) per variant
+      const dof=[4,3,2];                          // d=2: 4 free / 3 (LLt) / 2 (diag)
+      const conds=[0,1,2].map(v=>condRtR(predictMap(v,Math.max(0.2,strength))));
+      const expr=dof.map(d=>d/4);                 // normalized expressivity
+
+      [0,1,2].forEach((v,idx)=>{
+        const x=xPos[idx];
+        const isActive=(idx===variant);
+        const col=cols[idx];
+        // expressivity bar (front) and conditioning bar (back, inverted=well-conditioned)
+        const hE=0.15+expr[idx]*3.2;
+        const barE=new T.Mesh(new T.BoxGeometry(1.1,hE,1.0),
+          new T.MeshStandardMaterial({color:new T.Color(col),emissive:new T.Color(col).multiplyScalar(isActive?0.8:0.18),emissiveIntensity:isActive?0.7:0.16,roughness:0.4,transparent:!isActive,opacity:isActive?1:0.5}));
+        barE.position.set(x,hE/2,-1.0);gBars.add(barE);
+        api.pick(barE,{variant:labels[idx],dof:dof[idx],cond:conds[idx]});
+
+        const wellCond=1/(1+conds[idx]);          // 0..1, higher=better conditioned
+        const hC=0.15+wellCond*3.2;
+        const barC=new T.Mesh(new T.BoxGeometry(1.1,hC,1.0),
+          new T.MeshStandardMaterial({color:new T.Color(VI),emissive:new T.Color(VI).multiplyScalar(isActive?0.7:0.16),emissiveIntensity:isActive?0.6:0.14,roughness:0.4,transparent:!isActive,opacity:isActive?0.95:0.45}));
+        barC.position.set(x,hC/2,1.0);gBars.add(barC);
+
+        addLbl(labels[idx],col,1.4,x,Math.max(hE,hC)+0.6,0);
+        addSlbl(dof[idx]+" DOF",col,0.34,x,0.06,-1.0);
+        addSlbl("κ="+(conds[idx]>9?"∞":conds[idx].toFixed(1)),VI,0.34,x,0.06,1.0);
+      });
+
+      // active-variant pointer
+      const arw=new T.Mesh(new T.ConeGeometry(0.18,0.5,8),api.mat(AM,{basic:true}));
+      arw.position.set(xPos[variant],4.4,0);gGraph.add(arw);
+
+      addLbl("expressivity (DOF)",CY,1.0,-3.4,-0.55,-2.4);
+      addLbl("well-conditioned",VI,1.0,3.4,-0.55,2.4);
+
+      const activeCond=conds[variant];
+      api.setMetric("energy",E1.toFixed(3));
+      api.setMetric("frob",dof[variant]+" / 4 DOF");
+      api.setMetric("shift",(activeCond>9?"∞":activeCond.toFixed(2)));
+      api.setMetric("params",PARAMS.nsdTot+" vs "+PARAMS.snn);
+
+      sceneSnap={mode,variant,strength:+strength.toFixed(3),layers,
+        dof:dof[variant], conditionNumber:+(activeCond>9?999:activeCond).toFixed(3),
+        expressivity:+expr[variant].toFixed(3)};
+
+      return {
+        badge:"Three NSD variants · "+labels[variant]+" active",
+        formula:"General R∈ℝ<sup>d×d</sup> &nbsp;·&nbsp; Symmetric R=LLᵀ⪰0 &nbsp;·&nbsp; Diagonal R=diag(v)",
+        insight:"Bodnar et al. give three restriction-map families. General is maximally expressive (4 free entries at d=2) but L_F can be ill-conditioned. Symmetric forces R=LLᵀ so L_F is always positive-definite and well-conditioned. Diagonal collapses to a per-channel scaling; at d=1 it is exactly a learned signed adjacency weight — the most interpretable for GRNs.",
+        state:labels[variant]+": "+dof[variant]+" free DOF, R^TR condition κ="+(activeCond>9?"∞":activeCond.toFixed(2))+". Cyan bars = expressivity, violet bars = conditioning. More expressivity trades against conditioning.",
+        metrics:{energy:E1.toFixed(3),frob:dof[variant]+" / 4 DOF",shift:(activeCond>9?"∞":activeCond.toFixed(2)),params:PARAMS.nsdTot+" vs "+PARAMS.snn},
+        focus:{center:[0,1.8,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: coevolve — layer-wise: maps & features co-evolve; no oversmoothing
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="coevolve"){
+      // simulate k layers of NSD on GeneA. Each layer re-predicts R from current h,
+      // diffuses one step. Compare to a GCN baseline that oversmooths (collapses).
+      const k=layers;
+      const xS=1.05, yOff=-1.0, xOff=-5.2;
+      // NSD trajectory: feature gap ||h_A - h_TF|| stays bounded (sheaf keeps separation)
+      // GCN trajectory: gap -> 0 (oversmoothing collapse)
+      let hAk=F.hA.slice(), hTFk=F.hTF.slice();
+      const gapNSD=[], gapGCN=[], froSeq=[];
+      let gGCN_A=F.hA.slice(), gGCN_T=F.hTF.slice();
+      for(let l=0;l<=8;l++){
+        // NSD: re-predict map from current features (deviation grows then saturates)
+        const sl=Math.min(1.2,strength*(0.6+0.4*(1-Math.exp(-l*0.6))));
+        const R=predictMap(variant,Math.max(0.25,sl));
+        froSeq.push(froNorm(R));
+        const RhT=matvec(R,hTFk);
+        const gr=[hAk[0]-RhT[0],hAk[1]-RhT[1]];
+        hAk=[hAk[0]-step*gr[0], hAk[1]-step*gr[1]];
+        const gapN=Math.sqrt((hAk[0]-hTFk[0])**2+(hAk[1]-hTFk[1])**2);
+        gapNSD.push(gapN);
+        // GCN: symmetric averaging -> both move toward mean -> gap shrinks geometrically
+        const decay=0.62;
+        const mean=[(gGCN_A[0]+gGCN_T[0])/2,(gGCN_A[1]+gGCN_T[1])/2];
+        gGCN_A=[mean[0]+(gGCN_A[0]-mean[0])*decay, mean[1]+(gGCN_A[1]-mean[1])*decay];
+        gGCN_T=[mean[0]+(gGCN_T[0]-mean[0])*decay, mean[1]+(gGCN_T[1]-mean[1])*decay];
+        gapGCN.push(Math.sqrt((gGCN_A[0]-gGCN_T[0])**2+(gGCN_A[1]-gGCN_T[1])**2));
+      }
+      const yS=2.2;
+      // axes
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff+9*xS,yOff,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(xOff,yOff,0),new T.Vector3(xOff,yOff+yS*3.2,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      // NSD gap curve (cyan): stays high
+      const nPts=gapNSD.map((g,i)=>new T.Vector3(xOff+i*xS, yOff+g*yS, 0));
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(nPts),new T.LineBasicMaterial({color:0x4dd7ff})));
+      // GCN gap curve (amber): collapses to 0 (oversmoothing)
+      const gPts=gapGCN.map((g,i)=>new T.Vector3(xOff+i*xS, yOff+g*yS, 0));
+      gBars.add(new T.Line(new T.BufferGeometry().setFromPoints(gPts),new T.LineBasicMaterial({color:0xfbbf24})));
+      // markers at current depth k
+      const mN=new T.Mesh(new T.SphereGeometry(0.2,12,12),api.mat(CY,{emissive:0.9}));
+      mN.position.set(xOff+k*xS,yOff+gapNSD[k]*yS,0.12);gBars.add(mN);api.pick(mN,{traj:"NSD",depth:k,gap:gapNSD[k]});
+      const mG=new T.Mesh(new T.SphereGeometry(0.2,12,12),api.mat(AM,{emissive:0.9}));
+      mG.position.set(xOff+k*xS,yOff+gapGCN[k]*yS,0.12);gBars.add(mG);api.pick(mG,{traj:"GCN",depth:k,gap:gapGCN[k]});
+
+      addLbl("‖h_A−h_TF‖",SL,1.0,xOff-0.8,yOff+yS*1.6,0);
+      addLbl("layers →",SL,1.0,xOff+5*xS,yOff-0.6,0);
+      addLbl("NSD (sheaf)",CY,1.1,xOff+9*xS+0.3,yOff+gapNSD[8]*yS,0);
+      addLbl("GCN (collapse)",AM,1.1,xOff+9*xS+0.3,yOff+gapGCN[8]*yS+0.3,0);
+
+      // 3D: GeneA node co-evolving — show start (faint) and current (bright) above axes
+      const pA0=[2.0,3.2,-2.6], pAk=[2.0+ (hAk[0]-F.hA[0])*3, 3.2, -2.6+(hAk[1]-F.hA[1])*3];
+      api.node(pA0,{color:SL,r:0.22,group:"graph"});
+      api.node(pAk,{color:GR,r:0.34,label:"h_A^"+k,group:"graph",pick:{node:"GeneA",layer:k,h:hAk}});
+      api.node([-2.6,3.2,-2.6],{color:CY,r:0.34,label:"h_TF",group:"graph",pick:{node:"TF1",h:hTFk}});
+      api.arrow([pA0[0],pA0[1],pA0[2]],[pAk[0],pAk[1],pAk[2]],{color:VI,head:0.16,width:0.03,group:"graph"});
+
+      const gapFinalN=gapNSD[k], gapFinalG=gapGCN[k];
+      api.setMetric("energy",froSeq[k].toFixed(3));
+      api.setMetric("frob",gapFinalN.toFixed(3));
+      api.setMetric("shift",gapFinalG.toFixed(3));
+      api.setMetric("params",k+" layers");
+
+      sceneSnap={mode,variant,strength:+strength.toFixed(3),layers,
+        nsdGap:+gapFinalN.toFixed(4), gcnGap:+gapFinalG.toFixed(4),
+        oversmoothMargin:+(gapFinalN-gapFinalG).toFixed(4), frobAtDepth:+froSeq[k].toFixed(4)};
+
+      return {
+        badge:"Layer co-evolution · depth "+k,
+        formula:"h<sup>l+1</sup> = σ((I − L<sub>F</sub><sup>l</sup>/λ<sub>max</sub>) h<sup>l</sup> W<sup>l</sup>) ,&nbsp; L<sub>F</sub><sup>l</sup> = L<sub>F</sub>(h<sup>l</sup>)",
+        insight:"Restriction maps are re-predicted from the current features at every layer, so the sheaf Laplacian L_F^l co-evolves with the embeddings. The feature gap ‖h_A−h_TF‖ (cyan) stays bounded — the layer-varying sheaf has no single fixed point to collapse into. A standard GCN (amber) averages neighbours and the gap decays to zero: oversmoothing. Drag Depth to add layers.",
+        state:"Depth "+k+": NSD gap "+gapFinalN.toFixed(3)+" vs GCN gap "+gapFinalG.toFixed(3)+" (margin "+(gapFinalN-gapFinalG).toFixed(3)+"). ‖R‖_F at this depth = "+froSeq[k].toFixed(3)+". NSD preserves regulatory structure; GCN washes it out.",
+        metrics:{energy:froSeq[k].toFixed(3),frob:gapFinalN.toFixed(3),shift:gapFinalG.toFixed(3),params:k+" layers"},
+        focus:{center:[0,1.6,-0.5],radius:14}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: heterophily — signed maps keep activated vs repressed targets apart
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="heterophily"){
+      // TF1 in centre. Targets: half activated (green cluster), half repressed (rose).
+      // NSD signed restriction maps push them to OPPOSITE feature directions;
+      // GCN averaging (controlled by 'noise' as the GCN-mix) merges them.
+      const gcnMix=noise; // 0 = pure NSD signed sheaf, 1 = pure GCN averaging
+      const nT=10;
+      const pTF=[0,0,0];
+      api.node(pTF,{color:CY,r:0.5,label:"TF1",group:"graph",pick:{node:"TF1"}});
+
+      let posCluster=[], negCluster=[];
+      for(let i=0;i<nT;i++){
+        const activated=(i<nT/2);
+        const ang=(i/nT)*Math.PI*2;
+        // base ring position
+        const baseR=3.4;
+        // NSD: signed map sends activated to +x cluster, repressed to -x cluster
+        const sep=2.6*(1-gcnMix)*Math.min(1.4,Math.max(0.3,strength));
+        const jitter=(prand(i*9+3)-0.5)*0.9;
+        const cx=(activated? sep : -sep) + jitter;
+        const cz=(prand(i*13+7)-0.5)*1.8 + (activated?1.4:-1.4)*(1-gcnMix);
+        const cy=0;
+        // GCN pulls everything toward the mean (origin) as gcnMix->1
+        const px=cx, pz=cz;
+        const col=activated?GR:RO;
+        api.node([px,cy,pz],{color:col,r:0.26,halo:true,group:"graph",pick:{node:(activated?"act":"rep")+i}});
+        // edge from TF with sign color
+        api.edge(pTF,[px,cy,pz],{color:activated?GR:RO,width:0.035,opacity:0.6,group:"graph"});
+        if(activated) posCluster.push([px,pz]); else negCluster.push([px,pz]);
+      }
+
+      // cluster centroids & separation margin
+      const cen=arr=>arr.reduce((a,p)=>[a[0]+p[0],a[1]+p[1]],[0,0]).map(v=>v/arr.length);
+      const cP=cen(posCluster), cN=cen(negCluster);
+      const margin=Math.sqrt((cP[0]-cN[0])**2+(cP[1]-cN[1])**2);
+
+      // translucent separating plane
+      if(gcnMix<0.85){
+        const pl=new T.Mesh(new T.PlaneGeometry(0.06,7),new T.MeshBasicMaterial({color:0x4dd7ff,transparent:true,opacity:0.25,side:T.DoubleSide}));
+        pl.position.set(0,0,0);gGraph.add(pl);
+      }
+
+      addLbl("activated (+)",GR,1.2,3.0,0.0,3.6);
+      addLbl("repressed (−)",RO,1.2,-3.0,0.0,-3.6);
+      addLbl(gcnMix>0.6?"GCN: clusters merge":"NSD: signed maps separate", gcnMix>0.6?AM:CY, 1.15, 0,2.6,0);
+
+      // bars: cluster separation NSD vs GCN
+      const sepNSD=margin, sepGCN=margin*0.25;
+      [["NSD",sepNSD,CY,-2.0],["GCN",sepGCN,AM,2.0]].forEach(([nm,val,c,x])=>{
+        const h=0.15+val*0.8;
+        const bar=new T.Mesh(new T.BoxGeometry(1.2,h,1.0),api.mat(c,{emissive:0.5}));
+        bar.position.set(x,h/2,5.2);gBars.add(bar);
+        addSlbl(nm,c,0.4,x,0.05,5.2);
+        addSlbl(val.toFixed(2),c,0.34,x,h+0.35,5.2);
+      });
+
+      const heteroFrac=0.5; // half the edges are repressive in this construction
+      api.setMetric("energy",margin.toFixed(3));
+      api.setMetric("frob",(heteroFrac*100).toFixed(0)+"% rep");
+      api.setMetric("shift",(gcnMix*100).toFixed(0)+"% GCN");
+      api.setMetric("params",sepNSD.toFixed(2)+" / "+sepGCN.toFixed(2));
+
+      sceneSnap={mode,variant,strength:+strength.toFixed(3),layers,
+        clusterMargin:+margin.toFixed(4), repFraction:heteroFrac, gcnMix:+gcnMix.toFixed(3),
+        sepAdvantage:+(sepNSD-sepGCN).toFixed(4)};
+
+      return {
+        badge:"Heterophily · "+(gcnMix>0.6?"GCN merge":"NSD separate"),
+        formula:"signed R: activated ↦ +cluster, repressed ↦ −cluster &nbsp; (GCN averages ⇒ merge)",
+        insight:"A signed GRN is heterophilic: one TF has both activated and repressed targets that should land in different feature clusters. NSD's signed restriction maps assign opposite transformation directions, keeping green (activated) and rose (repressed) targets apart across layers. A GCN sums neighbours with non-negative weights, so the same TF sends a mixed signal and the clusters collapse onto each other. Drag GCN-mix to morph NSD → GCN.",
+        state:"Cluster margin "+margin.toFixed(2)+" (NSD) vs "+sepGCN.toFixed(2)+" (GCN). "+(heteroFrac*100).toFixed(0)+"% repressive edges. GCN-mix "+(gcnMix*100).toFixed(0)+"%. As GCN-mix→100% the signed separation disappears and inhibition is lost.",
+        metrics:{energy:margin.toFixed(3),frob:(heteroFrac*100).toFixed(0)+"% rep",shift:(gcnMix*100).toFixed(0)+"% GCN",params:sepNSD.toFixed(2)+" / "+sepGCN.toFixed(2)},
+        focus:{center:[0,1.0,1.0],radius:14}
+      };
+    }
+
+    return {badge:"G03",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g03",
+    kind:"neural-sheaf-diffusion",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G03 · Neural Sheaf Diffusion",
+    subtitle:"Learn the restriction maps instead of fixing them. An MLP predicts R per edge from node features, the sheaf Laplacian is rebuilt every layer, and gradients flow through the whole construction. Four views: predict-and-diffuse, the three NSD variants, layer co-evolution vs oversmoothing, and the heterophily advantage.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, matrix cell, bar, or marker.",
+    modes:[
+      {value:"predict",     label:"Predict R & diffuse (worked example)"},
+      {value:"variants",    label:"Three variants (General / Symmetric / Diagonal)"},
+      {value:"coevolve",    label:"Layer co-evolution (no oversmoothing)"},
+      {value:"heterophily", label:"Heterophily advantage (vs GCN)"}
+    ],
+    params:[
+      {key:"variant",  label:"restriction-map family (0=General 1=Symmetric 2=Diagonal)",min:0,max:2,step:1,value:0,
+       fmt:v=>["General","Symmetric","Diagonal"][Math.round(v)]},
+      {key:"strength", label:"learned-map strength (R deviation from I)",min:0,max:1.4,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)},
+      {key:"layers",   label:"diffusion depth (layers)",min:1,max:8,step:1,value:4,
+       fmt:v=>Math.round(v).toString(),modes:["coevolve"]},
+      {key:"noise",    label:"GCN-mix (0=NSD signed → 1=GCN average)",min:0,max:1,step:0.05,value:0.0,
+       fmt:v=>(v*100).toFixed(0)+"%",modes:["heterophily"]}
+    ],
+    metrics:[
+      {key:"energy", label:"Edge consistency energy ‖δ‖²",accent:"rose"},
+      {key:"frob",   label:"‖R‖_F / margin",accent:"cyan"},
+      {key:"shift",  label:"Feature shift / κ",accent:"amber"},
+      {key:"params", label:"NSD vs SNN params",accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"Graph / nodes"},
+      {group:"matrix", label:"Restriction map"},
+      {group:"bars",   label:"Bars / curves"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Identity maps (R≈I)",
+      on:api=>{api.setParam("strength",0.0);}
+    },
+    secondary:{
+      label:"Strong learned maps",
+      on:api=>{api.setParam("strength",1.4);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=expression/activation/encoder · <span style="color:#34d399">green</span>=activated target · <span style="color:#fb7185">rose</span>=repressed / negative · <span style="color:#a78bfa">violet</span>=restriction map · <span style="color:#fbbf24">amber</span>=GCN baseline / accessibility.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="predict")          api.frame([-1.0,1.0,0.5],13);
+      else if(s.mode==="variants")    api.frame([0,1.8,0],13);
+      else if(s.mode==="coevolve")    api.frame([0,1.6,-0.5],14);
+      else                            api.frame([0,1.0,1.0],14);
+    },
+    onSelect(api,d){
+      if(d.node)    api.setSelected("Node "+d.node+(d.h?" · h=["+d.h.map(x=>x.toFixed(2)).join(", ")+"]":"")+(d.layer!=null?" · layer "+d.layer:""));
+      if(d.cell)    api.setSelected("R["+d.cell.i+"]["+d.cell.j+"] = "+d.cell.val.toFixed(3)+(d.cell.val<0?" (negative → repression)":""));
+      if(d.variant) api.setSelected(d.variant+" · "+d.dof+" DOF · κ="+(d.cond>9?"∞":d.cond.toFixed(2)));
+      if(d.traj)    api.setSelected(d.traj+" @ depth "+d.depth+" · gap "+d.gap.toFixed(3));
+    },
+    build,
+    snapshot(s){
+      const variant=Math.round(s.variant);
+      const strength=s.strength;
+      const layers=Math.round(s.layers);
+      // recompute the worked-example diffusion for the active map family
+      const R=predictMap(variant,Math.max(0.0001,strength));
+      const RhT=matvec(R,F.hTF);
+      const gr=[F.hA[0]-RhT[0],F.hA[1]-RhT[1]];
+      const Ec=gr[0]*gr[0]+gr[1]*gr[1];
+      const fro=froNorm(R);
+      const hAnew=[F.hA[0]-step*gr[0], F.hA[1]-step*gr[1]];
+      const featShift=Math.sqrt((hAnew[0]-F.hA[0])**2+(hAnew[1]-F.hA[1])**2);
+      return {
+        mode:s.mode,
+        variant,
+        variantName:["General","Symmetric","Diagonal"][variant],
+        strength:+strength.toFixed(3),
+        layers,
+        edgeEnergy:+Ec.toFixed(4),
+        frobR:+fro.toFixed(4),
+        featShift:+featShift.toFixed(5),
+        hA1_x:+hAnew[0].toFixed(4),
+        hA1_y:+hAnew[1].toFixed(4),
+        nsdParams:PARAMS.nsdTot,
+        snnParams:PARAMS.snn,
+        signedAdvantage:(variant===2 && strength>0)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E06 · RNA velocity and dynamic regulatory hypotheses</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based, fully reproducible) ──────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  CANONICAL WORKED EXAMPLE  (note Section 5 — 4 erythroid cells, 4 genes)
+  //  C1 HSC · C2 CMP · C3 MEP · C4 Erythroblast
+  //  genes GATA1 · KLF1 · HBB · CD34   (normalized beta=1, gamma=1)
+  // ════════════════════════════════════════════════════════════════════════
+  const CELLS=["C1·HSC","C2·CMP","C3·MEP","C4·Ery"];
+  const GENES=["GATA1","KLF1","HBB","CD34"];
+  // raw unspliced u_ig and spliced s_ig (4 cells × 4 genes)  [cell][gene]={u,s}
+  const RAW=[
+    // GATA1        KLF1         HBB          CD34
+    [{u:0.5,s:0.3},{u:0.2,s:0.1},{u:0.0,s:0.0},{u:2.1,s:1.9}], // C1
+    [{u:2.1,s:1.2},{u:0.8,s:0.4},{u:0.1,s:0.0},{u:1.2,s:1.5}], // C2
+    [{u:4.2,s:3.8},{u:2.5,s:2.1},{u:1.8,s:0.5},{u:0.3,s:0.8}], // C3
+    [{u:3.9,s:4.5},{u:2.9,s:2.9},{u:5.2,s:4.8},{u:0.0,s:0.1}]  // C4
+  ];
+  // canonical velocity-directed edges (cos_sim>0): C1→C2,C2→C3,C3→C4
+  const EDGEW=[0.45,0.62,0.58];
+
+  // velocity v_ig = beta*u - gamma*s
+  function vel(u,s,beta,gamma){return beta*u-gamma*s;}
+  // displacement δ_ij = z_j - z_i  in spliced-expression embedding coords
+  function deltaVec(i,j){return GENES.map((_,g)=>RAW[j][g].s-RAW[i][g].s);}
+  function velVec(i,beta,gamma){return GENES.map((_,g)=>vel(RAW[i][g].u,RAW[i][g].s,beta,gamma));}
+  function dot(a,b){let d=0;for(let k=0;k<a.length;k++)d+=a[k]*b[k];return d;}
+  function nrm(a){return Math.sqrt(dot(a,a));}
+  function cosSim(a,b){const na=nrm(a),nb=nrm(b);return (na<1e-9||nb<1e-9)?0:dot(a,b)/(na*nb);}
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const beta=s.beta;
+    const gamma=s.gamma;
+    const cellSel=Math.round(s.cell);          // 0..3 focus cell
+    const geneSel=Math.round(s.gene);          // 0..3 focus gene
+    const thr=s.threshold;                     // cos-sim edge gate
+
+    const gMain  =api.group("main");
+    const gField =api.group("field");
+    const gPhase =api.group("phase");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff"); // induction / GATA1
+    const GR=new T.Color("#34d399"); // KLF1 / forward edge
+    const AM=new T.Color("#fbbf24"); // HBB / velocity arrows
+    const VI=new T.Color("#a78bfa"); // CD34 / displacement
+    const RO=new T.Color("#fb7185"); // repression / back-edge
+    const SL=new T.Color("#54667c"); // dim
+    const GENECOL=[CY,GR,AM,VI];
+
+    // cell embedding positions (trajectory laid left→right)
+    const cellPos=[
+      new T.Vector3(-4.6,0,0),
+      new T.Vector3(-1.5,0,0),
+      new T.Vector3( 1.6,0,0),
+      new T.Vector3( 4.7,0,0)
+    ];
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: kinetics — splicing ODE & velocity = β·u − γ·s (phase portrait)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="kinetics"){
+      const px0=-3.4, pz0=-2.2, scale=1.05;
+      // axes
+      gPhase.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(px0,0,pz0),new T.Vector3(px0+6.4,0,pz0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gPhase.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(px0,0,pz0),new T.Vector3(px0,0,pz0+5.4)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      addSlbl("u (unspliced)","#8a99ad",0.40,px0+3.0,0,pz0-0.5);
+      addSlbl("s (spliced)","#8a99ad",0.40,px0-0.55,0,pz0+2.6);
+
+      // steady-state line s = (γ/β)·u
+      const ratio=gamma/beta;
+      const uMax=5.4;
+      const slp0=new T.Vector3(px0,0,pz0);
+      const slp1=new T.Vector3(px0+uMax*scale,0,pz0+Math.min(uMax*ratio,5.2)*scale);
+      {
+        const geo=new T.BufferGeometry().setFromPoints([slp0,slp1]);
+        const ln=new T.LineSegments(geo,new T.LineDashedMaterial({color:0x9fe0ff,dashSize:0.22,gapSize:0.14}));
+        ln.computeLineDistances(); gPhase.add(ln);
+      }
+      addLbl("steady: s = (γ/β)·u","#9fe0ff",0.95,slp1.x-1.4,0.1,slp1.z+0.5);
+
+      // each cell's (u,s) for the selected gene + velocity arrow
+      for(let i=0;i<4;i++){
+        const u=RAW[i][geneSel].u, sp=RAW[i][geneSel].s;
+        const v=vel(u,sp,beta,gamma);
+        const x=px0+u*scale, z=pz0+sp*scale;
+        const col=(v>0.001)?CY.clone():(v<-0.001?RO.clone():SL.clone());
+        const dot=new T.Mesh(new T.SphereGeometry(i===cellSel?0.30:0.22,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(i===cellSel?0.9:0.55),emissiveIntensity:i===cellSel?0.9:0.5,roughness:0.35}));
+        dot.position.set(x,0,z);
+        gPhase.add(dot);
+        api.pick(dot,{cell:{id:i,name:CELLS[i],gene:GENES[geneSel],u,s:sp,v:+v.toFixed(3)}});
+        // velocity arrow ds/dt (along s), length ∝ |v|
+        const av=Math.max(-1.6,Math.min(1.6,v));
+        api.arrow(new T.Vector3(x,0,z),new T.Vector3(x,0,z+av*scale),{color:(v>0?"#34d399":"#fb7185"),head:0.16,width:0.035,group:"phase"});
+        addSlbl(CELLS[i].split("·")[0],col.getStyle(),0.36,x,0,z+(av>=0?0.55:-0.55));
+      }
+      addLbl(GENES[geneSel]+" phase portrait","#fbbf24",1.3,px0+2.4,0.2,pz0+5.0);
+      addLbl("v>0 induction (cyan) · v<0 repression (rose)","#8a99ad",0.95,px0+2.4,0.0,pz0-1.1);
+
+      const velCell=vel(RAW[cellSel][geneSel].u,RAW[cellSel][geneSel].s,beta,gamma);
+      const phase=velCell>0.001?"induction":(velCell<-0.001?"repression":"steady");
+      sceneSnap={mode,beta:+beta.toFixed(2),gamma:+gamma.toFixed(2),cell:cellSel,gene:geneSel,
+        velSelected:+velCell.toFixed(3),steadyRatio:+(gamma/beta).toFixed(3),activeEdges:3};
+
+      return {
+        badge:"Kinetics · "+GENES[geneSel]+" · "+CELLS[cellSel]+" · "+phase,
+        formula:"v_g = ds/dt = β·u_g − γ·s_g   ·   steady: s = (γ/β)·u",
+        insight:"Each cell is a point in the gene's u–s phase portrait. The dashed steady-state line has slope γ/β. Points with u in excess of the steady prediction are in the induction phase — positive velocity, cyan. Points below are repression — negative velocity, rose. The green/rose arrow is ds/dt: where the spliced count moves next. Tune β and γ to tilt the steady line and flip velocity signs.",
+        state:GENES[geneSel]+" in "+CELLS[cellSel]+": u="+RAW[cellSel][geneSel].u.toFixed(1)+", s="+RAW[cellSel][geneSel].s.toFixed(1)+" → v = "+velCell.toFixed(2)+" ("+phase+"). β="+beta.toFixed(2)+", γ="+gamma.toFixed(2)+", γ/β="+(gamma/beta).toFixed(2)+".",
+        metrics:{velSelected:velCell.toFixed(2),steadyRatio:(gamma/beta).toFixed(2),edgeCount:"—",cosSim:"—"},
+        focus:{center:[0,0,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: velocity-field — per-cell velocity VECTOR in 4-gene space
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="velocity-field"){
+      for(let i=0;i<4;i++){
+        const p=cellPos[i];
+        const vv=velVec(i,beta,gamma);
+        const isSel=(i===cellSel);
+        const ncol=isSel?AM.clone():new T.Color("#2c4257");
+        const node=new T.Mesh(new T.SphereGeometry(isSel?0.42:0.34,24,18),
+          new T.MeshStandardMaterial({color:ncol,emissive:ncol.clone().multiplyScalar(isSel?0.8:0.4),emissiveIntensity:isSel?0.8:0.4,roughness:0.35}));
+        node.position.copy(p); gMain.add(node);
+        api.pick(node,{cellv:{id:i,name:CELLS[i],v:vv.map(x=>+x.toFixed(2))}});
+        addLbl(CELLS[i],"#cfe0f0",1.15,p.x,1.05,p.z);
+
+        // per-gene velocity bars stacked above the cell
+        for(let g=0;g<4;g++){
+          const v=vv[g];
+          const h=v*0.85;
+          const col=GENECOL[g].clone();
+          const dim=(geneSel!==g)?0.32:1.0;
+          const bar=new T.Mesh(new T.BoxGeometry(0.20,Math.abs(h)+0.01,0.20),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.5*dim),emissiveIntensity:0.55*dim,roughness:0.4,transparent:dim<1,opacity:dim<1?0.55:1}));
+          const bx=p.x-0.36+g*0.24;
+          bar.position.set(bx,h/2+1.7,p.z);
+          gField.add(bar);
+          api.pick(bar,{vgene:{cell:CELLS[i],gene:GENES[g],v:+v.toFixed(2)}});
+        }
+        addSlbl("v_"+(i+1),"#8a99ad",0.34,p.x,3.3,p.z);
+
+        // resultant velocity arrow on embedding plane:
+        // x ~ GATA1+KLF1 (commitment), z ~ HBB−CD34 (maturation−stemness)
+        const ax=(vv[0]+vv[1])*0.55;
+        const az=(vv[2]-vv[3])*0.55;
+        api.arrow(p.clone(),new T.Vector3(p.x+ax,0,p.z+az),{color:"#fbbf24",head:0.24,width:0.06,group:"main"});
+      }
+      gMain.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-5.6,0,0),new T.Vector3(5.8,0,0)]),new T.LineBasicMaterial({color:0x1e3046})));
+      addLbl("velocity vectors  v_i = β·u_i − γ·s_i","#fbbf24",1.25,0,2.0,3.4);
+      addLbl("→ commitment (GATA1+KLF1)   ↑ HBB−CD34","#8a99ad",0.95,0,0.0,3.0);
+
+      const vmag=nrm(velVec(cellSel,beta,gamma));
+      sceneSnap={mode,beta:+beta.toFixed(2),gamma:+gamma.toFixed(2),cell:cellSel,gene:geneSel,
+        velSelected:+vmag.toFixed(3),steadyRatio:+(gamma/beta).toFixed(3),activeEdges:3};
+
+      const vv=velVec(cellSel,beta,gamma).map(x=>x.toFixed(2));
+      return {
+        badge:"Velocity field · "+CELLS[cellSel]+" · |v| = "+vmag.toFixed(2),
+        formula:"v_i = [v_GATA1, v_KLF1, v_HBB, v_CD34]  ∈ ℝ⁴",
+        insight:"Every cell carries a velocity vector in 4-gene space. The colored bars are per-gene velocities (cyan GATA1, green KLF1, amber HBB, violet CD34); the gold arrow is the resultant on the embedding plane. Early cells push along GATA1/KLF1 commitment; by C3→C4 the HBB channel dominates while CD34 goes negative (silencing). Magnitude reflects distance from kinetic equilibrium, not biological importance.",
+        state:CELLS[cellSel]+" velocity v = ["+vv.join(", ")+"], |v| = "+vmag.toFixed(2)+". CD34 negative = stem marker being silenced.",
+        metrics:{velSelected:vmag.toFixed(2),steadyRatio:(gamma/beta).toFixed(2),edgeCount:"4 genes",cosSim:"—"},
+        focus:{center:[0,1,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: directed-graph — cos_sim(v_i, δ_ij) > thr → directed edge
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="directed-graph"){
+      const candPairs=[[0,1],[1,2],[2,3],[3,2],[2,1],[1,0]];
+      let activeEdges=0;
+      let cosShown=cosSim(velVec(0,beta,gamma),deltaVec(0,1)); // C1→C2 canonical
+
+      const stageCols=[CY,GR,AM,RO];
+      for(let i=0;i<4;i++){
+        const p=cellPos[i];
+        const isSel=(i===cellSel);
+        const col=stageCols[i].clone();
+        const node=new T.Mesh(new T.SphereGeometry(isSel?0.46:0.38,24,18),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(isSel?0.85:0.5),emissiveIntensity:isSel?0.85:0.5,roughness:0.32}));
+        node.position.copy(p); gMain.add(node);
+        api.pick(node,{cellnode:{id:i,name:CELLS[i]}});
+        addLbl(CELLS[i],"#cfe0f0",1.2,p.x,1.15,p.z);
+      }
+
+      // candidate kNN backbone (faint undirected)
+      [[0,1],[1,2],[2,3]].forEach(([i,j])=>{
+        gMain.add(new T.Line(new T.BufferGeometry().setFromPoints([cellPos[i].clone().setY(-0.02),cellPos[j].clone().setY(-0.02)]),new T.LineBasicMaterial({color:0x24384e,transparent:true,opacity:0.6})));
+      });
+
+      // directed velocity edges gated by cos-sim threshold
+      candPairs.forEach(([i,j])=>{
+        const cs=cosSim(velVec(i,beta,gamma),deltaVec(i,j));
+        if(cs>thr){
+          activeEdges++;
+          const forward=(j>i);
+          const wcol=forward?"#34d399":"#fb7185";
+          const a=cellPos[i].clone().setY(0.55);
+          const b=cellPos[j].clone().setY(0.55);
+          api.arrow(a,b,{color:wcol,head:0.26,width:0.055,group:"field"});
+          if(forward && j===i+1){
+            const mid=a.clone().add(b).multiplyScalar(0.5);
+            addLbl("w="+EDGEW[i].toFixed(2),"#7fe7c0",0.95,mid.x,1.05,mid.z+0.2);
+          }
+        }
+      });
+
+      const jSel=Math.min(3,cellSel+1);
+      if(jSel!==cellSel){
+        cosShown=cosSim(velVec(cellSel,beta,gamma),deltaVec(cellSel,jSel));
+        const mid=cellPos[cellSel].clone().add(cellPos[jSel]).multiplyScalar(0.5).setY(-1.5);
+        addLbl("cos(v,δ)="+cosShown.toFixed(2),"#fbbf24",1.1,mid.x,0,mid.z);
+      }
+
+      addLbl("directed velocity graph  G_velocity","#fbbf24",1.3,0,2.1,3.4);
+      addLbl("green = forward (cos>thr) · rose = back-edge","#8a99ad",0.95,0,0,2.9);
+      addLbl("HSC → CMP → MEP → Ery  (no back-edges)","#7fe7c0",1.0,0,0,-2.4);
+
+      sceneSnap={mode,beta:+beta.toFixed(2),gamma:+gamma.toFixed(2),cell:cellSel,gene:geneSel,
+        threshold:+thr.toFixed(2),activeEdges,cosSelected:+cosShown.toFixed(3),
+        steadyRatio:+(gamma/beta).toFixed(3),velSelected:+nrm(velVec(cellSel,beta,gamma)).toFixed(3)};
+
+      return {
+        badge:"Directed graph · "+activeEdges+" edges · cos="+cosShown.toFixed(2),
+        formula:"(c_i → c_j) ∈ E  iff  cos(v_i, z_j − z_i) > "+thr.toFixed(2),
+        insight:"The undirected kNN backbone (grey) becomes a DIRECTED transition graph. An edge c_i→c_j is kept when cell i's velocity points toward cell j: cos_sim(v_i, δ_ij)>threshold. At the canonical gate only the three forward edges survive (w=0.45, 0.62, 0.58) — a clean linear trajectory HSC→CMP→MEP→Ery with no back-edges. Raise the gate to prune weak transitions; lower it and spurious back-edges appear.",
+        state:"Active directed edges: "+activeEdges+". Canonical v_C1·δ_C1→C2 = +0.20 (dot) → cos>0 → C1→C2 kept. Selected cos(v,δ)="+cosShown.toFixed(2)+" at gate "+thr.toFixed(2)+".",
+        metrics:{velSelected:nrm(velVec(cellSel,beta,gamma)).toFixed(2),steadyRatio:(gamma/beta).toFixed(2),edgeCount:""+activeEdges,cosSim:cosShown.toFixed(2)},
+        focus:{center:[0,0.6,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: regulatory-cascade — velocity-ordered TF activation cascade
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="regulatory-cascade"){
+      const xS=2.9, x0=-4.6, yS=1.5, y0=-0.4;
+      // axes
+      gPhase.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,y0,0),new T.Vector3(x0+3.05*xS,y0,0)]),new T.LineBasicMaterial({color:0x33485e,transparent:true,opacity:0.8})));
+      gPhase.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,y0-2.2,0),new T.Vector3(x0,y0+2.6,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      for(let i=0;i<4;i++) addSlbl(CELLS[i].split("·")[0],"#8a99ad",0.36,x0+i*xS,y0-2.0,0);
+      addSlbl("velocity","#8a99ad",0.40,x0-0.6,y0+1.4,0);
+
+      function peakCell(g){let bi=0,bv=-9;for(let i=0;i<4;i++){const v=vel(RAW[i][g].u,RAW[i][g].s,beta,gamma);if(v>bv){bv=v;bi=i;}}return bi;}
+
+      for(let g=0;g<4;g++){
+        const col=GENECOL[g].clone();
+        const dim=(geneSel===g)?1.0:0.5;
+        const pts=[];
+        for(let i=0;i<4;i++){
+          const v=vel(RAW[i][g].u,RAW[i][g].s,beta,gamma);
+          pts.push(new T.Vector3(x0+i*xS,y0+v*yS,0));
+        }
+        gPhase.add(new T.Line(new T.BufferGeometry().setFromPoints(pts),
+          new T.LineBasicMaterial({color:col.getHex(),transparent:dim<1,opacity:dim<1?0.5:1})));
+        for(let i=0;i<4;i++){
+          const v=vel(RAW[i][g].u,RAW[i][g].s,beta,gamma);
+          const dot=new T.Mesh(new T.SphereGeometry(0.13,12,10),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6*dim),emissiveIntensity:0.6*dim,roughness:0.4,transparent:dim<1,opacity:dim<1?0.55:1}));
+          dot.position.copy(pts[i]); gPhase.add(dot);
+          api.pick(dot,{track:{gene:GENES[g],cell:CELLS[i],v:+v.toFixed(2)}});
+        }
+        addLbl(GENES[g],col.getStyle(),1.0,x0+3.05*xS+0.2,y0+vel(RAW[3][g].u,RAW[3][g].s,beta,gamma)*yS,0);
+      }
+
+      addLbl("regulatory cascade: GATA1 → KLF1 → HBB","#fbbf24",1.3,0.6,y0+3.2,0);
+      addLbl("CD34 silenced throughout (v<0 in C2,C3,C4)","#a78bfa",0.95,0.6,y0-2.7,0);
+
+      const pG=peakCell(0),pK=peakCell(1),pH=peakCell(2);
+      sceneSnap={mode,beta:+beta.toFixed(2),gamma:+gamma.toFixed(2),cell:cellSel,gene:geneSel,
+        peakGATA1:pG+1,peakKLF1:pK+1,peakHBB:pH+1,steadyRatio:+(gamma/beta).toFixed(3),activeEdges:3,
+        velSelected:+vel(RAW[cellSel][geneSel].u,RAW[cellSel][geneSel].s,beta,gamma).toFixed(3)};
+
+      const gpc=peakCell(geneSel);
+      return {
+        badge:"Regulatory cascade · peak "+GENES[geneSel]+" @ "+CELLS[gpc],
+        formula:"order regulators by argmax_i v_g(c_i)  →  GATA1 → KLF1 → HBB",
+        insight:"Each curve is one gene's velocity along the trajectory. The peak of a curve tells you WHEN that regulator is being activated. GATA1 velocity peaks early (C2), KLF1 next (C2–C3), HBB last (C3) — recovering the known erythropoiesis cascade GATA1→KLF1→HBB. CD34 stays negative from C2 onward: the stem-cell marker is silenced throughout. This dynamic regulatory ordering is invisible to any static snapshot.",
+        state:GENES[geneSel]+" velocity peaks at "+CELLS[gpc]+". Cascade: GATA1 peak C2 → KLF1 peak C2/C3 → HBB peak C3. CD34 < 0 across C2–C4 (silencing).",
+        metrics:{velSelected:vel(RAW[cellSel][geneSel].u,RAW[cellSel][geneSel].s,beta,gamma).toFixed(2),steadyRatio:(gamma/beta).toFixed(2),edgeCount:"3 TFs",cosSim:"—"},
+        focus:{center:[0,0.6,0],radius:12}
+      };
+    }
+
+    return {badge:"E06",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e06",
+    kind:"rna-velocity-dynamic-regulatory",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E06 · RNA velocity and dynamic regulatory hypotheses",
+    subtitle:"Four erythroid cells (HSC→CMP→MEP→Erythroblast), four genes (GATA1, KLF1, HBB, CD34). Splicing kinetics → per-cell velocity vectors → a directed cell-transition graph → a velocity-ordered regulatory cascade.",
+    selectedLabel:"Element",
+    selectedHint:"Click a cell, velocity bar, edge, or curve marker.",
+    modes:[
+      {value:"kinetics",            label:"Splicing kinetics (u–s phase portrait)"},
+      {value:"velocity-field",      label:"Velocity field (per-cell v vectors)"},
+      {value:"directed-graph",      label:"Directed graph (cos-sim transitions)"},
+      {value:"regulatory-cascade",  label:"Regulatory cascade (velocity ordering)"}
+    ],
+    params:[
+      {key:"beta",     label:"β splicing rate",min:0.4,max:2.0,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)},
+      {key:"gamma",    label:"γ degradation rate",min:0.4,max:2.0,step:0.05,value:1.0,
+       fmt:v=>v.toFixed(2)},
+      {key:"cell",     label:"focus cell (C1..C4)",min:0,max:3,step:1,value:0,
+       fmt:v=>["C1·HSC","C2·CMP","C3·MEP","C4·Ery"][Math.round(v)]},
+      {key:"gene",     label:"focus gene",min:0,max:3,step:1,value:0,
+       fmt:v=>["GATA1","KLF1","HBB","CD34"][Math.round(v)]},
+      {key:"threshold",label:"cos-sim edge gate",min:-0.3,max:0.6,step:0.05,value:0.0,
+       fmt:v=>v.toFixed(2),modes:["directed-graph"]}
+    ],
+    metrics:[
+      {key:"velSelected", label:"Velocity / |v| (selected)",accent:"cyan"},
+      {key:"steadyRatio", label:"Steady ratio γ/β",accent:"violet"},
+      {key:"edgeCount",   label:"Directed edges",accent:"green"},
+      {key:"cosSim",      label:"cos(v, δ)",accent:"amber"}
+    ],
+    layers:[
+      {group:"main",  label:"Cells / graph"},
+      {group:"field", label:"Velocity bars / edges"},
+      {group:"phase", label:"Phase / curves"},
+      {group:"labels",label:"Labels"}
+    ],
+    primary:{
+      label:"Reset β=γ=1",
+      on:api=>{api.setParam("beta",1.0);api.setParam("gamma",1.0);}
+    },
+    secondary:{
+      label:"Focus C4 · HBB",
+      on:api=>{api.setParam("cell",3);api.setParam("gene",2);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=GATA1/induction · <span style="color:#34d399">green</span>=KLF1/forward edge · <span style="color:#fbbf24">amber</span>=HBB/velocity · <span style="color:#a78bfa">violet</span>=CD34/displacement · <span style="color:#fb7185">rose</span>=repression/back-edge.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="velocity-field") api.frame([0,1,0],13);
+      else if(s.mode==="directed-graph") api.frame([0,0.6,0],13);
+      else api.frame([0,0,0],12);
+    },
+    onSelect(api,d){
+      if(d.cell)     api.setSelected(d.cell.name+" · "+d.cell.gene+" · u="+d.cell.u.toFixed(1)+" s="+d.cell.s.toFixed(1)+" → v="+d.cell.v);
+      if(d.cellv)    api.setSelected(d.cellv.name+" · v=["+d.cellv.v.join(", ")+"]");
+      if(d.vgene)    api.setSelected(d.vgene.cell+" · "+d.vgene.gene+" velocity = "+d.vgene.v);
+      if(d.cellnode) api.setSelected(d.cellnode.name+" · trajectory node");
+      if(d.track)    api.setSelected(d.track.gene+" @ "+d.track.cell+" · v="+d.track.v);
+    },
+    build,
+    snapshot(s){
+      const beta=s.beta, gamma=s.gamma;
+      const cellSel=Math.round(s.cell), geneSel=Math.round(s.gene);
+      const thr=s.threshold;
+      const csC1=cosSim(velVec(0,beta,gamma),deltaVec(0,1));   // canonical C1→C2
+      const candPairs=[[0,1],[1,2],[2,3],[3,2],[2,1],[1,0]];
+      let activeEdges=0;
+      candPairs.forEach(([i,j])=>{ if(cosSim(velVec(i,beta,gamma),deltaVec(i,j))>thr) activeEdges++; });
+      const velCell=vel(RAW[cellSel][geneSel].u,RAW[cellSel][geneSel].s,beta,gamma);
+      return {
+        mode:s.mode,
+        beta:+beta.toFixed(3),
+        gamma:+gamma.toFixed(3),
+        cell:cellSel,
+        gene:geneSel,
+        threshold:+thr.toFixed(3),
+        steadyRatio:+(gamma/beta).toFixed(3),
+        velSelected:+velCell.toFixed(3),
+        cosSim_C1_C2:+csC1.toFixed(3),
+        activeEdges:activeEdges,
+        linearTrajectory:(activeEdges===3 && thr>=0)
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

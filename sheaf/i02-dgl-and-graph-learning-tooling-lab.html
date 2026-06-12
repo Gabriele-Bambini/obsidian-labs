@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I02 · DGL and graph learning tooling</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no RNG, no clock — hash of sin) ─────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  // signed deterministic stand-in for torch.randn (1-D node summary in [-1,1])
+  const dn=i=>+(frac(Math.sin(i*127.1+31.7)*43758.5453)*2-1).toFixed(3);
+
+  // ── FACTS · the note's Section-5 worked example (exact integers) ─────────
+  const F={
+    // 5-gene DREAM4 GRN (I01 carried into DGL)
+    N:5,
+    names:["TP53","MYC","CDKN1A","BCL2","PCNA"],
+    isTF:[1,1,0,0,0],                 // ndata['is_TF']
+    edges:[[0,2],[0,3],[1,4]],        // TP53->CDKN1A, TP53->BCL2, MYC->PCNA
+    conf:[0.95,0.82,0.71],            // edata['conf'] (DoRothEA)
+    sign:[1,-1,1],                    // edata['sign'] (activation / repression)
+    selfLoopEdges:8,                  // 3 base + 5 self-loops = 8
+    maxDiff:1e-6,                     // DGL vs PyG mean-agg agreement (< 1e-5)
+    // heterograph TF-gene tripartite
+    nTF:3, nGene:8, dTF:16, dGene:32,
+    regEdges:[[0,0],[0,3],[1,1],[2,4],[2,7]],   // ('TF','regulates','gene')
+    coexprEdges:[[0,1],[1,0],[3,4],[4,3]],      // ('gene','coexpr','gene')
+    combinedDim:96,                   // 32 (h) + 32 (TF_agg) + 32 (coexpr_agg)
+    batchGraphs:10, batchNodes:50, batchEdges:80
+  };
+
+  // node scalar features h[i] (deterministic stand-in for randn[5,8] summary)
+  const H=[]; for(let i=0;i<F.N;i++) H.push(dn(i));
+
+  let sceneSnap={};
+
+  // ── mean message-passing on the 5-gene graph (the DGL=PyG core) ──────────
+  // selfLoops: whether GraphConv-style self-loops are added (DGL add_self_loop)
+  // returns {indeg, hAgg, base} for both reduce modes
+  function meanAggregate(selfLoops){
+    const N=F.N;
+    let E=F.edges.map(e=>[e[0],e[1]]);
+    if(selfLoops){ for(let i=0;i<N;i++) E.push([i,i]); }
+    const indeg=new Array(N).fill(0);
+    E.forEach(([,d])=>indeg[d]++);
+    const sum=new Array(N).fill(0);
+    E.forEach(([s,d])=>sum[d]+=H[s]);
+    const hAgg=new Array(N).fill(0);
+    for(let i=0;i<N;i++) hAgg[i]=indeg[i]>0?+(sum[i]/indeg[i]).toFixed(3):0;
+    return {edges:E.length,indeg,hAgg};
+  }
+
+  // confidence/sign-weighted inflow (u_mul_e weighted GCN step), per dst
+  function weightedInflow(useSign){
+    const N=F.N;
+    const inflow=new Array(N).fill(0);
+    F.edges.forEach((e,k)=>{
+      const w=F.conf[k]*(useSign?F.sign[k]:1);
+      inflow[e[1]]+=w*H[e[0]];
+    });
+    for(let i=0;i<N;i++) inflow[i]=+inflow[i].toFixed(3);
+    return inflow;
+  }
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const reduce=Math.round(s.reduce);      // 0=sum 1=mean 2=max
+    const selfLoops=Math.round(s.selfLoops);// 0/1
+    const weighting=Math.round(s.weighting);// 0=copy_u 1=u_mul_e(conf) 2=signed
+    const crossR=Math.round(s.crossReducer);// 0=sum 1=stack
+
+    const gGraph =api.group("graph");
+    const gMsg   =api.group("msg");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function addLbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function addSlbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CY=new T.Color("#4dd7ff");   // genes / DGL
+    const GR=new T.Color("#34d399");   // activation / mean / gene
+    const AM=new T.Color("#fbbf24");   // TF / PyG mirror
+    const VI=new T.Color("#a78bfa");   // edge features / cross
+    const RS=new T.Color("#fb7185");   // repression / mismatch
+    const SL=new T.Color("#54667c");
+
+    // 5-gene ring positions (shared by mode A & B)
+    const R=3.4;
+    function genePos(i){const ang=-Math.PI/2 + i/F.N*Math.PI*2;return new T.Vector3(Math.cos(ang)*R,0,Math.sin(ang)*R);}
+
+    function drawArrow(a,b,col,op){
+      const dir=b.clone().sub(a); const len=dir.length(); dir.normalize();
+      const start=a.clone().add(dir.clone().multiplyScalar(0.42));
+      const end=b.clone().sub(dir.clone().multiplyScalar(0.42));
+      gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([start,end]),
+        new T.LineBasicMaterial({color:col.getHex(),transparent:true,opacity:op==null?0.85:op})));
+      const cone=new T.Mesh(new T.ConeGeometry(0.12,0.34,10),new T.MeshBasicMaterial({color:col.getHex()}));
+      cone.position.copy(end);
+      cone.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+      gGraph.add(cone);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE A: build — the explicit DGLGraph container (ndata / edata)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="build"){
+      // gene nodes
+      for(let i=0;i<F.N;i++){
+        const p=genePos(i);
+        const isTF=F.isTF[i]===1;
+        const col=isTF?AM:CY;
+        const node=new T.Mesh(new T.SphereGeometry(isTF?0.40:0.34,18,14),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.6,roughness:0.4}));
+        node.position.copy(p);
+        gGraph.add(node);
+        api.pick(node,{node:{id:i,name:F.names[i],isTF,h:H[i]}});
+        addSlbl(F.names[i],col.getStyle(),0.40,p.x,0.62,p.z);
+        // ndata['h'] scalar chip above each node
+        addLbl((H[i]>=0?"+":"")+H[i].toFixed(2),"#9fb4cc",0.95,p.x,1.05,p.z);
+      }
+      // directed signed edges with edata
+      F.edges.forEach((e,k)=>{
+        const col=F.sign[k]>0?GR:RS;
+        drawArrow(genePos(e[0]),genePos(e[1]),col,0.9);
+        const mid=genePos(e[0]).clone().add(genePos(e[1])).multiplyScalar(0.5);
+        addLbl(F.conf[k].toFixed(2),F.sign[k]>0?"#34d399":"#fb7185",1.0,mid.x,0.55,mid.z);
+      });
+      addLbl("g = dgl.graph((src,dst))","#4dd7ff",1.35,0,2.0,0);
+      addLbl("ndata['h'] · ndata['is_TF']","#9fb4cc",1.05,0,-1.55,R+0.7);
+      addLbl("edata['conf'] · edata['sign']","#a78bfa",1.05,0,-1.95,R+0.7);
+
+      const nTF=F.isTF.reduce((a,b)=>a+b,0);
+      sceneSnap={mode,numNodes:F.N,numEdges:F.edges.length,numTF:nTF,
+        ndataKeys:2,edataKeys:2,maxDiff:null,combinedDim:null,reduceEdges:null};
+
+      return {
+        badge:"DGLGraph · "+F.N+" nodes · "+F.edges.length+" edges · "+nTF+" TF",
+        formula:"g = dgl.graph((src,dst)) ; g.ndata['h'] , g.edata['conf']",
+        insight:"DGL is graph-first: the graph is an explicit container with named feature dictionaries. Nodes carry ndata['h'] (expression, blue chips) and ndata['is_TF'] (amber = transcription factor). Each directed edge carries edata['conf'] (DoRothEA confidence) and edata['sign'] (green=activation +1, rose=repression −1). PyG would store the same thing as two anonymous COO tensors x and edge_index.",
+        state:"5-gene DREAM4 GRN: TP53→CDKN1A (+0.95), TP53→BCL2 (−0.82), MYC→PCNA (+0.71). ndata keys: ['h','is_TF']. edata keys: ['conf','sign']. dgl infers N = max_index+1 = 5.",
+        metrics:{numNodes:""+F.N,numEdges:""+F.edges.length+" → 8*",reduceMode:"build",equiv:"ndata×2 / edata×2"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE B: update_all — message → reduce pipeline (DGL ≡ PyG)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="message"){
+      const agg=meanAggregate(selfLoops===1);
+      const reduceName=["sum","mean","max"][reduce];
+      const weightName=["copy_u","u_mul_e(conf)","u_mul_e(conf·sign)"][weighting];
+
+      // recompute aggregated value per reduce + weighting choice
+      let out=new Array(F.N).fill(0);
+      let E=F.edges.map(e=>[e[0],e[1]]);
+      if(selfLoops===1){ for(let i=0;i<F.N;i++) E.push([i,i]); }
+      const mailbox=Array.from({length:F.N},()=>[]);
+      E.forEach(([src,dst],idx)=>{
+        const isSelf=src===dst;
+        // weight: self-loops have conf=1, sign=+1
+        let w=1;
+        if(!isSelf && weighting>0){
+          const k=F.edges.findIndex(e=>e[0]===src&&e[1]===dst);
+          if(k>=0) w=F.conf[k]*(weighting===2?F.sign[k]:1);
+        }
+        mailbox[dst].push(w*H[src]);
+      });
+      for(let i=0;i<F.N;i++){
+        const m=mailbox[i];
+        if(!m.length){out[i]=0;continue;}
+        if(reduce===0) out[i]=m.reduce((a,b)=>a+b,0);
+        else if(reduce===1) out[i]=m.reduce((a,b)=>a+b,0)/m.length;
+        else out[i]=Math.max(...m);
+        out[i]=+out[i].toFixed(3);
+      }
+
+      // DGL ring (cyan) on the left, PyG mirror ring (amber) on the right
+      const dx=3.6;
+      function ringPos(i,shiftX){const ang=-Math.PI/2 + i/F.N*Math.PI*2;return new T.Vector3(Math.cos(ang)*2.1+shiftX,0,Math.sin(ang)*2.1);}
+      [[-dx,CY,"DGL update_all"],[dx,AM,"PyG scatter"]].forEach(([shift,col,name])=>{
+        for(let i=0;i<F.N;i++){
+          const p=ringPos(i,shift);
+          const node=new T.Mesh(new T.SphereGeometry(0.30,16,12),
+            new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+          node.position.copy(p); gMsg.add(node);
+          api.pick(node,{agg:{id:i,name:F.names[i],val:out[i],framework:name}});
+          // aggregated value chip
+          addLbl((out[i]>=0?"+":"")+out[i].toFixed(2),col.getStyle(),0.92,p.x,0.62,p.z);
+        }
+        // edges in each ring
+        E.forEach(([sx,dx2])=>{
+          if(sx===dx2) return;
+          const a=ringPos(sx,shift), b=ringPos(dx2,shift);
+          gMsg.add(new T.Line(new T.BufferGeometry().setFromPoints([a,b]),
+            new T.LineBasicMaterial({color:0x1e3046,transparent:true,opacity:0.6})));
+        });
+        addLbl(name,col.getStyle(),1.1,shift,-2.6,0);
+      });
+
+      // equivalence bridge between the two rings
+      const eqCol=(agg.edges===F.selfLoopEdges)?VI:VI;
+      gMsg.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-dx+2.3,0.0,0),new T.Vector3(dx-2.3,0.0,0)]),
+        new T.LineBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.5})));
+      addLbl("max|Δ| < 1e-5  ✓","#a78bfa",1.25,0,1.4,0);
+      addLbl("same math","#8a99ad",0.95,0,0.55,0);
+
+      // pipeline strip below
+      const stages=[["message","fn."+["copy_u","u_mul_e","u_mul_e"][weighting]],["reduce","fn."+reduceName],["apply","g.ndata"]];
+      stages.forEach((st,i)=>{
+        const x=-3.0+i*3.0;
+        const box=new T.Mesh(new T.BoxGeometry(2.3,0.5,0.5),new T.MeshStandardMaterial({color:0x142434,emissive:0x0c1830,emissiveIntensity:0.4,roughness:0.6}));
+        box.position.set(x,-4.1,2.2); gMsg.add(box);
+        addLbl(st[0],"#cfe0f0",0.95,x,-3.55,2.2);
+        addLbl(st[1],"#8a99ad",0.8,x,-4.55,2.2);
+        if(i<2){const a=new T.Mesh(new T.ConeGeometry(0.1,0.28,8),new T.MeshBasicMaterial({color:0x4dd7ff}));a.rotation.z=-Math.PI/2;a.position.set(x+1.5,-4.1,2.2);gMsg.add(a);}
+      });
+
+      const maxV=Math.max(...out.map(Math.abs))||1;
+      sceneSnap={mode,reduce,selfLoops,weighting,numEdges:agg.edges,
+        maxDiff:F.maxDiff,outMax:+maxV.toFixed(3),numNodes:F.N,combinedDim:null,reduceEdges:agg.edges};
+
+      return {
+        badge:"update_all · "+reduceName+" · "+weightName+(selfLoops?" · +self-loops":""),
+        formula:"g.update_all( fn."+["copy_u('h','m')","u_mul_e('h','w','m')","u_mul_e('h','w','m')"][weighting]+" , fn."+reduceName+"('m','h_new') )",
+        insight:"One message-passing layer is an explicit three-stage pipeline: message (per-edge), reduce (per-destination), optional apply. DGL's update_all and PyG's scatter compute the SAME mathematics — the two rings agree to floating-point precision (max|Δ| < 1e-5). Adding self-loops (DGL add_self_loop) matches GCNConv's default and changes in-degrees to [1,1,2,2,2]. Confidence weighting (u_mul_e) scales each message; the signed variant lets a repressor subtract.",
+        state:"Reduce: "+reduceName+". Message: "+weightName+". Edges (with self-loops="+(selfLoops?"on":"off")+"): "+agg.edges+". DGL vs PyG max difference < 1e-5 — identical outputs.",
+        metrics:{numNodes:""+F.N,numEdges:""+agg.edges,reduceMode:reduceName,equiv:"|Δ|<1e-5 ✓"},
+        focus:{center:[0,-1,0.6],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE C: heterograph — multi_update_all over TF/gene types
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="hetero"){
+      // 3 TF nodes (amber, left column), 8 gene nodes (cyan, right arc)
+      const tfPos=i=>new T.Vector3(-4.0, 0, (i-(F.nTF-1)/2)*1.7);
+      const genePosH=i=>{const ang=-Math.PI*0.42 + i/(F.nGene-1)*Math.PI*0.84;return new T.Vector3(1.0+Math.cos(ang)*3.0, 0, Math.sin(ang)*3.0);};
+
+      for(let i=0;i<F.nTF;i++){
+        const p=tfPos(i);
+        const node=new T.Mesh(new T.SphereGeometry(0.42,18,14),
+          new T.MeshStandardMaterial({color:AM,emissive:AM.clone().multiplyScalar(0.6),emissiveIntensity:0.65,roughness:0.4}));
+        node.position.copy(p); gGraph.add(node);
+        api.pick(node,{htype:{type:"TF",id:i,dim:F.dTF}});
+        addSlbl("TF"+i,"#fbbf24",0.42,p.x-0.7,0.0,p.z);
+      }
+      for(let i=0;i<F.nGene;i++){
+        const p=genePosH(i);
+        const node=new T.Mesh(new T.SphereGeometry(0.32,16,12),
+          new T.MeshStandardMaterial({color:CY,emissive:CY.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.4}));
+        node.position.copy(p); gGraph.add(node);
+        api.pick(node,{htype:{type:"gene",id:i,dim:F.dGene}});
+        addSlbl("g"+i,"#4dd7ff",0.34,p.x+0.55,0.0,p.z);
+      }
+      // ('TF','regulates','gene') edges — amber, projected h_proj 16→32
+      F.regEdges.forEach(([t,g])=>{
+        const a=tfPos(t), b=genePosH(g);
+        drawArrow(a,b,AM,0.8);
+      });
+      // ('gene','coexpr','gene') edges — green, undirected style
+      F.coexprEdges.forEach(([a,b])=>{
+        gGraph.add(new T.Line(new T.BufferGeometry().setFromPoints([genePosH(a),genePosH(b)]),
+          new T.LineBasicMaterial({color:GR.getHex(),transparent:true,opacity:0.7})));
+      });
+
+      // projection box TF(16) -> h_proj(32)
+      const proj=new T.Mesh(new T.BoxGeometry(1.0,0.7,0.7),new T.MeshStandardMaterial({color:0x241a40,emissive:0x1a1230,emissiveIntensity:0.5,roughness:0.6}));
+      proj.position.set(-2.4,1.3,0); gGraph.add(proj);
+      addLbl("Linear 16→32","#a78bfa",0.95,-2.4,2.0,0);
+
+      // cross_reducer node (combine TF_agg + coexpr_agg at gene)
+      const crName=crossR===0?"sum":"stack";
+      const combDim=crossR===0?F.dGene:F.dGene; // per-type dim is 32 either way; combined concat = 96
+      addLbl("regulates  (TF→gene, conf)","#fbbf24",1.05,-0.5,-3.0,2.4);
+      addLbl("coexpr  (gene↔gene, r)","#34d399",1.05,-0.5,-3.5,2.4);
+      addLbl("multi_update_all · cross_reducer='"+crName+"'","#a78bfa",1.2,0,2.6,0);
+
+      // combined representation bar at gene side
+      const barH=crossR===0?2.4:3.0;
+      const bar=new T.Mesh(new T.BoxGeometry(0.6,barH,0.6),
+        new T.MeshStandardMaterial({color:VI,emissive:VI.clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.4}));
+      bar.position.set(4.6,barH/2,0); gBars.add(bar);
+      api.pick(bar,{combined:{dim:F.combinedDim,crossReducer:crName}});
+      addLbl("[h | TF_agg | coexpr_agg]","#c4b5fd",0.95,4.6,barH+0.55,0);
+      addLbl(F.combinedDim+"-dim","#a78bfa",1.15,4.6,barH+1.05,0);
+
+      sceneSnap={mode,crossReducer:crossR,numNodes:F.nTF+F.nGene,
+        numEdges:F.regEdges.length+F.coexprEdges.length,
+        nodeTypes:2,edgeTypes:2,combinedDim:F.combinedDim,projDim:F.dGene,maxDiff:null,reduceEdges:null};
+
+      return {
+        badge:"heterograph · 2 node types · 2 edge types · cross='"+crName+"'",
+        formula:"g.multi_update_all({ ('TF','regulates','gene'):(copy_u,sum), ('gene','coexpr','gene'):(copy_u,mean) }, cross_reducer='"+crName+"')",
+        insight:"DGL's heterograph is one explicit object holding several node and edge types with INDEPENDENT feature dimensions: TF has d=16, gene has d=32. A Linear(16→32) projects TF features (violet box) so the regulates messages match gene dimension. multi_update_all runs a type-specific message/reduce per relation, then cross_reducer merges them at each gene node. Concatenating h, TF_agg and coexpr_agg gives a "+F.combinedDim+"-dim gene representation — this is where DGL's graph-first API beats PyG's HeteroData for 3+ types.",
+        state:"Node types: TF("+F.nTF+", d=16), gene("+F.nGene+", d=32). Edge types: regulates("+F.regEdges.length+"), coexpr("+F.coexprEdges.length+"). cross_reducer='"+crName+"'. Combined gene vector: 32+32+32 = "+F.combinedDim+".",
+        metrics:{numNodes:""+(F.nTF+F.nGene),numEdges:""+(F.regEdges.length+F.coexprEdges.length),reduceMode:crName,equiv:F.combinedDim+"-dim"},
+        focus:{center:[0.5,0,0.6],radius:13}
+      };
+    }
+
+    return {badge:"I02",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i02",
+    kind:"dgl-graph-tooling",
+    eyebrow:"Block I · Implementation",
+    title:"I02 · DGL and graph learning tooling",
+    subtitle:"DGL is graph-first: an explicit DGLGraph with named ndata/edata dictionaries and a message→reduce update_all pipeline. Three views on the 5-gene DREAM4 GRN: build the container, run message passing (DGL ≡ PyG), and a TF–gene heterograph.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, an aggregated node, or the combined bar.",
+    modes:[
+      {value:"build",   label:"Build (DGLGraph · ndata / edata)"},
+      {value:"message", label:"update_all (message → reduce · DGL ≡ PyG)"},
+      {value:"hetero",  label:"heterograph (multi_update_all · TF/gene)"}
+    ],
+    params:[
+      {key:"reduce",      label:"reduce fn (0=sum 1=mean 2=max)",min:0,max:2,step:1,value:1,
+       fmt:v=>["sum","mean","max"][Math.round(v)],modes:["message"]},
+      {key:"selfLoops",   label:"add_self_loop (0=off 1=on)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)?"on (8 edges)":"off (3 edges)",modes:["message"]},
+      {key:"weighting",   label:"message (0=copy_u 1=conf 2=conf·sign)",min:0,max:2,step:1,value:0,
+       fmt:v=>["copy_u","u_mul_e conf","u_mul_e conf·sign"][Math.round(v)],modes:["message"]},
+      {key:"crossReducer",label:"cross_reducer (0=sum 1=stack)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"sum":"stack",modes:["hetero"]}
+    ],
+    metrics:[
+      {key:"numNodes", label:"# nodes",     accent:"cyan"},
+      {key:"numEdges", label:"# edges",     accent:"amber"},
+      {key:"reduceMode",label:"reduce / view",accent:"green"},
+      {key:"equiv",    label:"equivalence", accent:"violet"}
+    ],
+    layers:[
+      {group:"graph",  label:"Graph / types"},
+      {group:"msg",    label:"Message passing"},
+      {group:"bars",   label:"Combined vector"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Mean + self-loops",
+      on:api=>{if(api.state.mode==="message"){api.setParam("reduce",1);api.setParam("selfLoops",1);api.setParam("weighting",0);}}
+    },
+    secondary:{
+      label:"Signed weighting",
+      on:api=>{if(api.state.mode==="message"){api.setParam("weighting",2);api.setParam("reduce",0);}}
+    },
+    defaultCam:{theta:-0.45,phi:0.62,r:12},
+    hint:'<span style="color:#4dd7ff">cyan</span>=gene / DGL · <span style="color:#fbbf24">amber</span>=TF / PyG mirror · <span style="color:#34d399">green</span>=activation(+) / coexpr · <span style="color:#fb7185">rose</span>=repression(−) · <span style="color:#a78bfa">violet</span>=edge feats / cross_reducer.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="message") api.frame([0,-1,0.6],13);
+      else if(s.mode==="hetero") api.frame([0.5,0,0.6],13);
+      else api.frame([0,0,0],11);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="message") api.frame([0,-1,0.6],13);
+      else if(s.mode==="hetero") api.frame([0.5,0,0.6],13);
+      else api.frame([0,0,0],11);
+    },
+    onSelect(api,d){
+      if(d.node)     api.setSelected(d.node.name+" · "+(d.node.isTF?"TF":"gene")+" · h="+d.node.h.toFixed(3));
+      if(d.agg)      api.setSelected(d.agg.framework+" · "+d.agg.name+" → "+(d.agg.val>=0?"+":"")+d.agg.val.toFixed(3));
+      if(d.htype)    api.setSelected(d.htype.type+(d.htype.id!=null?" "+d.htype.id:"")+" · d="+d.htype.dim);
+      if(d.combined) api.setSelected("combined gene vector · "+d.combined.dim+"-dim · cross='"+d.combined.crossReducer+"'");
+    },
+    build,
+    snapshot(s){
+      const reduce=Math.round(s.reduce);
+      const selfLoops=Math.round(s.selfLoops);
+      const weighting=Math.round(s.weighting);
+      const crossR=Math.round(s.crossReducer);
+      const agg=meanAggregate(selfLoops===1);
+      return {
+        mode:s.mode,
+        reduce, selfLoops, weighting, crossReducer:crossR,
+        numNodes:(s.mode==="hetero")?(F.nTF+F.nGene):F.N,
+        numEdges:(s.mode==="hetero")?(F.regEdges.length+F.coexprEdges.length)
+                 :(s.mode==="message"?agg.edges:F.edges.length),
+        nodeTypesI02:(s.mode==="hetero")?2:1,
+        edgeTypesI02:(s.mode==="hetero")?2:1,
+        combinedDimI02:(s.mode==="hetero")?F.combinedDim:0,
+        dglPygMaxDiff:(s.mode==="message")?F.maxDiff:0,
+        dglPygEquivalent:(s.mode==="message")
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

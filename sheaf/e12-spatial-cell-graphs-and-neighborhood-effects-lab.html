@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E12 · Spatial cell graphs and neighborhood effects</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // Fully deterministic: the worked-example cell coordinates are fixed from the
+  // note. (If any jitter were needed, use frac over sin — never a clock/random.)
+  let sceneSnap={};
+
+  // ── the note's Section-5 worked example: 5 cells in a tissue section ───────
+  // coords in micrometers; expression of 3 genes (CD3E, CD274, VEGFA).
+  // CELLS[i] = {x,y, CD3E, CD274, VEGFA, type, col}
+  const CELLS=[
+    {id:1, x:50,  y:50, CD3E:5.2, CD274:0.1, VEGFA:0.3, type:"T cell (infiltrating)", col:"cyan"},
+    {id:2, x:80,  y:50, CD3E:0.1, CD274:4.8, VEGFA:0.2, type:"Tumor (PD-L1+)",        col:"rose"},
+    {id:3, x:120, y:50, CD3E:0.3, CD274:4.5, VEGFA:0.5, type:"Tumor",                 col:"rose"},
+    {id:4, x:160, y:50, CD3E:0.2, CD274:0.1, VEGFA:5.8, type:"Endothelial (vessel)",  col:"green"},
+    {id:5, x:50,  y:90, CD3E:4.5, CD274:0.2, VEGFA:0.1, type:"T cell",                col:"cyan"}
+  ];
+  const GENES=["CD3E","CD274","VEGFA"]; // 0,1,2
+
+  // map tissue micrometers -> scene units (centre the cloud, scale down)
+  const CX=92, CY=66, SC=0.075;
+  function wpos(c){ return [ (c.x-CX)*SC, 0, (c.y-CY)*SC*1.5 ]; }
+
+  function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.sqrt(dx*dx+dy*dy); }
+
+  // all undirected pairs with distance (used by every mode)
+  function pairs(){
+    const out=[];
+    for(let i=0;i<CELLS.length;i++) for(let j=i+1;j<CELLS.length;j++)
+      out.push({a:i,b:j,d:dist(CELLS[i],CELLS[j])});
+    return out;
+  }
+
+  // radius graph: edges with d<=r (boundary d==r included, matches note d(2,5)=50)
+  function radiusEdges(r){ return pairs().filter(p=>p.d<=r+1e-6); }
+
+  // kNN(coord) graph: symmetric union of each node's k nearest neighbours
+  function knnEdges(k){
+    const set={};
+    for(let i=0;i<CELLS.length;i++){
+      const nb=[];
+      for(let j=0;j<CELLS.length;j++) if(j!==i) nb.push({j, d:dist(CELLS[i],CELLS[j])});
+      nb.sort((p,q)=>p.d-q.d);
+      for(let t=0;t<Math.min(k,nb.length);t++){
+        const j=nb[t].j, key=i<j?(i+"-"+j):(j+"-"+i);
+        set[key]={a:Math.min(i,j),b:Math.max(i,j),d:nb[t].d};
+      }
+    }
+    return Object.keys(set).map(k2=>set[k2]);
+  }
+
+  // Delaunay (precomputed for this fixed 5-point planar config: planar triangulation,
+  // every geometric neighbour connected, no crossing edges).
+  function delaunayEdges(){
+    const idx=[[0,1],[0,4],[1,2],[1,4],[2,3],[2,4],[3,4]];
+    return idx.map(e=>({a:e[0],b:e[1],d:dist(CELLS[e[0]],CELLS[e[1]])}));
+  }
+
+  function edgesFor(constr,r,k){
+    if(constr===0) return radiusEdges(r);
+    if(constr===1) return knnEdges(k);
+    return delaunayEdges();
+  }
+
+  // GAT-style niche aggregation of gene g into cell i over its neighbours.
+  // attention alpha(i,j) ∝ W(i,j)=exp(-d/sigma); returns {niche, own, alphas[]}
+  function nicheAgg(i,g,edges,sigma){
+    const nb=[];
+    edges.forEach(e=>{ if(e.a===i) nb.push(e.b); else if(e.b===i) nb.push(e.a); });
+    let Z=0; const ws=nb.map(j=>{ const w=Math.exp(-dist(CELLS[i],CELLS[j])/sigma); Z+=w; return {j,w}; });
+    let niche=0; const alphas=[];
+    ws.forEach(o=>{ const a=Z>0?o.w/Z:0; alphas.push({j:o.j,alpha:a,w:o.w}); niche+=a*CELLS[o.j][GENES[g]]; });
+    return {niche, own:CELLS[i][GENES[g]], alphas, nb};
+  }
+
+  // Moran's I for gene g on a weighted graph (W(i,j)=exp(-d/sigma)).
+  function moran(g,edges,sigma){
+    const N=CELLS.length;
+    let mean=0; CELLS.forEach(c=>mean+=c[GENES[g]]); mean/=N;
+    const dev=CELLS.map(c=>c[GENES[g]]-mean);
+    let num=0, W=0;
+    edges.forEach(e=>{ const w=Math.exp(-e.d/sigma); num+=w*dev[e.a]*dev[e.b]; W+=w; });
+    let den=0; dev.forEach(d=>den+=d*d);
+    const I = (W>0 && den>0) ? (N/W)*(num/den) : 0;
+    return {I, mean, dev, num, den, W};
+  }
+
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const r=Math.round(s.radius);          // radius cutoff (μm)
+    const k=Math.round(s.knn);             // k for kNN constr
+    const g=Math.round(s.gene);            // 0 CD3E / 1 CD274 / 2 VEGFA
+    const sigma=Math.round(s.sigma);       // decay length scale (μm)
+    const constr=Math.round(s.constr);     // 0 radius / 1 kNN / 2 Delaunay
+
+    const gGraph =api.group("graph");
+    const gEdges =api.group("edges");
+    const gAgg   =api.group("agg");
+    const gLabels=api.group("labels");
+
+    const COLG={cyan:"#4dd7ff",rose:"#f472b6",green:"#34d399",amber:"#fbbf24",violet:"#a78bfa",slate:"#54667c"};
+    function lbl(txt,col,sz,p,dy){const sp=api.bigLabel(txt,col,sz);sp.position.set(p[0],(p[1]||0)+(dy||0),p[2]);gLabels.add(sp);}
+
+    // draw the cell cloud (always) — coloured by type, picks carry expression
+    function drawCells(highlight){
+      CELLS.forEach((c,i)=>{
+        const p=wpos(c);
+        const hot = highlight!=null && i===highlight;
+        api.node(p,{color:c.col, r:hot?0.42:0.32, group:"graph",
+          pick:{cell:{id:c.id,type:c.type,CD3E:c.CD3E,CD274:c.CD274,VEGFA:c.VEGFA}}});
+        lbl("c"+c.id, "#cfe0f0", 0.62, p, 0.62);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: niche  — radius graph + GAT neighborhood aggregation (worked example)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="niche"){
+      const edges=radiusEdges(r);
+      drawCells(0); // highlight cell_1 (the infiltrating T cell)
+
+      edges.forEach(e=>{
+        const w=Math.exp(-e.d/sigma);
+        const touches1=(e.a===0||e.b===0);
+        api.edge(wpos(CELLS[e.a]),wpos(CELLS[e.b]),
+          {color:touches1?COLG.amber:"#2a3a4e", width:0.03+0.05*w, opacity:0.5+0.45*w, group:"edges"});
+      });
+
+      const agg=nicheAgg(0,g,edges,sigma);
+      // arrows from each neighbour of cell_1 into cell_1, thickness ∝ alpha
+      agg.alphas.forEach(o=>{
+        api.arrow(wpos(CELLS[o.j]),wpos(CELLS[0]),
+          {color:COLG.violet, width:0.02+0.06*o.alpha, head:0.18, group:"agg"});
+        const pj=wpos(CELLS[o.j]), p0=wpos(CELLS[0]);
+        const mid=[ (pj[0]+p0[0])/2, 0.5, (pj[2]+p0[2])/2 ];
+        lbl("α="+o.alpha.toFixed(2), COLG.violet, 0.5, mid, 0);
+      });
+
+      // niche-signal bar rising above cell_1
+      const p1=wpos(CELLS[0]);
+      const h=0.2+agg.niche*0.5;
+      const bar=new T.Mesh(new T.BoxGeometry(0.34,h,0.34), api.mat("violet",{emissive:0.7}));
+      bar.position.set(p1[0],h/2+0.55,p1[2]);
+      gAgg.add(bar);
+      lbl(GENES[g]+" niche "+agg.niche.toFixed(2), COLG.violet,0.72,[p1[0],h+0.95,p1[2]],0);
+      lbl("own "+GENES[g]+" "+agg.own.toFixed(2), COLG.cyan,0.6,[p1[0],0.0,p1[2]],-0.7);
+
+      lbl("radius r="+r+" μm  ·  "+edges.length+" edges", COLG.amber,0.78,[0,0,3.6],0);
+
+      sceneSnap={mode,radius:r,sigma,gene:g,constr,edges:edges.length,
+        nicheSignal:+agg.niche.toFixed(3), ownSignal:+agg.own.toFixed(3),
+        nicheLift:+(agg.niche-agg.own).toFixed(3), moranI:null};
+
+      const note = (g===1) ? "cell_1's own CD274 is "+agg.own.toFixed(1)+", but its niche carries "+agg.niche.toFixed(2)
+        +" — it sits beside PD-L1+ tumor cell_2. That neighbourhood PD-L1 pressure predicts T-cell exhaustion."
+        : "The niche feature aggregates "+GENES[g]+" from physical neighbours within r="+r+" μm, weighting closer cells more (α ∝ e^(−d/σ)).";
+
+      return {
+        badge:"Niche · "+GENES[g]+" → cell_1 = "+agg.niche.toFixed(2)+" · r="+r+"μm",
+        formula:"h<sup>(1)</sup>(i,g) = Σ<sub>j∈N(i)</sub> α<sub>ij</sub>·x<sub>j</sub>(g),  α<sub>ij</sub> = W<sub>ij</sub>/Σ W<sub>ik</sub>,  W<sub>ij</sub>=e<sup>−d<sub>ij</sub>/σ</sup>",
+        insight:note,
+        state:"Neighbours of cell_1: "+agg.alphas.map(o=>"c"+CELLS[o.j].id+" (α="+o.alpha.toFixed(2)+")").join(", ")
+          +". Niche "+GENES[g]+" = "+agg.niche.toFixed(2)+" vs own "+agg.own.toFixed(2)+".",
+        metrics:{
+          edges:""+edges.length,
+          nicheSignal:agg.niche.toFixed(2),
+          nicheLift:(agg.niche-agg.own>=0?"+":"")+(agg.niche-agg.own).toFixed(2),
+          moranI:"—"
+        },
+        focus:{center:[0,0.6,0],radius:9}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: moran  — spatial autocorrelation (Moran's I) of the selected gene
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="moran"){
+      const edges=radiusEdges(r);
+      const M=moran(g,edges,sigma);
+      drawCells(null);
+
+      // each cell: a bar whose height ∝ |dev|; rose above mean, cyan below
+      CELLS.forEach((c,i)=>{
+        const p=wpos(c);
+        const dev=M.dev[i];
+        const hh=0.15+Math.abs(dev)*0.32;
+        const dcol = dev>=0 ? "rose" : "cyan";
+        const bar=new T.Mesh(new T.BoxGeometry(0.3,hh,0.3), api.mat(dcol,{emissive:0.6}));
+        bar.position.set(p[0], (dev>=0? hh/2+0.5 : -hh/2-0.5), p[2]);
+        gAgg.add(bar);
+        lbl((dev>=0?"+":"")+dev.toFixed(1), dev>=0?COLG.rose:COLG.cyan, 0.5, p, dev>=0?hh+0.85:-(hh+0.85));
+      });
+
+      // edges coloured by the sign of dev_i·dev_j (the cross term in the numerator)
+      edges.forEach(e=>{
+        const cross=M.dev[e.a]*M.dev[e.b];
+        const ec = cross>=0 ? COLG.green : COLG.amber; // green concordant, amber discordant
+        api.edge(wpos(CELLS[e.a]),wpos(CELLS[e.b]),
+          {color:ec, width:0.04, opacity:0.85, group:"edges"});
+      });
+
+      lbl("mean "+GENES[g]+" = "+M.mean.toFixed(2), "#8a99ad",0.66,[0,0,3.4],0);
+      lbl("Moran I = "+M.I.toFixed(3), M.I>=0?COLG.green:COLG.amber,0.95,[0,0,4.3],0);
+
+      sceneSnap={mode,radius:r,sigma,gene:g,constr,edges:edges.length,
+        moranI:+M.I.toFixed(3), moranNum:+M.num.toFixed(2), moranDen:+M.den.toFixed(2),
+        meanExpr:+M.mean.toFixed(2), nicheSignal:null};
+
+      const interp = M.I>0.15 ? "positive autocorrelation — "+GENES[g]+" clusters in spatial patches (an SVG candidate)."
+        : M.I<-0.05 ? "near-zero / slight dispersal — "+GENES[g]+" is not cleanly clustered on these 5 cells (cell_1 bridges PD-L1-high tumor to PD-L1-low T cell)."
+        : "≈ 0 — "+GENES[g]+" looks spatially random at this scale.";
+
+      return {
+        badge:"Moran's I · "+GENES[g]+" = "+M.I.toFixed(3)+" · r="+r+"μm",
+        formula:"I = (N/ΣW)·( Σ<sub>ij</sub> W<sub>ij</sub>·(x<sub>i</sub>−x̄)(x<sub>j</sub>−x̄) ) / Σ<sub>i</sub>(x<sub>i</sub>−x̄)<sup>2</sup>",
+        insight:"Moran's I scores spatial autocorrelation: nearby cells more similar than chance ⇒ I→+1; checkerboard ⇒ I→−1. "+interp,
+        state:"N="+CELLS.length+", ΣW="+M.W.toFixed(2)+", numerator="+M.num.toFixed(2)+", denominator="+M.den.toFixed(2)+" ⇒ I="+M.I.toFixed(3)+". Green edges = concordant deviations, amber = discordant.",
+        metrics:{
+          edges:""+edges.length,
+          nicheSignal:"—",
+          nicheLift:"—",
+          moranI:M.I.toFixed(3)
+        },
+        focus:{center:[0,0,0.4],radius:9.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: construct  — edge-construction contrast (radius / kNN / Delaunay)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="construct"){
+      const edges=edgesFor(constr,r,k);
+      drawCells(null);
+
+      const names=["radius r","kNN (coord)","Delaunay"];
+      const ecol=[COLG.amber,COLG.cyan,COLG.green][constr];
+      edges.forEach(e=>{
+        api.edge(wpos(CELLS[e.a]),wpos(CELLS[e.b]),
+          {color:ecol, width:0.045, opacity:0.9, group:"edges"});
+      });
+
+      // mean degree
+      const deg=CELLS.map(()=>0);
+      edges.forEach(e=>{deg[e.a]++;deg[e.b]++;});
+      const meanDeg=deg.reduce((a,b)=>a+b,0)/CELLS.length;
+
+      lbl(names[constr], ecol,0.95,[0,0,3.5],0);
+      lbl(edges.length+" edges · mean deg "+meanDeg.toFixed(1), "#8a99ad",0.7,[0,0,4.3],0);
+      if(constr===0) lbl("r = "+r+" μm", COLG.amber,0.66,[0,0,-3.6],0);
+      if(constr===1) lbl("k = "+k, COLG.cyan,0.66,[0,0,-3.6],0);
+
+      sceneSnap={mode,radius:r,knn:k,sigma,gene:g,constr,edges:edges.length,
+        meanDegree:+meanDeg.toFixed(2), moranI:null, nicheSignal:null};
+
+      const use=["fixed physical scale — paracrine signalling (cytokines ~50-100 μm).",
+                 "adaptive — k neighbours regardless of distance, uniform tissue coverage.",
+                 "planar, contact-based — each cell to its geometric neighbours (juxtacrine)."][constr];
+
+      return {
+        badge:"Construct · "+names[constr]+" · "+edges.length+" edges",
+        formula:constr===0?"E = { (i,j) : ‖P<sub>i</sub>−P<sub>j</sub>‖ ≤ r }"
+              : constr===1?"E = kNN<sub>coord</sub>(P, k)  (symmetrised)"
+              : "E = Delaunay(P)  (planar, no crossings)",
+        insight:"Same 5 cells, three edge rules. "+names[constr]+": "+use+" The choice sets which interactions the GNN can even see.",
+        state:"Construction "+names[constr]+" → "+edges.length+" edges, mean degree "+meanDeg.toFixed(1)+". Larger r connects more (but a 1 mm radius is a global average that erases spatial structure).",
+        metrics:{
+          edges:""+edges.length,
+          nicheSignal:"—",
+          nicheLift:"deg "+meanDeg.toFixed(1),
+          moranI:"—"
+        },
+        focus:{center:[0,0,0],radius:9}
+      };
+    }
+
+    return {badge:"E12",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:9}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e12",
+    kind:"spatial-cell-graphs",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E12 · Spatial cell graphs and neighborhood effects",
+    subtitle:"A 5-cell tissue section (T cell, 2 tumor, endothelial, T cell). Physical coordinates make the graph; the GNN reads each cell's niche. Three views: niche aggregation, Moran's I, and edge construction.",
+    selectedLabel:"Cell",
+    selectedHint:"Click a cell to read its coordinates and expression.",
+    modes:[
+      {value:"niche",     label:"Niche aggregation (GAT neighborhood)"},
+      {value:"moran",     label:"Moran's I (spatially variable genes)"},
+      {value:"construct", label:"Edge construction (radius / kNN / Delaunay)"}
+    ],
+    params:[
+      {key:"radius", label:"spatial radius r (μm)",min:20,max:120,step:5,value:50,
+       fmt:v=>Math.round(v)+" μm", modes:["niche","moran","construct"]},
+      {key:"sigma",  label:"decay length σ (μm)",min:20,max:100,step:5,value:50,
+       fmt:v=>Math.round(v)+" μm", modes:["niche","moran"]},
+      {key:"gene",   label:"gene (0 CD3E · 1 CD274 · 2 VEGFA)",min:0,max:2,step:1,value:1,
+       fmt:v=>["CD3E","CD274","VEGFA"][Math.round(v)], modes:["niche","moran"]},
+      {key:"knn",    label:"k (kNN neighbours)",min:1,max:4,step:1,value:2,
+       fmt:v=>"k="+Math.round(v), modes:["construct"]},
+      {key:"constr", label:"construction (0 radius · 1 kNN · 2 Delaunay)",min:0,max:2,step:1,value:0,
+       fmt:v=>["radius","kNN","Delaunay"][Math.round(v)], modes:["construct"]}
+    ],
+    metrics:[
+      {key:"edges",       label:"Spatial edges",accent:"amber"},
+      {key:"nicheSignal", label:"Niche signal (cell_1)",accent:"violet"},
+      {key:"nicheLift",   label:"Niche − own / degree",accent:"cyan"},
+      {key:"moranI",      label:"Moran's I",accent:"green"}
+    ],
+    layers:[
+      {group:"graph",  label:"Cells"},
+      {group:"edges",  label:"Spatial edges"},
+      {group:"agg",    label:"Aggregation / deviations"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"r = 50 μm (worked)",
+      on:api=>{api.setParam("radius",50);api.setParam("sigma",50);}
+    },
+    secondary:{
+      label:"PD-L1 niche (CD274)",
+      on:api=>{api.setParam("gene",1);api.setParam("radius",50);api.setParam("sigma",50);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:9.5},
+    hint:'<span style="color:#4dd7ff">cyan</span>=T cell · <span style="color:#f472b6">rose</span>=tumor PD-L1+ · <span style="color:#34d399">green</span>=endothelial · <span style="color:#a78bfa">violet</span>=niche aggregation · <span style="color:#fbbf24">amber</span>=edge / radius. Edges come from coordinates, not expression.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="moran") api.frame([0,0,0.4],9.5);
+      else api.frame([0,0.4,0],9);
+    },
+    onSelect(api,d){
+      if(d.cell) api.setSelected("cell_"+d.cell.id+" · "+d.cell.type+" · CD3E "+d.cell.CD3E+" · CD274 "+d.cell.CD274+" · VEGFA "+d.cell.VEGFA);
+    },
+    build,
+    snapshot(s){
+      const r=Math.round(s.radius), k=Math.round(s.knn), g=Math.round(s.gene), sigma=Math.round(s.sigma), constr=Math.round(s.constr);
+      const eRad=radiusEdges(r);
+      const M=moran(g,eRad,sigma);
+      const agg=nicheAgg(0,g,eRad,sigma);
+      const eC=edgesFor(constr,r,k);
+      const deg=CELLS.map(()=>0); eC.forEach(e=>{deg[e.a]++;deg[e.b]++;});
+      const meanDeg=deg.reduce((a,b)=>a+b,0)/CELLS.length;
+      return {
+        mode:s.mode,
+        radius:r, sigma:sigma, gene:g, knn:k, constr:constr,
+        edges:(s.mode==="construct")?eC.length:eRad.length,
+        nicheSignal:+agg.niche.toFixed(3),
+        ownSignal:+agg.own.toFixed(3),
+        nicheLift:+(agg.niche-agg.own).toFixed(3),
+        moranI:+M.I.toFixed(3),
+        meanExpr:+M.mean.toFixed(3),
+        meanDegree:+meanDeg.toFixed(3),
+        pdl1NicheOnTcell: g===1 ? +agg.niche.toFixed(3) : null
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

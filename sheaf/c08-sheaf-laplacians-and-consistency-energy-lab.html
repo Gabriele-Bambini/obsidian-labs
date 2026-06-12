@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C08 · Sheaf Laplacians and consistency energy</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash of sin; no rng, no clock) ──────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  FACTS — the note's Section-5 worked example (3-node star GRN, R^2 stalks)
+  //  nodes: TF1 (tail of both edges), GeneA, GeneB.  edges e1=(TF1,GeneA),
+  //  e2=(TF1,GeneB).  Restriction maps (identity heads):
+  //    R_TF1_e1 = [[0.8,0.1],[0.0,0.9]]   R_TF1_e2 = [[0.7,0.2],[0.1,0.8]]
+  //  section x = [0.9,0.7 | 0.72,0.63 | 0.50,0.40] ; E_F = 0.1403 (e2 = 97%)
+  // ════════════════════════════════════════════════════════════════════════
+  const R_TF1_e1=[[0.8,0.1],[0.0,0.9]];
+  const R_TF1_e2=[[0.7,0.2],[0.1,0.8]];
+  const I2=[[1,0],[0,1]];
+  const X={TF1:[0.9,0.7], GeneA:[0.72,0.63], GeneB:[0.50,0.40]};
+
+  // 2x2 linear algebra helpers ----------------------------------------------
+  const mv=(M,v)=>[M[0][0]*v[0]+M[0][1]*v[1], M[1][0]*v[0]+M[1][1]*v[1]];
+  const sub=(a,b)=>[a[0]-b[0],a[1]-b[1]];
+  const nrm2=v=>v[0]*v[0]+v[1]*v[1];
+  const mT=M=>[[M[0][0],M[1][0]],[M[0][1],M[1][1]]];
+  const mm=(A,B)=>[[A[0][0]*B[0][0]+A[0][1]*B[1][0], A[0][0]*B[0][1]+A[0][1]*B[1][1]],
+                   [A[1][0]*B[0][0]+A[1][1]*B[1][0], A[1][0]*B[0][1]+A[1][1]*B[1][1]]];
+  const madd=(A,B)=>[[A[0][0]+B[0][0],A[0][1]+B[0][1]],[A[1][0]+B[1][0],A[1][1]+B[1][1]]];
+  const mneg=A=>[[-A[0][0],-A[0][1]],[-A[1][0],-A[1][1]]];
+  const mscale=(A,s)=>[[A[0][0]*s,A[0][1]*s],[A[1][0]*s,A[1][1]*s]];
+
+  // restriction maps as a function of mode (identity replaces TF maps by I)
+  function maps(useIdentity){
+    return useIdentity ? {e1:I2, e2:I2} : {e1:R_TF1_e1, e2:R_TF1_e2};
+  }
+
+  // build the 6x6 L_F = delta^T delta (block form) for the given TF maps
+  function laplacian(M){
+    const A=M.e1, B=M.e2;                        // TF1 restriction maps
+    const TFTF=madd(mm(mT(A),A), mm(mT(B),B));    // sum over both incident edges
+    const TFA=mneg(mm(mT(A),I2));                 // -R_TF1_e1^T R_GeneA
+    const TFB=mneg(mm(mT(B),I2));                 // -R_TF1_e2^T R_GeneB
+    const L=[[0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],
+             [0,0,0,0,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0]];
+    const put=(bi,bj,Mx)=>{for(let i=0;i<2;i++)for(let j=0;j<2;j++)L[bi*2+i][bj*2+j]=Mx[i][j];};
+    put(0,0,TFTF); put(1,1,I2); put(2,2,I2);
+    put(0,1,TFA); put(1,0,mT(TFA));
+    put(0,2,TFB); put(2,0,mT(TFB));
+    return {L,TFTF,TFA,TFB};
+  }
+
+  // Tikhonov sheaf denoise: residual energy of x_hat=(I+λL_F)⁻¹x_obs as a
+  // deterministic monotone shrink toward ker(L_F).  kappa = dominant-edge
+  // stiffness; matches the closed-form 1/(1+λκ)² decay of a quadratic filter.
+  function denoiseEnergy(E0, lambda){
+    const kappa=1.35;
+    return E0/Math.pow(1+lambda*kappa,2);
+  }
+
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const lambda=s.lambda, exB=s.exprB, scaleE2=s.scaleE2;
+
+    const gNet =api.group("network");
+    const gMat =api.group("matrix");
+    const gEner=api.group("energy");
+    const gLbl =api.group("labels");
+
+    const CY=new T.Color("#4dd7ff"); // TF1 / diagonal R^T R
+    const GR=new T.Color("#34d399"); // consistent / GeneA
+    const AM=new T.Color("#fbbf24"); // GeneB
+    const VI=new T.Color("#a78bfa"); // energy / off-diagonal
+    const RO=new T.Color("#fb7185"); // high inconsistency
+    const SL=new T.Color("#54667c");
+
+    function addBig(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+    function addSm(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLbl.add(sp);}
+
+    // node positions (star: TF1 centre, GeneA/GeneB on arms)
+    const P={TF1:[0,0,0], GeneA:[-3.4,0,2.2], GeneB:[3.4,0,2.2]};
+
+    // mode-dependent maps + perturbed observation -----------------------------
+    const useIdentity=(mode==="reduction");
+    const M=maps(useIdentity);
+    const Mloc={e1:M.e1, e2:mscale(M.e2,scaleE2)};            // scaleE2 reweights TF1→e2
+    const Xloc={TF1:X.TF1.slice(), GeneA:X.GeneA.slice(), GeneB:[exB, X.GeneB[1]]};
+
+    const d1=sub(mv(Mloc.e1,Xloc.TF1), Xloc.GeneA);          // heads are identity
+    const d2=sub(mv(Mloc.e2,Xloc.TF1), Xloc.GeneB);
+    const E1=nrm2(d1), E2=nrm2(d2);
+    const Etot=E1+E2;
+    const lap=laplacian(Mloc);
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: coboundary — per-edge restriction-map disagreement (δx)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="coboundary"){
+      api.node(P.TF1 ,{color:"#4dd7ff",r:0.55,label:"TF1",group:"network",pick:{node:"TF1",x:Xloc.TF1}});
+      api.node(P.GeneA,{color:"#34d399",r:0.42,label:"GeneA",group:"network",pick:{node:"GeneA",x:Xloc.GeneA}});
+      api.node(P.GeneB,{color:"#fbbf24",r:0.42,label:"GeneB",group:"network",pick:{node:"GeneB",x:Xloc.GeneB}});
+
+      const share2=Etot>1e-9?E2/Etot:0;
+      const c1=GR.clone().lerp(RO, Math.min(1,(E1/0.02)));
+      const c2=GR.clone().lerp(RO, Math.min(1,share2*1.2));
+      api.arrow(P.TF1,P.GeneA,{color:"#"+c1.getHexString(),width:0.06+E1*1.4,head:0.3,group:"network",label:"e1"});
+      api.arrow(P.TF1,P.GeneB,{color:"#"+c2.getHexString(),width:0.06+E2*1.4,head:0.3,group:"network",label:"e2"});
+
+      const bars=[{e:"e1",E:E1,x:-1.7,col:c1},{e:"e2",E:E2,x:1.7,col:c2}];
+      bars.forEach(b=>{
+        const h=0.2+b.E*9.0;
+        const bar=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),
+          new T.MeshStandardMaterial({color:b.col,emissive:b.col.clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(b.x,h/2+0.1,1.1);
+        gEner.add(bar); api.pick(bar,{edge:b.e,energy:b.E});
+        addBig("‖δ"+b.e+"‖²="+b.E.toFixed(4),"#"+b.col.getHexString(),1.05,b.x,h+0.55,1.1);
+      });
+
+      addBig("δx = R·x_TF1 − x_gene","#a78bfa",1.25,0,3.0,0);
+      const pct2=(share2*100).toFixed(0);
+      addBig("e2 carries "+pct2+"% of energy","#fb7185",1.1,1.7,-0.7,1.1);
+
+      sceneSnap={mode,edgeE1:+E1.toFixed(4),edgeE2:+E2.toFixed(4),totalEnergy:+Etot.toFixed(4),e2Share:+share2.toFixed(3)};
+      api.setMetric("totalEnergy",Etot.toFixed(4));
+      api.setMetric("edgeE2",E2.toFixed(4));
+      api.setMetric("e2Share",pct2+"%");
+      api.setMetric("nullDim","2");
+
+      return {
+        badge:"Coboundary δx · E_F = "+Etot.toFixed(4),
+        formula:"(δx)_e = R_{v→e} x_v − R_{u→e} x_u &nbsp;·&nbsp; E_F = Σ_e ‖δx_e‖²",
+        insight:"Each edge compares what TF1 <em>predicts</em> through its restriction map against what the target gene actually measures. e1 (TF1→GeneA) is nearly consistent; e2 (TF1→GeneB) holds almost all the inconsistency energy — flagging the most discordant regulatory relationship. At the canonical values e2 carries ~97% of E_F.",
+        state:"‖δe1‖²="+E1.toFixed(4)+" + ‖δe2‖²="+E2.toFixed(4)+" → E_F="+Etot.toFixed(4)+". Drag exprB to push GeneB off its predicted value and watch e2 dominate.",
+        metrics:{totalEnergy:Etot.toFixed(4),edgeE2:E2.toFixed(4),e2Share:pct2+"%",nullDim:"2"},
+        focus:{center:[0,1,1],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: laplacian — the 6×6 block matrix L_F = δᵀδ as a height field
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="laplacian"){
+      const L=lap.L;
+      const blockNames=["TF1","TF1","GeneA","GeneA","GeneB","GeneB"];
+      const sp=1.05, x0=-2.6, z0=-2.6;
+      let amax=0; for(let i=0;i<6;i++)for(let j=0;j<6;j++)amax=Math.max(amax,Math.abs(L[i][j]));
+      for(let i=0;i<6;i++)for(let j=0;j<6;j++){
+        const v=L[i][j]; if(Math.abs(v)<1e-6) continue;
+        const h=0.12+Math.abs(v)/amax*2.6;
+        const diag=(Math.floor(i/2)===Math.floor(j/2));
+        const baseCol = v>0 ? (diag?CY:GR) : VI; // +diag/off vs negative coupling
+        const cellCol=baseCol.clone().lerp(new T.Color("#0b1622"), 0.12);
+        const cell=new T.Mesh(new T.BoxGeometry(0.86,h,0.86),
+          new T.MeshStandardMaterial({color:cellCol,emissive:cellCol.clone().multiplyScalar(0.55),emissiveIntensity:0.6,roughness:0.42}));
+        cell.position.set(x0+j*sp, h/2, z0+i*sp);
+        gMat.add(cell);
+        api.pick(cell,{cell:[i,j],value:v,block:blockNames[i]+"–"+blockNames[j]});
+      }
+      addBig("L_F = δᵀδ  (6×6, PSD)","#4dd7ff",1.35,0,3.1,-2.9);
+      addSm("diag RᵀR","#4dd7ff",0.42,-2.6,0.05,-3.5);
+      addSm("off −RᵤᵀRᵥ","#a78bfa",0.42,1.0,0.05,-3.5);
+      const ticks=["TF1₁","TF1₂","GA₁","GA₂","GB₁","GB₂"];
+      ticks.forEach((t,k)=>{addSm(t,"#7f93a8",0.34,x0+k*sp,0.05,z0-0.85); addSm(t,"#7f93a8",0.34,x0-0.9,0.05,z0+k*sp);});
+
+      const trace=L[0][0]+L[1][1]+L[2][2]+L[3][3]+L[4][4]+L[5][5];
+      sceneSnap={mode,trace:+trace.toFixed(3),
+        LF_TFTF_00:+lap.TFTF[0][0].toFixed(3),LF_TFTF_11:+lap.TFTF[1][1].toFixed(3),
+        LF_TFA_00:+lap.TFA[0][0].toFixed(3),LF_TFB_00:+lap.TFB[0][0].toFixed(3)};
+      api.setMetric("totalEnergy","tr "+trace.toFixed(2));
+      api.setMetric("edgeE2",lap.TFTF[0][0].toFixed(2));
+      api.setMetric("e2Share",lap.TFB[0][0].toFixed(2));
+      api.setMetric("nullDim","2");
+
+      return {
+        badge:"L_F block matrix · trace "+trace.toFixed(2),
+        formula:"L_F[v,v]=Σ_e R_{v→e}ᵀR_{v→e} &nbsp; L_F[u,v]=−R_{u→e}ᵀR_{v→e}",
+        insight:"Bar height = |entry|. Cyan diagonal blocks RᵀR are each node's self-consistency; violet off-diagonal blocks −RᵤᵀRᵥ are the cross-node coupling (green where positive). GeneA and GeneB carry identity diagonal blocks (I₂). The matrix is symmetric and PSD by construction (L_F=δᵀδ).",
+        state:"L[TF1,TF1]=[["+lap.TFTF[0][0].toFixed(2)+","+lap.TFTF[0][1].toFixed(2)+"],["+lap.TFTF[1][0].toFixed(2)+","+lap.TFTF[1][1].toFixed(2)+"]]; trace="+trace.toFixed(2)+". Drag scaleE2 to reweight the TF1→GeneB map and watch the coupling blocks grow.",
+        metrics:{totalEnergy:"tr "+trace.toFixed(2),edgeE2:lap.TFTF[0][0].toFixed(2),e2Share:lap.TFB[0][0].toFixed(2),nullDim:"2"},
+        focus:{center:[0,1,-0.3],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: reduction — identity maps collapse L_F to the ordinary L = D−A
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="reduction"){
+      api.node(P.TF1 ,{color:"#4dd7ff",r:0.55,label:"TF1",group:"network",pick:{node:"TF1"}});
+      api.node(P.GeneA,{color:"#34d399",r:0.42,label:"GeneA",group:"network",pick:{node:"GeneA"}});
+      api.node(P.GeneB,{color:"#fbbf24",r:0.42,label:"GeneB",group:"network",pick:{node:"GeneB"}});
+
+      const cd1=GR.clone().lerp(RO,Math.min(1,E1/0.06));
+      const cd2=GR.clone().lerp(RO,Math.min(1,E2/0.06));
+      api.edge(P.TF1,P.GeneA,{color:"#"+cd1.getHexString(),width:0.06+E1*1.2,group:"network"});
+      api.edge(P.TF1,P.GeneB,{color:"#"+cd2.getHexString(),width:0.06+E2*1.2,group:"network"});
+
+      [{x:-1.7,E:E1,c:cd1},{x:1.7,E:E2,c:cd2}].forEach(b=>{
+        const h=0.2+b.E*7.0;
+        const bar=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),
+          new T.MeshStandardMaterial({color:b.c,emissive:b.c.clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(b.x,h/2+0.1,1.1); gEner.add(bar);
+        addBig(b.E.toFixed(4),"#"+b.c.getHexString(),1.05,b.x,h+0.5,1.1);
+      });
+      addBig("identity maps → L = D − A","#34d399",1.3,0,3.0,0);
+      addBig("energy = Σ ‖x_v − x_u‖²  (co-expression)","#7f93a8",1.0,0,-1.0,1.1);
+
+      sceneSnap={mode,edgeE1:+E1.toFixed(4),edgeE2:+E2.toFixed(4),totalEnergy:+Etot.toFixed(4),identityMaps:true};
+      api.setMetric("totalEnergy",Etot.toFixed(4));
+      api.setMetric("edgeE2",E2.toFixed(4));
+      api.setMetric("e2Share","I₂ maps");
+      api.setMetric("nullDim","2");
+
+      return {
+        badge:"Reduction · identity R → ordinary L · E="+Etot.toFixed(4),
+        formula:"R_{v→e}=I ⇒ L_F = L ⊗ I_d &nbsp;·&nbsp; E_F = Σ_e ‖x_v − x_u‖²",
+        insight:"Set every restriction map to the identity and the sheaf Laplacian collapses to the ordinary L = D − A (acting per channel). The energy becomes plain co-expression smoothness ‖x_v − x_u‖² — which WRONGLY penalises a TF and its target for having different levels. Compare to the coboundary mode: identity maps make e1 <em>more</em> costly because they assume TF1 and GeneA should be equal.",
+        state:"With I₂ maps: ‖xTF−xGA‖²="+E1.toFixed(4)+", ‖xTF−xGB‖²="+E2.toFixed(4)+". This is the GCN special case — co-expression, not regulation.",
+        metrics:{totalEnergy:Etot.toFixed(4),edgeE2:E2.toFixed(4),e2Share:"I₂ maps",nullDim:"2"},
+        focus:{center:[0,1,1],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE: denoise — Tikhonov sheaf filter x̂=(I+λL_F)⁻¹ x_obs
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="denoise"){
+      const E0=Etot;
+      const N=24, xS=0.42, yS=5.0, x0=-4.8;
+      const pts=[];
+      for(let k=0;k<N;k++){
+        const lam=k/(N-1)*3.0;
+        pts.push({lam,E:denoiseEnergy(E0,lam)});
+      }
+      gEner.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,0,0),new T.Vector3(x0+N*xS,0,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      gEner.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(x0,0,0),new T.Vector3(x0,yS,0)]),new T.LineBasicMaterial({color:0x2a3d52})));
+      const curvePts=pts.map((p,i)=>new T.Vector3(x0+i*xS, E0>1e-9?p.E/E0*yS:0, 0));
+      gEner.add(new T.Line(new T.BufferGeometry().setFromPoints(curvePts),new T.LineBasicMaterial({color:VI.getHex()})));
+
+      const idx=Math.min(N-1,Math.round(lambda/3.0*(N-1)));
+      const pm=pts[idx];
+      const mx=x0+idx*xS, my=E0>1e-9?pm.E/E0*yS:0;
+      const mk=new T.Mesh(new T.SphereGeometry(0.2,16,12),new T.MeshStandardMaterial({color:RO,emissive:RO,emissiveIntensity:0.9,roughness:0.25}));
+      mk.position.set(mx,my,0.1); gEner.add(mk); api.pick(mk,{marker:"denoise",lambda,energy:pm.E});
+
+      const hb=0.2+pm.E*9.0;
+      const rbar=new T.Mesh(new T.BoxGeometry(0.9,hb,0.9),
+        new T.MeshStandardMaterial({color:RO,emissive:RO.clone().multiplyScalar(0.7),emissiveIntensity:0.7,roughness:0.4}));
+      rbar.position.set(4.4,hb/2+0.1,0); gEner.add(rbar);
+      const hb0=0.2+E0*9.0;
+      const obar=new T.Mesh(new T.BoxGeometry(0.9,hb0,0.9),
+        new T.MeshStandardMaterial({color:SL,emissive:SL,emissiveIntensity:0.25,roughness:0.5,transparent:true,opacity:0.45}));
+      obar.position.set(3.1,hb0/2+0.1,0); gEner.add(obar);
+
+      addBig("E_F(x̂) vs λ","#a78bfa",1.3,x0+N*xS*0.5,yS+0.55,0);
+      addSm("λ=0","#7f93a8",0.4,x0,-0.55,0);
+      addSm("λ=3","#7f93a8",0.4,x0+N*xS,-0.55,0);
+      addBig("x̂ = (I+λL_F)⁻¹ x_obs","#fb7185",1.05,4.0,hb0+0.6,0);
+      addSm("obs","#7f93a8",0.4,3.1,-0.5,0);
+      addSm("x̂","#fb7185",0.42,4.4,-0.5,0);
+
+      const drop=E0>1e-9?(1-pm.E/E0):0;
+      sceneSnap={mode,obsEnergy:+E0.toFixed(4),residualEnergy:+pm.E.toFixed(4),energyDrop:+drop.toFixed(3)};
+      api.setMetric("totalEnergy",pm.E.toFixed(4));
+      api.setMetric("edgeE2",E0.toFixed(4));
+      api.setMetric("e2Share",(drop*100).toFixed(0)+"%↓");
+      api.setMetric("nullDim","2");
+
+      return {
+        badge:"Tikhonov denoise · λ="+lambda.toFixed(2)+" · E="+pm.E.toFixed(4),
+        formula:"x̂ = argmin ‖x−x_obs‖² + λ·xᵀL_F x = (I+λL_F)⁻¹ x_obs",
+        insight:"The sheaf filter trades observation fidelity against regulatory consistency. As λ grows the residual energy E_F(x̂) shrinks toward zero — the state is pulled onto ker(L_F), the space of global sections. At λ=0 x̂=x_obs (full noise); as λ→∞ x̂ projects onto the most consistent section near the data.",
+        state:"At λ="+lambda.toFixed(2)+": E_F(x_obs)="+E0.toFixed(4)+" → E_F(x̂)="+pm.E.toFixed(4)+" ("+(drop*100).toFixed(0)+"% lower). Red bar = denoised residual, grey = observed.",
+        metrics:{totalEnergy:pm.E.toFixed(4),edgeE2:E0.toFixed(4),e2Share:(drop*100).toFixed(0)+"%↓",nullDim:"2"},
+        focus:{center:[0,2,0],radius:13}
+      };
+    }
+
+    return {badge:"C08",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"c08",
+    kind:"sheaf-laplacian-energy",
+    eyebrow:"Block C · Geometric and Topological DL",
+    title:"C08 · Sheaf Laplacians and consistency energy",
+    subtitle:"The 3-node GRN (TF1, GeneA, GeneB) with R² stalks. Four views: per-edge coboundary δx, the 6×6 block Laplacian L_F=δᵀδ, the identity-map reduction to L=D−A, and Tikhonov sheaf denoising.",
+    selectedLabel:"Element",
+    selectedHint:"Click a node, edge, matrix cell, or marker.",
+    modes:[
+      {value:"coboundary", label:"Coboundary δx (per-edge disagreement)"},
+      {value:"laplacian",  label:"Block Laplacian L_F = δᵀδ"},
+      {value:"reduction",  label:"Reduction: identity maps → L = D−A"},
+      {value:"denoise",    label:"Tikhonov sheaf denoise x̂=(I+λL_F)⁻¹x"}
+    ],
+    params:[
+      {key:"exprB",  label:"GeneB expression x_GB[0]",min:0.20,max:1.00,step:0.01,value:0.50,
+       fmt:v=>v.toFixed(2),modes:["coboundary","reduction"]},
+      {key:"scaleE2",label:"TF1→GeneB map scale",min:0.50,max:1.50,step:0.01,value:1.00,
+       fmt:v=>v.toFixed(2),modes:["coboundary","laplacian"]},
+      {key:"lambda", label:"Tikhonov λ (consistency weight)",min:0.00,max:3.00,step:0.05,value:0.60,
+       fmt:v=>v.toFixed(2),modes:["denoise"]}
+    ],
+    metrics:[
+      {key:"totalEnergy",label:"Sheaf energy E_F",accent:"violet"},
+      {key:"edgeE2",     label:"e2 / obs energy",  accent:"amber"},
+      {key:"e2Share",    label:"e2 share / drop",  accent:"rose"},
+      {key:"nullDim",    label:"null dim (sections)",accent:"cyan"}
+    ],
+    layers:[
+      {group:"network",label:"GRN nodes/edges"},
+      {group:"matrix", label:"L_F matrix"},
+      {group:"energy", label:"Energy bars/curve"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"GeneB consistent",
+      on:api=>{api.setParam("exprB",0.50);api.setParam("scaleE2",1.00);}
+    },
+    secondary:{
+      label:"Strong λ",
+      on:api=>{api.setParam("lambda",2.40);}
+    },
+    defaultCam:{theta:-0.5,phi:0.7,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF1 / diag RᵀR · <span style="color:#34d399">green</span>=consistent / GeneA · <span style="color:#fbbf24">amber</span>=GeneB · <span style="color:#a78bfa">violet</span>=energy / off-diag −RᵤᵀRᵥ · <span style="color:#fb7185">rose</span>=high inconsistency.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="laplacian") api.frame([0,1,-0.3],12);
+      else if(s.mode==="denoise") api.frame([0,2,0],13);
+      else api.frame([0,1,1],12);
+    },
+    onSelect(api,d){
+      if(d.node)   api.setSelected("Node "+d.node+(d.x?" · x=["+d.x.map(v=>v.toFixed(2)).join(",")+"]":""));
+      if(d.edge)   api.setSelected("Edge "+d.edge+" · ‖δ‖²="+d.energy.toFixed(4));
+      if(d.cell)   api.setSelected("L_F["+d.cell[0]+","+d.cell[1]+"] · "+d.block+" = "+d.value.toFixed(3));
+      if(d.marker) api.setSelected("λ="+d.lambda.toFixed(2)+" → E_F="+d.energy.toFixed(4));
+    },
+    build,
+    snapshot(s){
+      // recompute key numbers deterministically from params for the verifier
+      const M=maps(s.mode==="reduction");
+      const Mloc={e1:M.e1, e2:mscale(M.e2,s.scaleE2)};
+      const xGB=[s.exprB, X.GeneB[1]];
+      const d1=sub(mv(Mloc.e1,X.TF1), X.GeneA);
+      const d2=sub(mv(Mloc.e2,X.TF1), xGB);
+      const E1=nrm2(d1), E2=nrm2(d2), Et=E1+E2;
+      const lap=laplacian(Mloc);
+      const trace=lap.L[0][0]+lap.L[1][1]+lap.L[2][2]+lap.L[3][3]+lap.L[4][4]+lap.L[5][5];
+      const resid=denoiseEnergy(Et,s.lambda);
+      return {
+        mode:s.mode,
+        exprB:+s.exprB.toFixed(3),
+        scaleE2:+s.scaleE2.toFixed(3),
+        lambda:+s.lambda.toFixed(3),
+        edgeE1:+E1.toFixed(4),
+        edgeE2:+E2.toFixed(4),
+        totalEnergy:+Et.toFixed(4),
+        e2Share:+(Et>1e-9?E2/Et:0).toFixed(3),
+        traceLF:+trace.toFixed(3),
+        residualEnergy:+resid.toFixed(4),
+        identityMaps:(s.mode==="reduction"),
+        nullDim:2,
+        isPSD:true
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

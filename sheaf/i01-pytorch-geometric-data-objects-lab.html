@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I01 · PyTorch Geometric data objects</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no RNG, no clock) ────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── DREAM4 10-gene Ecoli1 worked example (note §4 / §5) ───────────────────
+  const GENES=["lexA","recA","ssB","uvrA","uvrB","uvrC","uvrD","polA","dinB","ruvA"];
+  const SRC=[0,0,1,1,2,2,3,4,4,5,6,7,8,9];   // edge_index[0]
+  const DST=[1,5,2,7,3,8,4,5,9,6,7,8,9,0];   // edge_index[1]
+  const N=10, E=14;
+  // node label y: 1 = TF (regulator), 0 = target. (note §5)
+  const Y=[1,1,0,1,1,1,1,0,0,0];             // 6 TFs
+  const N_TF=Y.reduce((a,b)=>a+b,0);         // 6
+  // edge_attr column 0 = DoRothEA confidence in [0.5,1.0] (deterministic) (note §5)
+  const CONF=[];
+  for(let k=0;k<E;k++){ CONF.push(+(0.5+0.5*prand(k*9+5)).toFixed(2)); }
+  const D_X=100;   // expression conditions (note §5: n_conditions=100)
+  const D_E=3;     // [confidence, motif_score, ChIP_evidence]
+
+  // circular layout of the 10 genes on a ring
+  function genePos(i,R,xshift){
+    const ang=-Math.PI/2 + i/N*Math.PI*2;
+    return [Math.cos(ang)*R + (xshift||0), Math.sin(ang)*R*0.62, 0];
+  }
+
+  let sceneSnap={};
+
+  // ── build ─────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const thr=+s.confThr;                       // confidence threshold 0.50..1.00
+    const buggy=Math.round(s.maskMode)===1;     // 0=correct mask, 1=buggy (edge_index only)
+    const G=Math.round(s.nGraphs);              // graphs in the mini-batch (1..4)
+    const eSel=Math.round(s.edgeK);             // highlighted edge column k (0..13)
+
+    const gNodes =api.group("nodes");
+    const gEdges =api.group("edges");
+    const gAttr  =api.group("attr");
+    const gLabels=api.group("labels");
+
+    const CY="#4dd7ff", GR="#34d399", AM="#fbbf24", VI="#a78bfa", SL="#54667c", RO="#fb7185";
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // keep edge selector in valid range
+    const kSel=Math.max(0,Math.min(E-1,eSel));
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: coo — the Data object as three aligned tensors
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="coo"){
+      const R=3.6;
+      // genes as nodes (cyan = TF, slate = target)
+      const pos=[];
+      for(let i=0;i<N;i++){
+        const p=genePos(i,R,0); pos.push(p);
+        const isTF=Y[i]===1;
+        api.node(p,{color:isTF?CY:SL, r:isTF?0.34:0.27, group:"nodes",
+          pick:{gene:{id:i,name:GENES[i],tf:isTF}}});
+        slbl(GENES[i], isTF?CY:"#9fb0c4", 0.30, p[0], p[1]+0.55, 0);
+        slbl("y="+Y[i], isTF?"#bfe9ff":"#6f7f93", 0.22, p[0], p[1]-0.52, 0);
+      }
+      // directed edges TF→target, column k highlighted
+      for(let k=0;k<E;k++){
+        const a=pos[SRC[k]], b=pos[DST[k]];
+        const hot=(k===kSel);
+        api.arrow(a,b,{color:hot?AM:"#2c4a63", width:hot?0.05:0.03, head:hot?0.26:0.18, group:"edges"});
+      }
+      // edge_attr column: draw E little bars to the right = aligned rows of edge_attr
+      const bx=5.4, bTop=3.0, bStep=0.42;
+      lbl("edge_attr [E,3]", VI, 1.05, bx+0.2, bTop+0.55, 0);
+      for(let k=0;k<E;k++){
+        const yy=bTop - k*bStep;
+        const hot=(k===kSel);
+        const w=0.20+CONF[k]*1.4;
+        const bar=new T.Mesh(new T.BoxGeometry(w,0.26,0.18),
+          api.mat(hot?AM:VI,{emissive:hot?0.7:0.3}));
+        bar.position.set(bx + w/2, yy, 0);
+        gAttr.add(bar);
+        api.pick(bar,{erow:{k:k,conf:CONF[k]}});
+      }
+      // alignment tie-line: edge k <-> edge_attr row k
+      {
+        const a=pos[SRC[kSel]], b=pos[DST[kSel]];
+        const mid=[(a[0]+b[0])/2,(a[1]+b[1])/2,0.05];
+        const rowY=bTop - kSel*bStep;
+        api.edge(mid,[bx-0.1,rowY,0.05],{color:GR,width:0.03,dashed:true,group:"attr"});
+        lbl("column k = "+kSel, GR, 1.0, mid[0], mid[1]+0.7, 0.1);
+      }
+      lbl("edge_index [2,"+E+"]  ·  x [N,d_x]", CY, 1.15, -1.2, -3.4, 0);
+      slbl("TF (y=1)", CY, 0.30, -5.2, 3.0, 0);
+      slbl("target (y=0)", "#9fb0c4", 0.30, -5.2, 2.55, 0);
+
+      sceneSnap={mode,numNodes:N,numEdges:E,numTF:N_TF,dimX:D_X,dimE:D_E,
+        selCol:kSel,selSrc:SRC[kSel],selDst:DST[kSel],aligned:1};
+
+      return {
+        badge:"Data object · N="+N+" genes · E="+E+" edges · "+N_TF+" TFs",
+        formula:"data = Data(x=[N,d_x], edge_index=[2,E], edge_attr=[E,d_e], y=[N])",
+        insight:"The PyG Data object is three aligned tensors. Column k of edge_index (a TF→target arrow) is bound to row k of edge_attr (a violet confidence bar). Drag <b>edge k</b> to trace the alignment: the green dashed tie always links the same column number in both tensors. This synchronisation IS the data object.",
+        state:"Edge k="+kSel+":  "+GENES[SRC[kSel]]+" → "+GENES[DST[kSel]]+"   ·   edge_attr["+kSel+"][0] = conf "+CONF[kSel].toFixed(2)+"   ·   x shape [10,100], edge_index [2,14], y [10].",
+        metrics:{numEdges:""+E, numTF:N_TF+" / "+N, threshold:"—", batchNodes:""+N},
+        focus:{center:[0.6,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: align — the alignment bug: filter edge_index without edge_attr
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="align"){
+      const R=3.4;
+      const pos=[];
+      for(let i=0;i<N;i++){ const p=genePos(i,R,-0.6); pos.push(p);
+        api.node(p,{color:Y[i]?CY:SL, r:0.24, halo:false, group:"nodes"});
+        slbl(GENES[i], "#8497ab", 0.24, p[0], p[1]+0.45, 0);
+      }
+      // mask = conf >= thr  (kept edges, in original column order)
+      const keep=[];
+      for(let k=0;k<E;k++){ if(CONF[k]>=thr) keep.push(k); }
+      const Ek=keep.length;
+
+      // Draw kept edges. After filtering edge_index, new column j is the j-th kept edge,
+      // whose ORIGINAL column is keep[j]. Message passing for new column j reads
+      //   edge_attr row j      if BUGGY  (edge_attr left unfiltered, rows just slide up), OR
+      //   edge_attr row keep[j] if CORRECT (same mask applied to edge_attr).
+      // The bug is when the row actually read (origK of that row) != keep[j].
+      let wrongCount=0;
+      keep.forEach((k,j)=>{
+        const a=pos[SRC[k]], b=pos[DST[k]];
+        // origK of the edge_attr row consumed by new column j:
+        const rowReadOrigK = buggy ? j : keep[j];   // buggy reads row j -> its origK is j
+        const wrong = (rowReadOrigK!==k);
+        if(wrong) wrongCount++;
+        const c = wrong ? RO : GR;
+        api.arrow(a,b,{color:c, width:wrong?0.055:0.035, head:0.22, group:"edges"});
+      });
+
+      // right: two stacked tensor columns — new edge_index and edge_attr
+      const colX1=4.4, colX2=6.4, top=3.0, step=0.40;
+      lbl("new edge_index", CY, 0.95, colX1, top+0.5, 0);
+      lbl(buggy?"edge_attr (UNfiltered)":"edge_attr (filtered)", buggy?RO:GR, 0.95, colX2+0.4, top+0.5, 0);
+
+      // filtered edge_index has Ek rows (new columns 0..Ek-1)
+      keep.forEach((k,j)=>{
+        const y1=top - j*step;
+        const eiBar=new T.Mesh(new T.BoxGeometry(0.9,0.24,0.16), api.mat(CY,{emissive:0.35}));
+        eiBar.position.set(colX1,y1,0); gAttr.add(eiBar);
+        api.pick(eiBar,{ei:{newCol:j,origK:k,src:GENES[SRC[k]],dst:GENES[DST[k]]}});
+      });
+      // edge_attr: buggy keeps all E rows; correct keeps Ek rows
+      const attrRows = buggy ? E : Ek;
+      const attrScale = buggy ? (Ek/E) : 1;   // squeeze E rows into same height span
+      for(let r=0;r<attrRows;r++){
+        const y2=top - r*step*attrScale;
+        const origK = buggy ? r : keep[r];    // which original edge this attr row belongs to
+        const consumed = r<Ek;                // only first Ek rows are read by new columns
+        const rowReadOrigK = origK;
+        const mis = consumed && (rowReadOrigK!==keep[r]);
+        const c = !consumed ? SL : (mis? RO : GR);
+        const w=0.18+CONF[Math.min(origK,E-1)]*1.0;
+        const ab=new T.Mesh(new T.BoxGeometry(w,0.20,0.16), api.mat(c,{emissive:mis?0.7:0.3}));
+        ab.position.set(colX2 + w/2, y2, 0); gAttr.add(ab);
+      }
+      // tie lines: new column j -> edge_attr row consumed
+      keep.forEach((k,j)=>{
+        const y1=top - j*step;
+        const rowIdx = j;                       // new column j reads row j of (filtered or not) edge_attr
+        const y2=top - rowIdx*step*attrScale;
+        const rowReadOrigK = buggy ? j : keep[j];
+        const wrong = (rowReadOrigK!==k);
+        api.edge([colX1+0.5,y1,0.05],[colX2-0.1,y2,0.05],
+          {color:wrong?RO:GR, width:0.025, dashed:true, group:"attr"});
+      });
+
+      lbl(buggy?"SILENT BUG: rows shifted":"aligned: same mask on both", buggy?RO:GR, 1.1, 5.5, top+1.3, 0);
+      lbl("threshold conf ≥ "+thr.toFixed(2)+"   →   keep "+Ek+" / "+E+" edges", AM, 1.05, -0.6, -3.5, 0);
+
+      sceneSnap={mode,threshold:+thr.toFixed(2),keptEdges:Ek,droppedEdges:E-Ek,
+        buggy:buggy?1:0, misalignedEdges:buggy?wrongCount:0, aligned:(buggy&&wrongCount>0)?0:1};
+
+      return {
+        badge:(buggy?"BUGGY mask · ":"correct mask · ")+"keep "+Ek+"/"+E+" edges",
+        formula: buggy
+          ? "edge_index = edge_index[:,mask]   ·   edge_attr UNCHANGED   ✗"
+          : "edge_index = edge_index[:,mask]   ·   edge_attr = edge_attr[mask]   ✓",
+        insight: buggy
+          ? "The bug: <b>only</b> edge_index is filtered. edge_attr keeps all "+E+" rows, so new column j reads edge_attr row j — the wrong confidence for every shifted edge (red). No error is raised; message passing runs on scrambled features. "+wrongCount+" of "+Ek+" kept edges now read the wrong row."
+          : "Correct: the <b>same</b> boolean mask filters both tensors. New column j reads edge_attr row keep[j], so every kept edge (green) still carries its own confidence. Alignment is preserved by construction.",
+        state: buggy
+          ? "Misaligned edges: "+wrongCount+" / "+Ek+". edge_attr has "+E+" rows but edge_index has "+Ek+" columns → shape mismatch hidden until results silently degrade."
+          : "All "+Ek+" kept edges aligned. edge_index [2,"+Ek+"] and edge_attr ["+Ek+",3] agree column-for-row.",
+        metrics:{numEdges:Ek+" / "+E, numTF:N_TF+" / "+N, threshold:thr.toFixed(2), batchNodes:""+N},
+        focus:{center:[1.2,0,0],radius:13.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MODE: batch — DataLoader concatenates graphs and offsets node indices
+    // ════════════════════════════════════════════════════════════════════════
+    if(mode==="batch"){
+      const R=1.7, spanX=3.5;
+      const cols=[CY,GR,AM,VI];
+      const x0=-(G-1)*spanX/2;
+      for(let g=0;g<G;g++){
+        const cx=x0+g*spanX;
+        const off=g*N;                         // node-index offset for graph g
+        const pos=[];
+        for(let i=0;i<N;i++){
+          const ang=-Math.PI/2 + i/N*Math.PI*2;
+          const p=[cx+Math.cos(ang)*R, Math.sin(ang)*R, 0]; pos.push(p);
+          const c=cols[g%4];
+          api.node(p,{color:c, r:0.16, halo:false, group:"nodes",
+            pick:{bn:{graph:g, local:i, global:off+i, name:GENES[i]}}});
+        }
+        for(let k=0;k<E;k++){
+          api.arrow(pos[SRC[k]],pos[DST[k]],{color:"#2c4a63",width:0.022,head:0.12,group:"edges"});
+        }
+        lbl("graph "+g, cols[g%4], 1.05, cx, R+0.9, 0);
+        slbl("nodes "+off+"–"+(off+N-1), "#9fb0c4", 0.26, cx, -R-0.7, 0);
+        // batch vector chip
+        const chip=new T.Mesh(new T.BoxGeometry(0.9,0.34,0.16), api.mat(cols[g%4],{emissive:0.5}));
+        chip.position.set(cx,-R-1.5,0); gAttr.add(chip);
+        slbl("batch="+g, "#0b1118", 0.26, cx, -R-1.5, 0.12);
+      }
+      const totN=G*N, totE=G*E, maxIdx=G*N-1;
+      lbl("Batch.from_data_list:  node idx offset by N="+N+" per graph", CY, 1.05, 0, R+2.0, 0);
+      lbl("batch.x [" +totN+ ", "+D_X+"]   ·   batch.edge_index [2, "+totE+"]   ·   batch.batch ["+totN+"]",
+        AM, 1.0, 0, -R-2.4, 0);
+
+      sceneSnap={mode,numGraphs:G,batchNodes:totN,batchEdges:totE,maxNodeIndex:maxIdx,offsetPerGraph:N};
+
+      return {
+        badge:"DataLoader · "+G+" graphs · "+totN+" nodes · "+totE+" edges",
+        formula:"batch.edge_index.max() = G·N − 1 = "+G+"·"+N+" − 1 = "+maxIdx,
+        insight:"DataLoader concatenates the "+G+" Data objects into one giant disconnected graph. Graph g's node indices are offset by g·N so they never collide: graph 0 → 0–9, graph 1 → 10–19, and so on. The <b>batch</b> vector (coloured chips) records which graph each node belongs to. Never offset edge_index yourself — Batch.from_data_list does it.",
+        state:"batch.x = ["+totN+", "+D_X+"], edge_index = [2, "+totE+"], batch = ["+totN+"]. Max node index = "+maxIdx+" = "+G+"·"+N+"−1. Each graph keeps its 14 internal edges; no edges cross graphs.",
+        metrics:{numEdges:""+totE, numTF:(N_TF*G)+" / "+totN, threshold:"—", batchNodes:""+totN},
+        focus:{center:[0,0,0],radius:Math.max(11, 4.0+G*2.4)}
+      };
+    }
+
+    return {badge:"I01",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ──────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"i01",
+    kind:"pyg-data-objects",
+    eyebrow:"Block I · Implementation",
+    title:"I01 · PyTorch Geometric data objects",
+    subtitle:"The Data object is three aligned tensors. Build a DREAM4 10-gene GRN, watch column k of edge_index stay bound to row k of edge_attr, and see how a one-sided filter silently scrambles it.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, an arrow, or an edge_attr row.",
+    insightLabel:"What to watch",
+    modes:[
+      {value:"coo",   label:"Data object (x · edge_index · edge_attr · y)"},
+      {value:"align", label:"Alignment bug (filter mask)"},
+      {value:"batch", label:"Mini-batching (DataLoader offsets)"}
+    ],
+    params:[
+      {key:"edgeK",   label:"edge column k", min:0, max:13, step:1, value:0,
+        fmt:v=>"k="+Math.round(v), modes:["coo"]},
+      {key:"confThr", label:"confidence threshold", min:0.50, max:1.00, step:0.01, value:0.80,
+        fmt:v=>(+v).toFixed(2), modes:["align"]},
+      {key:"maskMode",label:"mask (0=correct 1=buggy)", min:0, max:1, step:1, value:1,
+        fmt:v=>Math.round(v)===0?"correct":"buggy", modes:["align"]},
+      {key:"nGraphs", label:"# graphs in batch", min:1, max:4, step:1, value:3,
+        fmt:v=>Math.round(v).toString(), modes:["batch"]}
+    ],
+    metrics:[
+      {key:"numEdges",  label:"edges (E)",        accent:"amber"},
+      {key:"numTF",     label:"TF nodes (y=1)",   accent:"cyan"},
+      {key:"threshold", label:"conf threshold",   accent:"green"},
+      {key:"batchNodes",label:"batch nodes",      accent:"violet"}
+    ],
+    layers:[
+      {group:"nodes",  label:"Genes / nodes"},
+      {group:"edges",  label:"edge_index arrows"},
+      {group:"attr",   label:"edge_attr / batch"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Show the bug",
+      on:api=>{ api.setMode("align"); api.setParam("maskMode",1); api.setParam("confThr",0.80); }
+    },
+    secondary:{
+      label:"Fix alignment",
+      on:api=>{ api.setMode("align"); api.setParam("maskMode",0); }
+    },
+    defaultCam:{theta:-0.32,phi:0.66,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=TF (y=1) · slate=target (y=0) · <span style="color:#a78bfa">violet</span>=edge_attr row · <span style="color:#34d399">green</span>=aligned · <span style="color:#fb7185">red</span>=misaligned (silent bug) · <span style="color:#fbbf24">amber</span>=selected edge k.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="batch") api.frame([0,0,0],Math.max(11,4.0+Math.round(s.nGraphs)*2.4));
+      else if(s.mode==="align") api.frame([1.2,0,0],13.5);
+      else api.frame([0.6,0,0],13);
+    },
+    onMode(api){
+      const s=api.state;
+      if(s.mode==="batch") api.frame([0,0,0],Math.max(11,4.0+Math.round(s.nGraphs)*2.4));
+      else if(s.mode==="align") api.frame([1.2,0,0],13.5);
+      else api.frame([0.6,0,0],13);
+    },
+    onSelect(api,d){
+      if(d.gene) api.setSelected("Gene "+d.gene.id+" · "+d.gene.name+" · "+(d.gene.tf?"TF (y=1)":"target (y=0)"));
+      if(d.erow) api.setSelected("edge_attr["+d.erow.k+"][0] = confidence "+d.erow.conf.toFixed(2));
+      if(d.ei)   api.setSelected("new col "+d.ei.newCol+" ← orig edge "+d.ei.origK+" · "+d.ei.src+"→"+d.ei.dst);
+      if(d.bn)   api.setSelected(d.bn.name+" · graph "+d.bn.graph+" · local "+d.bn.local+" → global "+d.bn.global);
+    },
+    build,
+    snapshot(s){
+      const thr=+(+s.confThr).toFixed(2);
+      let kept=0; for(let k=0;k<E;k++){ if(CONF[k]>=thr) kept++; }
+      const buggy=Math.round(s.maskMode)===1;
+      const G=Math.round(s.nGraphs);
+      const kSel=Math.max(0,Math.min(E-1,Math.round(s.edgeK)));
+      return {
+        mode:s.mode,
+        numNodes:N,
+        numEdges:E,
+        numTF:N_TF,
+        dimX:D_X,
+        dimEdge:D_E,
+        selCol:kSel,
+        selSrc:SRC[kSel],
+        selDst:DST[kSel],
+        threshold:thr,
+        keptEdges:kept,
+        droppedEdges:E-kept,
+        buggy:buggy?1:0,
+        numGraphs:G,
+        batchNodes:G*N,
+        batchEdges:G*E,
+        maxNodeIndex:G*N-1,
+        alignmentPreserved:(s.mode==="align" && buggy && kept<E)?false:true
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

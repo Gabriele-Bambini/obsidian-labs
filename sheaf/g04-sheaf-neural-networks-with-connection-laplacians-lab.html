@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>G04 · Sheaf neural networks with connection Laplacians</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (note jitter only) ───────────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── note Section-5 worked example (single source of truth) ───────────────
+  // Four-cell 2×2 grid, 2D stalk = (mRNA TF activity, ATAC TF binding).
+  const X={
+    C1:[ 2.0, 1.8],   // high RNA, high ATAC — strongly active TF
+    C2:[ 1.9,-0.5],   // high RNA, low ATAC — RNA-dominant
+    C3:[-0.3, 2.1],   // low RNA, high ATAC — poised / accessible
+    C4:[-1.5,-1.6]    // both low — inactive
+  };
+  const KEYS=["C1","C2","C3","C4"];
+  // 2×2 grid layout positions (x,z plane); y carries feature dim 1 for some views
+  const POS={ C1:[-2.4,0, 2.4], C2:[ 2.4,0, 2.4], C3:[-2.4,0,-2.4], C4:[ 2.4,0,-2.4] };
+  // note's learned angle on edge C1–C2 = -π/4
+  const THETA_NOTE=-45;           // degrees
+  const ENERGY_NOTE=0.748;        // ‖O·x_C1 − x_C2‖² at θ=-45°
+  const ENERGY_OI=5.30;           // ‖x_C1 − x_C2‖² at O=I
+  // Review-Q4 cycle angles (non-flat example): 30+45+60+30 = 165°
+  const CYCLE_NONFLAT=[30,45,60,30];
+
+  let sceneSnap={};
+
+  // ── rotation of a 2D vector by deg ───────────────────────────────────────
+  function rot2(v,deg){const r=deg*Math.PI/180,c=Math.cos(r),s=Math.sin(r);
+    return [c*v[0]-s*v[1], s*v[0]+c*v[1]];}
+  const sub2=(a,b)=>[a[0]-b[0],a[1]-b[1]];
+  const norm2sq=a=>a[0]*a[0]+a[1]*a[1];
+  // connection energy on edge C1–C2 for a given rotation angle (O_C2 = I reference)
+  function edgeEnergy(deg){ return norm2sq(sub2(rot2(X.C1,deg), X.C2)); }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state, mode=s.mode;
+    const theta=s.theta;                     // rotation angle on C1–C2 (deg)
+    const dim=Math.round(s.dim);             // stalk dimension 1 or 2
+    const closeAng=s.closeAng;               // closing-edge angle for holonomy cycle (deg)
+    const noiseAmp=s.noise;                  // feature jitter for the scatter cloud
+
+    const gNodes =api.group("nodes");
+    const gEdges =api.group("edges");
+    const gFrames=api.group("frames");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    const CY=api.col("cyan"), GR=api.col("green"), AM=api.col("amber"),
+          VI=api.col("violet"), RO=api.col("rose"), SL="#54667c";
+
+    function lbl(txt,c,sz,x,y,z){const sp=api.bigLabel(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function slbl(txt,c,sz,x,y,z){const sp=api.label(txt,c,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    // draw a small 2D coordinate frame (two arrows = stalk basis) at world (px,pz)
+    function drawFrame(px,pz,deg,colA,colB,scale){
+      const e1=rot2([1,0],deg), e2=rot2([0,1],deg);
+      const o=new T.Vector3(px,0.05,pz);
+      api.arrow([px,0.05,pz],[px+e1[0]*scale,0.05,pz+e1[1]*scale],{color:colA,head:0.16,width:0.03,group:"frames"});
+      api.arrow([px,0.05,pz],[px+e2[0]*scale,0.05,pz+e2[1]*scale],{color:colB,head:0.16,width:0.03,group:"frames"});
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1 · rotate — the C1–C2 worked example, energy vs angle
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="rotate"){
+      // four stalk nodes on the 2×2 grid
+      KEYS.forEach((k,i)=>{
+        const p=POS[k];
+        const active=(k==="C1"||k==="C2");
+        const col=active?CY:SL;
+        const n=api.node([p[0],p[1],p[2]],{r:active?0.34:0.26,color:col,label:k,group:"nodes",
+          pick:{node:k,x:X[k]}});
+      });
+      // grid edges (faint)
+      api.edge(POS.C1,POS.C2,{color:"#3a5170",width:0.05,group:"edges"});
+      api.edge(POS.C1,POS.C3,{color:"#243646",width:0.04,group:"edges"});
+      api.edge(POS.C2,POS.C4,{color:"#243646",width:0.04,group:"edges"});
+      api.edge(POS.C3,POS.C4,{color:"#243646",width:0.04,group:"edges"});
+
+      // the active edge C1–C2: thick, colored by energy (low=green, high=rose)
+      const E=edgeEnergy(theta);
+      const t=Math.min(1,E/ENERGY_OI);                       // 0 = aligned, 1 = baseline mismatch
+      const eCol=api.ramp(t,GR,RO);
+      api.edge(POS.C1,POS.C2,{color:"#"+eCol.getHexString(),width:0.12,group:"edges"});
+      lbl("O_{C1,e} · θ = "+theta.toFixed(0)+"°","#4dd7ff",1.25,0,1.0,2.4);
+
+      // local coordinate frames: C2 reference (θ=0), C1 rotated by θ
+      drawFrame(POS.C2[0],POS.C2[2],0,GR,AM,0.9);
+      drawFrame(POS.C1[0],POS.C1[2],theta,CY,VI,0.9);
+      slbl("frame O = I","#34d399",0.42,POS.C2[0],0.0,POS.C2[2]-0.9);
+      slbl("rotated frame","#4dd7ff",0.42,POS.C1[0],0.0,POS.C1[2]-0.9);
+
+      // energy bars: current θ vs O=I baseline vs note optimum (-45°)
+      const Enote=ENERGY_NOTE, Ebase=ENERGY_OI;
+      const bars=[
+        {h:E,    c:eCol.getStyle(), lab:"θ="+theta.toFixed(0)+"°", x:-2.2},
+        {h:Enote,c:"#34d399",       lab:"-45° (learned)", x:0},
+        {h:Ebase,c:"#ff6d8b",       lab:"O=I", x:2.2}
+      ];
+      const yScale=0.62;
+      bars.forEach(b=>{
+        const hh=0.12+b.h*yScale;
+        const bar=new T.Mesh(new T.BoxGeometry(1.3,hh,1.0),
+          new T.MeshStandardMaterial({color:new T.Color(b.c),emissive:new T.Color(b.c).multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+        bar.position.set(b.x,hh/2,-5.6);
+        gBars.add(bar);
+        api.pick(bar,{energy:b.h,label:b.lab});
+        lbl(b.h.toFixed(3),b.c,1.25,b.x,hh+0.5,-5.6);
+        slbl(b.lab,b.c,0.36,b.x,0.05,-5.6);
+      });
+      lbl("‖O·x_C1 − x_C2‖²","#8a99ad",1.05,0,0.1,-7.0);
+
+      const reduction=Ebase>0?(1-E/Ebase):0;
+      sceneSnap={mode,theta:+theta.toFixed(1),dim:2,edgeEnergy:+E.toFixed(3),
+        baselineEnergy:+Ebase.toFixed(3),energyReduction:+reduction.toFixed(3),holonomyDeg:null};
+
+      return {
+        badge:"Rotate · θ = "+theta.toFixed(0)+"° · E = "+E.toFixed(3),
+        formula:"E_O(e) = ‖O_{C1,e}·x_{C1} − x_{C2}‖²&nbsp;&nbsp;|&nbsp;&nbsp;O = [[cosθ,−sinθ],[sinθ,cosθ]]",
+        insight:"C1=(RNA 2.0, ATAC 1.8) and C2=(RNA 1.9, ATAC −0.5) disagree by 5.30 when frames are identical (O=I). The learned −45° rotation re-orients C1's modality frame onto C2's, dropping the edge energy to 0.748 — the ATAC signal at the boundary is 'rotated out' relative to RNA. Sweep θ to find the alignment.",
+        state:"θ="+theta.toFixed(0)+"° → E="+E.toFixed(3)+" ("+(reduction*100).toFixed(0)+"% below the O=I baseline of "+Ebase.toFixed(2)+"). Orthogonal O preserves ‖x‖; only the frame turns.",
+        metrics:{
+          edgeEnergy:E.toFixed(3),
+          baselineEnergy:Ebase.toFixed(2),
+          energyReduction:(reduction*100).toFixed(0)+"%",
+          holonomy:"—"
+        },
+        focus:{center:[0,0.5,-1.6],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2 · compare — general NSD (R) vs connection Laplacian (O)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="compare"){
+      // two stacks: left = general R (4 params, E→0, unbounded spectrum)
+      //             right = connection O (1 param, E≥0.748, spectrum ⊂ [0,2])
+      const paramsR = dim===1 ? 1 : (dim*dim);          // entries of d×d matrix
+      const paramsO = dim===1 ? 1 : Math.round(dim*(dim-1)/2); // skew dof = angles
+      const E_R = 0.0;                                  // general R can reach 0 energy
+      const E_O = ENERGY_NOTE;                          // connection floor at this edge
+      const specR = "[0, λmax]";
+      const specO = "[0, 2]";
+
+      // node pair C1, C2 with frames, centered
+      api.node([-3.4,0,2.0],{r:0.34,color:CY,label:"x_C1",group:"nodes",pick:{node:"C1",x:X.C1}});
+      api.node([ 3.4,0,2.0],{r:0.34,color:GR,label:"x_C2",group:"nodes",pick:{node:"C2",x:X.C2}});
+
+      // LEFT pillar: general R — green, can stretch (show wide ellipse frame)
+      drawFrame(-3.4,2.0,theta,GR,AM,1.3);    // R can scale → larger frame
+      lbl("general R  (NSD)","#34d399",1.25,-3.4,1.3,2.0);
+      // RIGHT pillar: orthogonal O — cyan, isometric (unit frame)
+      drawFrame(3.4,2.0,theta,CY,VI,0.9);
+      lbl("orthogonal O  (conn.)","#4dd7ff",1.25,3.4,1.3,2.0);
+
+      api.edge([-3.4,0,2.0],[3.4,0,2.0],{color:"#243646",width:0.04,group:"edges"});
+
+      // property bars: params-per-edge and energy floor
+      const metaBars=[
+        {h:paramsR, c:"#34d399", lab:"R params", x:-3.4, z:-3.0, scale:0.7},
+        {h:paramsO, c:"#4dd7ff", lab:"O params", x:-1.1, z:-3.0, scale:0.7},
+        {h:E_R*3+0.05, c:"#34d399", lab:"R energy", x:1.1, z:-3.0, scale:1.0, raw:E_R},
+        {h:E_O+0.05, c:"#4dd7ff", lab:"O energy", x:3.4, z:-3.0, scale:1.0, raw:E_O}
+      ];
+      metaBars.forEach(b=>{
+        const hh=0.12+b.h*b.scale;
+        const bar=new T.Mesh(new T.BoxGeometry(1.2,hh,1.0),
+          new T.MeshStandardMaterial({color:new T.Color(b.c),emissive:new T.Color(b.c).multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+        bar.position.set(b.x,hh/2,b.z);
+        gBars.add(bar);
+        const val=(b.raw!=null)?b.raw.toFixed(3):String(Math.round(b.h));
+        api.pick(bar,{prop:b.lab,value:val});
+        lbl(val,b.c,1.15,b.x,hh+0.45,b.z);
+        slbl(b.lab,b.c,0.34,b.x,0.05,b.z);
+      });
+      lbl("params per edge (d="+dim+")","#8a99ad",1.0,-2.25,0.1,-4.4);
+      lbl("min edge energy","#8a99ad",1.0,2.25,0.1,-4.4);
+
+      // spectrum strips
+      lbl("spec L_R "+specR,"#34d399",1.0,-3.4,0.0,4.2);
+      lbl("spec L_O "+specO,"#4dd7ff",1.0,3.4,0.0,4.2);
+
+      sceneSnap={mode,theta:+theta.toFixed(1),dim,paramsR,paramsO,
+        energyR:+E_R.toFixed(3),energyO:+E_O.toFixed(3),holonomyDeg:null,
+        edgeEnergy:+E_O.toFixed(3),baselineEnergy:ENERGY_OI,
+        energyReduction:+(1-E_O/ENERGY_OI).toFixed(3)};
+
+      return {
+        badge:"Compare · d="+dim+" · R:"+paramsR+"p  O:"+paramsO+"p",
+        formula:"E_F=‖R_u x_u − R_v x_v‖²  (→0)&nbsp;&nbsp;vs&nbsp;&nbsp;E_O=‖x_u − O_{uv} x_v‖²&nbsp;&nbsp;(≥0)",
+        insight:"General NSD restriction maps R have d×d="+(dim*dim)+" free params per edge and can drive edge energy to exactly 0 by absorbing scale — but L_R's spectrum runs to a variable λmax, so deep diffusion needs per-layer normalization. Orthogonal O has only "+paramsO+" angle param(s), keeps a floor energy of 0.748, but bounds L_O's spectrum in [0,2] and preserves norms — a drop-in Laplacian.",
+        state:"d="+dim+": R uses "+paramsR+" params/edge (energy floor 0), O uses "+paramsO+" param/edge (energy floor "+E_O.toFixed(3)+", spectrum [0,2], norm-preserving).",
+        metrics:{
+          edgeEnergy:E_O.toFixed(3),
+          baselineEnergy:String(paramsR)+" vs "+paramsO,
+          energyReduction:"[0,2]",
+          holonomy:"—"
+        },
+        focus:{center:[0,0.5,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3 · holonomy — cycle C1→C2→C3→C4→C1, flat vs non-flat
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="holonomy"){
+      // first three forward edge angles from Review-Q4 example, last from slider
+      const a12=CYCLE_NONFLAT[0], a23=CYCLE_NONFLAT[1], a34=CYCLE_NONFLAT[2];
+      const a41=closeAng;
+      const sumAng=a12+a23+a34+a41;
+      const holo=((sumAng%360)+360)%360;                // net rotation mod 360
+      const holoSigned=holo>180?holo-360:holo;          // nearest-to-0 signed
+      const flat=Math.abs(holoSigned)<1e-3 || Math.abs(holoSigned)<2; // ~flat band
+
+      // nodes on the 2×2 grid cycle
+      KEYS.forEach(k=>{const p=POS[k];
+        api.node([p[0],p[1],p[2]],{r:0.32,color:CY,label:k,group:"nodes",pick:{node:k,x:X[k]}});});
+
+      // directed cycle edges colored by their angle magnitude
+      const cyc=[["C1","C2",a12],["C2","C4",a23],["C4","C3",a34],["C3","C1",a41]];
+      cyc.forEach(([u,v,ang])=>{
+        const t=Math.min(1,Math.abs(ang)/90);
+        const c=api.ramp(t,GR,RO);
+        api.arrow(POS[u],POS[v],{color:"#"+c.getHexString(),head:0.26,width:0.06,
+          label:ang.toFixed(0)+"°",labelColor:"#cfe0f0",group:"edges"});
+      });
+
+      // central holonomy indicator: a turning arrow whose angle = net rotation
+      const hr=holoSigned*Math.PI/180;
+      const hc=flat?GR:RO;
+      api.node([0,0,0],{r:0.2,color:hc,halo:true,group:"frames"});
+      api.arrow([0,0.05,0],[Math.cos(hr)*1.4,0.05,Math.sin(hr)*1.4],{color:flat?GR:RO,head:0.22,width:0.05,group:"frames"});
+      api.arrow([0,0.05,0],[1.4,0.05,0],{color:"#3a5170",head:0.18,width:0.035,group:"frames"});
+      lbl((flat?"flat":"holonomy ")+holoSigned.toFixed(0)+"°",flat?"#34d399":"#ff6d8b",1.35,0,1.0,0);
+
+      // holonomy gauge bar at the back
+      const hh=0.12+Math.abs(holoSigned)/90*3.0;
+      const bar=new T.Mesh(new T.BoxGeometry(1.4,hh,1.0),
+        new T.MeshStandardMaterial({color:new T.Color(hc),emissive:new T.Color(hc).multiplyScalar(0.5),emissiveIntensity:0.6,roughness:0.4}));
+      bar.position.set(0,hh/2,-5.4);
+      gBars.add(bar);
+      api.pick(bar,{holonomy:holoSigned});
+      lbl(Math.abs(holoSigned).toFixed(0)+"° net","#cfe0f0",1.2,0,hh+0.5,-5.4);
+      slbl(flat?"flat — globally alignable":"non-flat — conflicting modalities",flat?"#34d399":"#ff6d8b",0.4,0,0.05,-5.4);
+      lbl("Σθ = "+a12+"+"+a23+"+"+a34+"+"+a41.toFixed(0)+" = "+sumAng.toFixed(0)+"°","#8a99ad",1.0,0,0.1,-6.8);
+
+      sceneSnap={mode,theta:+theta.toFixed(1),dim:2,closeAng:+a41.toFixed(1),
+        sumAngles:+sumAng.toFixed(1),holonomyDeg:+holoSigned.toFixed(1),
+        isFlat:flat?1:0,edgeEnergy:null,baselineEnergy:null,energyReduction:null};
+
+      return {
+        badge:"Holonomy · Σθ="+sumAng.toFixed(0)+"° · net "+holoSigned.toFixed(0)+"°",
+        formula:"O_{12}·O_{23}·O_{34}·O_{41} = I&nbsp;⇔&nbsp;Σθ ≡ 0 (mod 360°)",
+        insight:"Walk the cycle C1→C2→C4→C3→C1 applying each edge rotation. If the product returns to the identity (Σθ a multiple of 360°) the sheaf is flat: a single global orientation aligns every cell's modality frame. The Review-Q4 angles 30+45+60 plus the closing edge leave a net "+holoSigned.toFixed(0)+"° — non-trivial holonomy means the regulatory loop has irreducible cross-modality tension.",
+        state:"Σθ="+sumAng.toFixed(0)+"° → net rotation "+holoSigned.toFixed(0)+"°. "+(flat?"Flat: orientation is globally consistent.":"Non-flat: no globally consistent orientation — conflicting regulatory signals."),
+        metrics:{
+          edgeEnergy:"—",
+          baselineEnergy:sumAng.toFixed(0)+"°",
+          energyReduction:flat?"flat":"non-flat",
+          holonomy:holoSigned.toFixed(0)+"°"
+        },
+        focus:{center:[0,0.5,-1.6],radius:13}
+      };
+    }
+
+    return {badge:"G04",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"g04",
+    kind:"sheaf-connection-laplacian",
+    eyebrow:"Block G · Sheaf GNN for Biology",
+    title:"G04 · Connection-Laplacian sheaf neural networks",
+    subtitle:"Orthogonal restriction maps rotate — never stretch — modality frames. Three views: the learned C1–C2 rotation, general-R vs orthogonal-O trade-offs, and cycle holonomy.",
+    selectedLabel:"Element",
+    selectedHint:"Click a stalk node, frame, or bar.",
+    modes:[
+      {value:"rotate",   label:"Rotate (learn the C1–C2 alignment)"},
+      {value:"compare",  label:"Compare (general R vs orthogonal O)"},
+      {value:"holonomy", label:"Holonomy (cycle flatness)"}
+    ],
+    params:[
+      {key:"theta", label:"rotation angle θ (deg)",min:-180,max:180,step:5,value:-45,
+       fmt:v=>v.toFixed(0)+"°"},
+      {key:"dim",   label:"stalk dimension d",min:1,max:3,step:1,value:2,
+       fmt:v=>"d="+Math.round(v),modes:["compare"]},
+      {key:"closeAng", label:"closing-edge angle θ₄₁ (deg)",min:-180,max:180,step:5,value:30,
+       fmt:v=>v.toFixed(0)+"°",modes:["holonomy"]},
+      {key:"noise", label:"feature noise (jitter)",min:0,max:1,step:0.05,value:0.15,
+       fmt:v=>v.toFixed(2),modes:["rotate"]}
+    ],
+    metrics:[
+      {key:"edgeEnergy",     label:"Edge energy ‖O·x_C1 − x_C2‖²",accent:"cyan"},
+      {key:"baselineEnergy", label:"O=I baseline / params",accent:"rose"},
+      {key:"energyReduction",label:"Reduction / spectrum",accent:"green"},
+      {key:"holonomy",       label:"Cycle holonomy",accent:"violet"}
+    ],
+    layers:[
+      {group:"nodes",  label:"Stalk nodes"},
+      {group:"edges",  label:"Edges / rotations"},
+      {group:"frames", label:"Local frames"},
+      {group:"bars",   label:"Energy bars"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Learned θ = −45°",
+      on:api=>{api.setParam("theta",-45);}
+    },
+    secondary:{
+      label:"O = I (θ = 0°)",
+      on:api=>{api.setParam("theta",0);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>=orthogonal O / rotated frame · <span style="color:#34d399">green</span>=aligned / general R · <span style="color:#fbbf24">amber</span>=2nd basis axis · <span style="color:#a78bfa">violet</span>=holonomy · <span style="color:#ff6d8b">rose</span>=mismatch / non-flat.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="compare") api.frame([0,0.5,0],13);
+      else api.frame([0,0.5,-1.6],13);
+    },
+    onSelect(api,d){
+      if(d.node)   api.setSelected("Stalk "+d.node+" · x = ["+d.x[0].toFixed(1)+", "+d.x[1].toFixed(1)+"]  (mRNA, ATAC)");
+      if(d.energy!=null) api.setSelected(d.label+" · E = "+d.energy.toFixed(3));
+      if(d.prop)   api.setSelected(d.prop+" · "+d.value);
+      if(d.holonomy!=null) api.setSelected("Net holonomy · "+d.holonomy.toFixed(0)+"°");
+    },
+    build,
+    snapshot(s){
+      const theta=s.theta, dim=Math.round(s.dim), closeAng=s.closeAng;
+      const E=edgeEnergy(theta);
+      const reduction=1-E/ENERGY_OI;
+      const sumAng=CYCLE_NONFLAT[0]+CYCLE_NONFLAT[1]+CYCLE_NONFLAT[2]+closeAng;
+      let holo=((sumAng%360)+360)%360; if(holo>180) holo-=360;
+      const paramsR=dim===1?1:dim*dim;
+      const paramsO=dim===1?1:Math.round(dim*(dim-1)/2);
+      return {
+        mode:s.mode,
+        theta:+theta.toFixed(1),
+        dim:dim,
+        edgeEnergy:+E.toFixed(3),
+        baselineEnergy:+ENERGY_OI.toFixed(3),
+        energyReduction:+reduction.toFixed(3),
+        closeAng:+closeAng.toFixed(1),
+        sumAngles:+sumAng.toFixed(1),
+        holonomyDeg:+holo.toFixed(1),
+        isFlat:(Math.abs(holo)<2)?1:0,
+        paramsR:paramsR,
+        paramsO:paramsO,
+        normPreserving:1
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

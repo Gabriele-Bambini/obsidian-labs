@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E02 · Gene-gene graphs and cell-cell graphs</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (frac-of-sin hash; fully reproducible) ───
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // WORKED EXAMPLE — E02 Section 5: 4 cells × 4 genes.
+  //   C1,C2 = erythroid · C3,C4 = B cell.
+  //   genes: GATA1(TF1), PAX5(TF2), HBB(G3), CD19(G4)
+  // Log-normalized expression matrix (cells × genes):
+  // ════════════════════════════════════════════════════════════════════════
+  const GENES=["GATA1","PAX5","HBB","CD19"];      // 0 TF, 1 TF, 2 target, 3 target
+  const IS_TF=[true,true,false,false];
+  const CELLS=["C1","C2","C3","C4"];
+  const LINEAGE=["Ery","Ery","B","B"];
+  // expression[cell][gene]
+  const EXPR=[
+    [8.1,0.0,7.9,0.0],   // C1 Ery
+    [7.8,0.0,7.6,0.0],   // C2 Ery
+    [0.0,7.5,0.0,8.2],   // C3 B
+    [0.0,7.2,0.0,7.8]    // C4 B
+  ];
+
+  // Pearson r matrix (note Section 5 Step 1) — symmetric, signed.
+  function pearson(gi,gj){
+    let mi=0,mj=0;for(let c=0;c<4;c++){mi+=EXPR[c][gi];mj+=EXPR[c][gj];}
+    mi/=4;mj/=4;
+    let num=0,di=0,dj=0;
+    for(let c=0;c<4;c++){const a=EXPR[c][gi]-mi,b=EXPR[c][gj]-mj;num+=a*b;di+=a*a;dj+=b*b;}
+    const den=Math.sqrt(di*dj)+1e-9;return num/den;
+  }
+
+  // GENIE3 / GRNBoost2 directed importances (note Section 5 Step 2).
+  // Only TF columns (GATA1,PAX5) regress each target; cross-lineage ≈ 0.
+  // Importance(TF -> target):  rows = TF(0,1), cols = target(2,3)
+  const GENIE3={
+    "GATA1->HBB":0.89, "PAX5->HBB":0.01,
+    "GATA1->CD19":0.01,"PAX5->CD19":0.91
+  };
+
+  // Initial gene features h = [mean, var, pct_expr] (Section 5 Step 3).
+  function geneFeat(g){
+    let m=0;for(let c=0;c<4;c++)m+=EXPR[c][g];m/=4;
+    let v=0,nz=0;for(let c=0;c<4;c++){const d=EXPR[c][g]-m;v+=d*d;if(EXPR[c][g]>0)nz++;}
+    v/=4;return {mean:m,var:v,pct:nz/4};
+  }
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const rho=s.rho;                 // co-expression |r| threshold
+    const lam=s.lambda;              // GENIE3 importance gate
+    const signMode=Math.round(s.signed); // 0 unsigned, 1 signed (co-expr)
+    const mpnn=Math.round(s.mpnn);   // 0 features, 1 one directed message step
+
+    const gMain =api.group("graph");
+    const gMsg  =api.group("messages");
+    const gLab  =api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");   // erythroid / GATA1 family / cell
+    const AM=new T.Color("#fbbf24");   // B-cell / PAX5 family
+    const GR=new T.Color("#34d399");   // activation / positive co-expr
+    const RO=new T.Color("#fb7185");   // repression / negative co-expr
+    const VI=new T.Color("#a78bfa");   // regulatory / message
+    const SL=new T.Color("#54667c");   // dim / pruned
+
+    function lbl(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);}
+    function slbl(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLab.add(sp);}
+
+    // gene lineage colour: Ery genes cyan, B genes amber
+    const geneCol=g=>(g===0||g===2)?CY:AM;
+
+    // square layout positions for the 4 genes (TF top, targets bottom)
+    //   GATA1 (TF) top-left, PAX5 (TF) top-right, HBB bottom-left, CD19 bottom-right
+    const GP=[
+      new T.Vector3(-2.6, 2.2, 0),   // GATA1
+      new T.Vector3( 2.6, 2.2, 0),   // PAX5
+      new T.Vector3(-2.6,-2.2, 0),   // HBB
+      new T.Vector3( 2.6,-2.2, 0)    // CD19
+    ];
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: co-expr  — undirected SIGNED Pearson gene-gene graph (K4)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="co-expr"){
+      // gene nodes
+      for(let g=0;g<4;g++){
+        const c=geneCol(g);
+        const sph=new T.Mesh(new T.SphereGeometry(0.42,24,18),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        sph.position.copy(GP[g]);gMain.add(sph);
+        api.pick(sph,{gene:{name:GENES[g],tf:IS_TF[g],idx:g}});
+        lbl(GENES[g],"#e8eef6",1.35,GP[g].x,GP[g].y+0.75,GP[g].z);
+      }
+
+      // all 6 undirected pairs — edge if |r| >= rho. signed colour unless unsigned mode.
+      let pass=0,posE=0,negE=0;
+      const pairs=[[0,1],[0,2],[0,3],[1,2],[1,3],[2,3]];
+      pairs.forEach(([a,b])=>{
+        const r=pearson(a,b);
+        if(Math.abs(r)>=rho){
+          pass++;
+          const positive=r>0;
+          if(positive)posE++;else negE++;
+          let edgeCol;
+          if(signMode===0){ edgeCol=VI; }              // unsigned: all edges merged
+          else edgeCol=positive?GR:RO;                  // signed: + green, − rose
+          const pa=GP[a],pb=GP[b];
+          const len=pa.distanceTo(pb);
+          const geo=new T.CylinderGeometry(0.05,0.05,len,10,1,true);
+          const m=new T.MeshStandardMaterial({color:edgeCol,emissive:edgeCol.clone().multiplyScalar(0.25),roughness:0.5,
+            transparent:true,opacity:0.92});
+          const mesh=new T.Mesh(geo,m);
+          mesh.position.copy(pa).add(pb).multiplyScalar(0.5);
+          const up=new T.Vector3(0,1,0),dir=pb.clone().sub(pa).normalize(),q=new T.Quaternion();
+          q.setFromUnitVectors(up,dir);mesh.quaternion.copy(q);
+          gMain.add(mesh);
+          api.pick(mesh,{edge:{a:GENES[a],b:GENES[b],r:+r.toFixed(3),positive}});
+          // sign tag at edge midpoint
+          const mid=pa.clone().add(pb).multiplyScalar(0.5);
+          const tag=signMode===0?"|r|="+Math.abs(r).toFixed(2):(positive?"+":"−")+Math.abs(r).toFixed(2);
+          slbl(tag, signMode===0?"#a78bfa":(positive?"#34d399":"#fb7185"),0.34,mid.x,mid.y+0.18,mid.z+0.2);
+        }
+      });
+
+      lbl(signMode===0?"unsigned co-expression":"signed co-expression","#cfe0f0",1.2,0,3.5,0);
+      lbl("undirected · Pearson |r| ≥ "+rho.toFixed(2),"#8a99ad",1.0,0,-3.5,0);
+
+      const graphName=(pass===6)?"K4 (complete)":pass+" edges";
+      sceneSnap={mode,rho:+rho.toFixed(2),signed:signMode,edgesPassing:pass,posEdges:posE,negEdges:negE,
+        directedEdges:0,mpnnApplied:0,activeTarget:null,inflowTarget:null};
+
+      return {
+        badge:"Co-expression · "+graphName+" · |r|≥"+rho.toFixed(2),
+        formula:"E_coexpr = { (g_i,g_j) : |r(g_i,g_j)| ≥ ρ }",
+        insight:"Pearson co-expression is symmetric and undirected. At ρ=0.9 all 6 gene pairs of the 4×4 example pass — the unsigned graph is the complete graph K4. The SIGNED graph keeps within-lineage positives (green, e.g. GATA1↔HBB +0.998) apart from cross-lineage negatives (rose, e.g. GATA1↔CD19 −0.998). Switch the sign toggle off and the cross-lineage anti-correlations become edges as strong as real modules — that is how unsigned graphs falsely merge erythroid and B-cell programs.",
+        insightLabel:"Undirected co-expression",
+        state:"|r|≥"+rho.toFixed(2)+" → "+pass+"/6 edges pass. "+(signMode===0?"UNSIGNED: "+pass+" merged edges (cross-lineage |r|≈0.998 look like real modules).":posE+" positive (within lineage) · "+negE+" negative (across lineage)."),
+        metrics:{edgesPassing:pass+"/6",graphType:signMode===0?"K4 unsigned":"signed",directedEdges:"0",inflowHBB:"—"},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: regulatory — GENIE3 DIRECTED TF→target graph (+ optional MPNN step)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="regulatory"){
+      // gene nodes; TFs get a halo ring to mark them as regulators
+      for(let g=0;g<4;g++){
+        const c=geneCol(g);
+        const r=IS_TF[g]?0.46:0.40;
+        const sph=new T.Mesh(new T.SphereGeometry(r,24,18),
+          new T.MeshStandardMaterial({color:c,emissive:c.clone().multiplyScalar(0.6),emissiveIntensity:0.72,roughness:0.38}));
+        sph.position.copy(GP[g]);gMain.add(sph);
+        api.pick(sph,{gene:{name:GENES[g],tf:IS_TF[g],idx:g}});
+        const role=IS_TF[g]?" (TF)":"";
+        lbl(GENES[g]+role,"#e8eef6",1.3,GP[g].x,GP[g].y+0.8,GP[g].z);
+        if(IS_TF[g]){
+          const ring=new T.Mesh(new T.TorusGeometry(r+0.14,0.03,10,40),
+            new T.MeshBasicMaterial({color:VI,transparent:true,opacity:0.8}));
+          ring.position.copy(GP[g]);gMain.add(ring);
+        }
+      }
+
+      // directed candidate edges: each TF (0,1) -> each target (2,3). keep if importance >= lambda.
+      const cand=[[0,2],[0,3],[1,2],[1,3]];
+      let kept=0;
+      const keptEdges=[];
+      cand.forEach(([tf,tg])=>{
+        const imp=GENIE3[GENES[tf]+"->"+GENES[tg]];
+        const passEdge=imp>=lam;
+        const pa=GP[tf].clone(),pb=GP[tg].clone();
+        // shorten so arrowhead sits at the target node surface
+        const dir=pb.clone().sub(pa).normalize();
+        const a2=pa.add(dir.clone().multiplyScalar(0.5));
+        const b2=pb.sub(dir.clone().multiplyScalar(0.5));
+        if(passEdge){
+          kept++;keptEdges.push([tf,tg,imp]);
+          api.arrow(a2,b2,{color:"#a78bfa",width:0.05,head:0.34,group:"graph",
+            label:GENES[tf]+"→"+GENES[tg]+" "+imp.toFixed(2),labelColor:"#cfe0f0"});
+        }else{
+          // dim ghost arrow for the absent cross-lineage edge
+          api.arrow(a2,b2,{color:"#33475e",width:0.025,head:0.18,group:"graph"});
+          const mid=a2.clone().add(b2).multiplyScalar(0.5);
+          slbl("× "+imp.toFixed(2),"#5a6b80",0.32,mid.x,mid.y,mid.z+0.2);
+        }
+      });
+
+      // ── one directed MPNN message step (source_to_target) ──
+      let inflowHBB=null, inflowCD19=null;
+      if(mpnn===1){
+        keptEdges.forEach(([tf,tg,imp])=>{
+          // message magnitude proxy = importance * source mean  (deterministic readout)
+          const hsrc=geneFeat(tf);
+          const msgMag=imp*hsrc.mean;
+          if(tg===2)inflowHBB=msgMag; if(tg===3)inflowCD19=msgMag;
+          // animated-looking pulse spheres along the edge (deterministic positions)
+          const pa=GP[tf],pb=GP[tg];
+          for(let k=0;k<4;k++){
+            const t=0.18+k*0.21;
+            const pp=pa.clone().lerp(pb,t);
+            const pulse=new T.Mesh(new T.SphereGeometry(0.10+0.02*prand(tf*9+tg*3+k),10,8),
+              new T.MeshStandardMaterial({color:VI,emissive:VI,emissiveIntensity:0.95,roughness:0.2}));
+            pulse.position.copy(pp);gMsg.add(pulse);
+          }
+          // "h^(1)" update tag under the target
+          slbl("h⁽¹⁾ += "+msgMag.toFixed(2),"#a78bfa",0.4,GP[tg].x,GP[tg].y-0.85,GP[tg].z);
+        });
+        lbl("one directed message step · flow=source→target","#a78bfa",1.05,0,-3.5,0);
+      } else {
+        lbl("directed TF→target · GENIE3 importance ≥ "+lam.toFixed(2),"#8a99ad",1.0,0,-3.5,0);
+      }
+
+      lbl("regulatory graph G_reg","#cfe0f0",1.2,0,3.5,0);
+
+      sceneSnap={mode,lambda:+lam.toFixed(2),mpnnApplied:mpnn,directedEdges:kept,
+        inflowHBB:inflowHBB==null?null:+inflowHBB.toFixed(2),
+        inflowCD19:inflowCD19==null?null:+inflowCD19.toFixed(2),
+        edgesPassing:kept,posEdges:0,negEdges:0,signed:0,rho:0,activeTarget:mpnn===1?"HBB":null};
+
+      const inflowTxt=inflowHBB==null?"—":inflowHBB.toFixed(2);
+      return {
+        badge:"Regulatory · "+kept+" directed edges · λ≥"+lam.toFixed(2),
+        formula:"E_reg = { TF_t → g_j : importance(TF_t,g_j) ≥ λ }",
+        insight:"GENIE3/GRNBoost2 regresses each target gene on TF expression only, giving a DIRECTED, non-negative graph. At λ=0.30 only GATA1→HBB (0.89) and PAX5→CD19 (0.91) survive; the 4 cross-lineage candidates (≈0.01) are absent because a TF that is zero where the target is high carries no predictive signal. Turn on the MPNN step: messages flow source→target (x_j = TF feature into x_i = target), so HBB and CD19 embeddings absorb their regulator's context while the TF nodes only see self-loops.",
+        insightLabel:"Directed regulation",
+        state:mpnn===1
+          ? "Message step: GATA1→HBB carries "+(inflowHBB==null?"—":inflowHBB.toFixed(2))+", PAX5→CD19 carries "+(inflowCD19==null?"—":inflowCD19.toFixed(2))+". TF nodes update from self-loops only."
+          : "λ≥"+lam.toFixed(2)+" keeps "+kept+"/4 directed edges. GATA1→HBB=0.89, PAX5→CD19=0.91; cross-lineage importances ≈0.01 are pruned.",
+        metrics:{edgesPassing:kept+"/4",graphType:"directed",directedEdges:""+kept,inflowHBB:inflowTxt},
+        focus:{center:[0,0,0],radius:11}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE: cell-cell — kNN similarity graph (orthogonal to gene graph)
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="cell-cell"){
+      const showGCN=mpnn===1;     // reuse mpnn toggle: 1 = run one symmetric GCN step on C1
+
+      // place 4 cells: erythroid pair left, B pair right
+      const CPOS=[
+        new T.Vector3(-3.0, 1.4,0),  // C1 Ery
+        new T.Vector3(-3.0,-1.4,0),  // C2 Ery
+        new T.Vector3( 3.0, 1.4,0),  // C3 B
+        new T.Vector3( 3.0,-1.4,0)   // C4 B
+      ];
+      for(let c=0;c<4;c++){
+        const col=(c<2)?CY:AM;
+        const sph=new T.Mesh(new T.SphereGeometry(0.45,24,18),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.6),emissiveIntensity:0.72,roughness:0.38}));
+        sph.position.copy(CPOS[c]);gMain.add(sph);
+        api.pick(sph,{cell:{name:CELLS[c],lineage:LINEAGE[c],idx:c}});
+        lbl(CELLS[c]+" ("+LINEAGE[c]+")","#e8eef6",1.2,CPOS[c].x,CPOS[c].y+0.78,CPOS[c].z);
+      }
+
+      // k=1 mutual kNN: C1–C2 (Ery), C3–C4 (B). two undirected edges, no gene info.
+      const cEdges=[[0,1],[2,3]];
+      cEdges.forEach(([a,b])=>{
+        const col=(a<2)?CY:AM;
+        const pa=CPOS[a],pb=CPOS[b],len=pa.distanceTo(pb);
+        const geo=new T.CylinderGeometry(0.055,0.055,len,10,1,true);
+        const m=new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.25),roughness:0.5,transparent:true,opacity:0.92});
+        const mesh=new T.Mesh(geo,m);mesh.position.copy(pa).add(pb).multiplyScalar(0.5);
+        const up=new T.Vector3(0,1,0),dir=pb.clone().sub(pa).normalize(),q=new T.Quaternion();
+        q.setFromUnitVectors(up,dir);mesh.quaternion.copy(q);gMain.add(mesh);
+        api.pick(mesh,{cellEdge:{a:CELLS[a],b:CELLS[b]}});
+        const mid=pa.clone().add(pb).multiplyScalar(0.5);
+        slbl("kNN","#cfe0f0",0.34,mid.x+0.45,mid.y,mid.z);
+      });
+
+      // one symmetric GCN step on C1 (Section 5 Step 4 / exercise 5):
+      // h_C1^(1) = 0.5*h_C1 + 0.5*h_C2  (per gene channel)
+      let gcnGATA1=null;
+      if(showGCN){
+        gcnGATA1=0.5*EXPR[0][0]+0.5*EXPR[1][0]; // 0.5*8.1 + 0.5*7.8 = 7.95
+        const pulse=new T.Mesh(new T.SphereGeometry(0.13,12,10),
+          new T.MeshStandardMaterial({color:GR,emissive:GR,emissiveIntensity:0.95,roughness:0.2}));
+        pulse.position.copy(CPOS[1].clone().lerp(CPOS[0],0.5));gMsg.add(pulse);
+        slbl("h_C1⁽¹⁾ = ½h_C1+½h_C2","#34d399",0.42,CPOS[0].x,CPOS[0].y+1.5,0);
+        slbl("GATA1 → "+gcnGATA1.toFixed(2),"#34d399",0.42,CPOS[0].x,CPOS[0].y+1.05,0);
+      }
+
+      // semantic contrast banner: no gene appears in this adjacency
+      lbl("cell-cell graph  (k=1 mutual kNN)","#cfe0f0",1.2,0,3.5,0);
+      lbl("nodes = cells · edges = expression similarity · NO gene info","#8a99ad",1.0,0,-3.5,0);
+      // faint "orthogonal" divider between the two lineage clusters
+      const div=new T.Mesh(new T.PlaneGeometry(0.04,5.2),new T.MeshBasicMaterial({color:0x33475e,transparent:true,opacity:0.5,side:T.DoubleSide}));
+      gMain.add(div);
+
+      sceneSnap={mode,mpnnApplied:showGCN?1:0,directedEdges:0,cellEdges:2,
+        gcnGATA1:gcnGATA1==null?null:+gcnGATA1.toFixed(2),edgesPassing:2,signed:0,rho:0,
+        posEdges:0,negEdges:0,inflowHBB:null,activeTarget:showGCN?"C1":null};
+
+      return {
+        badge:"Cell-cell · k=1 mutual kNN · 4 nodes · 2 edges",
+        formula:"E_cell = { (c_i,c_j) : sim(z_i,z_j) ≥ θ }",
+        insight:"The SAME 4×4 count matrix, projected across genes instead of across cells, gives a cell-cell graph: nodes are cells, edges are expression similarity. With k=1 mutual kNN, C1–C2 (erythroid) and C3–C4 (B cell) each pair up — 4 nodes, 2 edges, and crucially NO gene identity in the adjacency. This graph is structurally and semantically orthogonal to the gene graphs: aggregating a cell neighbour's expression is a different operation from aggregating a gene neighbour's co-expression, which is why stacking them into one GCN is incoherent.",
+        insightLabel:"Cell similarity",
+        state:showGCN
+          ? "One symmetric GCN step on C1: h_C1⁽¹⁾ = ½h_C1 + ½h_C2 ⇒ GATA1 channel = "+(gcnGATA1==null?"—":gcnGATA1.toFixed(2))+" (mean of 8.1 and 7.8)."
+          : "k=1 mutual kNN → 2 edges (C1–C2, C3–C4). Cell nodes, similarity edges, no gene information. Orthogonal to the gene-gene graphs.",
+        metrics:{edgesPassing:"2",graphType:"cell kNN",directedEdges:"0",inflowHBB:showGCN?gcnGATA1.toFixed(2):"—"},
+        focus:{center:[0,0,0],radius:11.5}
+      };
+    }
+
+    return {badge:"E02",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:11}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"e02",
+    kind:"gene-cell-graphs",
+    eyebrow:"Block E · Single-Cell & Multi-Omics",
+    title:"E02 · Gene-gene graphs and cell-cell graphs",
+    subtitle:"One 4×4 count matrix → three graphs. Undirected signed co-expression, directed GENIE3 regulation, and an orthogonal cell-cell kNN — each a different biological claim.",
+    selectedLabel:"Element",
+    selectedHint:"Click a gene, cell, edge, or arrow.",
+    modes:[
+      {value:"co-expr",    label:"Co-expression (Pearson, undirected signed)"},
+      {value:"regulatory", label:"Regulatory (GENIE3 directed TF→target)"},
+      {value:"cell-cell",  label:"Cell-cell (kNN similarity, orthogonal)"}
+    ],
+    params:[
+      {key:"rho",   label:"co-expr threshold |r| ≥ ρ",min:0.3,max:0.99,step:0.01,value:0.9,
+       fmt:v=>v.toFixed(2),modes:["co-expr"]},
+      {key:"signed",label:"signed edges (0=unsigned 1=signed)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===0?"unsigned":"signed",modes:["co-expr"]},
+      {key:"lambda",label:"GENIE3 importance gate λ",min:0.0,max:0.95,step:0.01,value:0.3,
+       fmt:v=>v.toFixed(2),modes:["regulatory"]},
+      {key:"mpnn",  label:"message step (0=features 1=one step)",min:0,max:1,step:1,value:0,
+       fmt:v=>Math.round(v)===0?"features":"1 step",modes:["regulatory","cell-cell"]}
+    ],
+    metrics:[
+      {key:"edgesPassing", label:"Edges passing",   accent:"cyan"},
+      {key:"graphType",    label:"Graph type",      accent:"violet"},
+      {key:"directedEdges",label:"Directed edges",  accent:"amber"},
+      {key:"inflowHBB",    label:"Msg into target", accent:"green"}
+    ],
+    layers:[
+      {group:"graph",    label:"Graph / nodes & edges"},
+      {group:"messages", label:"Message pulses"},
+      {group:"labels",   label:"Labels"}
+    ],
+    primary:{
+      label:"Threshold |r|≥0.9",
+      on:api=>{api.setParam("rho",0.9);}
+    },
+    secondary:{
+      label:"GENIE3 gate λ=0.30",
+      on:api=>{api.setParam("lambda",0.30);}
+    },
+    defaultCam:{theta:-0.35,phi:0.55,r:11.5},
+    hint:'<span style="color:#4dd7ff">cyan</span>=erythroid (GATA1,HBB / C1,C2) · <span style="color:#fbbf24">amber</span>=B-cell (PAX5,CD19 / C3,C4) · <span style="color:#34d399">green</span>=+co-expr / GCN · <span style="color:#fb7185">rose</span>=−co-expr · <span style="color:#a78bfa">violet</span>=directed regulation / message.',
+    onMode(api){ api.frame([0,0,0], api.state.mode==="cell-cell"?11.5:11); },
+    onParam(api){ api.frame([0,0,0], api.state.mode==="cell-cell"?11.5:11); },
+    onSelect(api,d){
+      if(d.gene)     api.setSelected(d.gene.name+(d.gene.tf?" · transcription factor":" · target gene"));
+      if(d.edge)     api.setSelected(d.edge.a+"↔"+d.edge.b+" · r="+d.edge.r+(d.edge.positive?" (+ within lineage)":" (− across lineage)"));
+      if(d.cell)     api.setSelected(d.cell.name+" · "+d.cell.lineage+" cell");
+      if(d.cellEdge) api.setSelected(d.cellEdge.a+"–"+d.cellEdge.b+" · kNN similarity edge");
+    },
+    build,
+    snapshot(s){
+      const mode=s.mode;
+      const rho=+(+s.rho).toFixed(2);
+      const lam=+(+s.lambda).toFixed(2);
+      const signed=Math.round(s.signed);
+      const mpnn=Math.round(s.mpnn);
+      // recompute edge counts deterministically so the snapshot tracks every control
+      let edgesPassing=0,posE=0,negE=0,directed=0;
+      if(mode==="co-expr"){
+        const pairs=[[0,1],[0,2],[0,3],[1,2],[1,3],[2,3]];
+        pairs.forEach(([a,b])=>{const r=pearson(a,b);if(Math.abs(r)>=rho){edgesPassing++;if(r>0)posE++;else negE++;}});
+      } else if(mode==="regulatory"){
+        [[0,2],[0,3],[1,2],[1,3]].forEach(([tf,tg])=>{if(GENIE3[GENES[tf]+"->"+GENES[tg]]>=lam){directed++;}});
+        edgesPassing=directed;
+      } else if(mode==="cell-cell"){
+        edgesPassing=2;
+      }
+      return {
+        mode,
+        rho, signed, lambda:lam, mpnn,
+        edgesPassing,
+        posEdges:posE,
+        negEdges:negE,
+        directedEdges:directed,
+        graphType: mode==="co-expr"?(signed===0?"K4-unsigned":"signed-undirected") : (mode==="regulatory"?"directed":"cell-knn"),
+        mpnnApplied:mpnn,
+        completeK4: mode==="co-expr" && edgesPassing===6
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

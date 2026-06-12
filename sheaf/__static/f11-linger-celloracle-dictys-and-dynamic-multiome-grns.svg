@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure F11 — Three ways to make the GRN depend on cell state</title>
+<desc id="d">Four-panel captioned figure: Three ways to make the GRN depend on cell state</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE F11 · BLOCK F · GRN INFERENCE</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">Three ways to make the GRN depend on cell state</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">GATA1/PU.1 multiome dataset</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">cells</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">5000</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">CMP</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">800 (rare)</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">switch</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">GATA1 ⊣ PU.1</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">data</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">RNA + ATAC</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="510" cy="108" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="510" y="113" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">CellOracle: ATAC gate</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">E_c: motif in accessible peak</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">W_c = (XᵀX+αI)⁻¹Xᵀy</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">GATA1→HBB eryth</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">0.93</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">GATA1→HBB HSC</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">0.12</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#34d399"/>
+<circle cx="64" cy="270" r="13" fill="#152a18" stroke="#34d399" stroke-width="1"/>
+<text x="64" y="275" fill="#7fe7c0" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">LINGER: prior shrinkage</text>
+<text x="56" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">‖X−XW‖² + λ‖W−W_glob‖²</text>
+<text x="56" y="321.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">λ(N) = λ₀/(1+N/100)</text>
+<rect x="56" y="364" width="12" height="40" rx="2" fill="#34d399"/>
+<text x="62" y="416" fill="#8a99ad" font-size="9" text-anchor="middle">global</text>
+<rect x="96" y="374.67" width="12" height="29.33" rx="2" fill="#a78bfa"/>
+<text x="102" y="416" fill="#8a99ad" font-size="9" text-anchor="middle">CMP</text>
+<rect x="136" y="340" width="12" height="64" rx="2" fill="#4dd7ff"/>
+<text x="142" y="416" fill="#8a99ad" font-size="9" text-anchor="middle">eryth</text>
+<line x1="56" y1="364" x2="176" y2="364" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="441" fill="#8a99ad" font-size="11">W_CMP=+0.33 sits between global +0.45 and erythroblast</text>
+<text x="56" y="461" fill="#8a99ad" font-size="11">+0.72; λ=1.11.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Dictys: continuous W(z)</text>
+<rect x="502" y="292" width="120" height="120" fill="none" stroke="#3a4a5e" stroke-width="1"/>
+<path d="M502 409.6 L550 362.8 L574 337.6 L622 325.6" fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="502" y="426" fill="#8a99ad" font-size="11">W(z(t))[GATA1,HBB]</text>
+<text x="502" y="451.5" fill="#a78bfa" font-size="11.5" font-weight="700">t=0</text>
+<text x="642" y="451.5" fill="#9fb4cc" font-size="11.5">0.02</text>
+<text x="502" y="471.5" fill="#8a99ad" font-size="11">…</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure F11. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">One </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">GATA1/PU.1 </text>
+<text x="272.47" y="538" fill="#c7d2dd" font-size="13">multiome </text>
+<text x="345.01" y="538" fill="#c7d2dd" font-size="13">dataset </text>
+<text x="409.49" y="538" fill="#c7d2dd" font-size="13">(5000 </text>
+<text x="457.85" y="538" fill="#c7d2dd" font-size="13">cells), </text>
+<text x="522.33" y="538" fill="#c7d2dd" font-size="13">three </text>
+<text x="570.69" y="538" fill="#c7d2dd" font-size="13">cell-state </text>
+<text x="659.35" y="538" fill="#c7d2dd" font-size="13">schemes. </text>
+<text x="731.89" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="765.42" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="798.87" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="834.73" y="538" fill="#c7d2dd" font-size="13">must</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">vary </text>
+<text x="80.3" y="559" fill="#c7d2dd" font-size="13">across </text>
+<text x="136.72" y="559" fill="#c7d2dd" font-size="13">cell </text>
+<text x="177.02" y="559" fill="#c7d2dd" font-size="13">state. </text>
+<text x="233.44" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="266.97" y="559" fill="#c7d2dd" font-size="13">CellOracle </text>
+<text x="358.05" y="559" fill="#c7d2dd" font-size="13">gates </text>
+<text x="406.41" y="559" fill="#c7d2dd" font-size="13">edges </text>
+<text x="454.77" y="559" fill="#c7d2dd" font-size="13">by </text>
+<text x="478.95" y="559" fill="#c7d2dd" font-size="13">ATAC: </text>
+<text x="532.14" y="559" fill="#c7d2dd" font-size="13">GATA1→HBB </text>
+<text x="627.65" y="559" fill="#c7d2dd" font-size="13">open </text>
+<text x="667.95" y="559" fill="#c7d2dd" font-size="13">in </text>
+<text x="692.13" y="559" fill="#c7d2dd" font-size="13">erythroblasts </text>
+<text x="804.97" y="559" fill="#c7d2dd" font-size="13">(0.93),</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">closed </text>
+<text x="96.42" y="580" fill="#c7d2dd" font-size="13">in </text>
+<text x="120.6" y="580" fill="#c7d2dd" font-size="13">HSC </text>
+<text x="156.47" y="580" fill="#c7d2dd" font-size="13">(0.12); </text>
+<text x="220.95" y="580" fill="#c7d2dd" font-size="13">~120 </text>
+<text x="261.25" y="580" fill="#c7d2dd" font-size="13">vs </text>
+<text x="285.43" y="580" fill="#c7d2dd" font-size="13">~30 </text>
+<text x="317.67" y="580" fill="#c7d2dd" font-size="13">targets. </text>
+<text x="390.21" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="423.74" y="580" fill="#c7d2dd" font-size="13">LINGER </text>
+<text x="487.41" y="580" fill="#c7d2dd" font-size="13">shrinks </text>
+<text x="551.89" y="580" fill="#c7d2dd" font-size="13">rare </text>
+<text x="592.19" y="580" fill="#c7d2dd" font-size="13">CMP </text>
+<text x="628.06" y="580" fill="#c7d2dd" font-size="13">to </text>
+<text x="652.24" y="580" fill="#c7d2dd" font-size="13">a </text>
+<text x="668.36" y="580" fill="#c7d2dd" font-size="13">prior: </text>
+<text x="724.78" y="580" fill="#c7d2dd" font-size="13">W_CMP=+0.33 </text>
+<text x="826.33" y="580" fill="#c7d2dd" font-size="13">between</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">global </text>
+<text x="96.42" y="601" fill="#c7d2dd" font-size="13">+0.45 </text>
+<text x="144.78" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="177.02" y="601" fill="#c7d2dd" font-size="13">eryth </text>
+<text x="225.38" y="601" fill="#c7d2dd" font-size="13">+0.72 </text>
+<text x="273.74" y="601" fill="#c7d2dd" font-size="13">(λ=1.11). </text>
+<text x="354.34" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="387.87" y="601" fill="#c7d2dd" font-size="13">Dictys </text>
+<text x="445.5" y="601" fill="#c7d2dd" font-size="13">makes </text>
+<text x="493.86" y="601" fill="#c7d2dd" font-size="13">W(z(t))[GATA1,HBB] </text>
+<text x="656.67" y="601" fill="#c7d2dd" font-size="13">continuous, </text>
+<text x="753.39" y="601" fill="#c7d2dd" font-size="13">rising</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">0.02→0.72.</text>
+</svg>

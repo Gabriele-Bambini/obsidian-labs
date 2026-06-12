@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C06 · Cell complexes, simplicial complexes, and biological relations</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (no Math.random / Date) ───────────────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // FACTS — Section-5 worked example (verbatim numbers from the note).
+  // Four biological objects: T=transcription factor, E=enhancer, G=gene,
+  // S=cell-state context. Six pairwise evidence scores + a default threshold.
+  // ════════════════════════════════════════════════════════════════════════
+  const OBJ   = ["T","E","G","S"];                  // T=TF E=enhancer G=gene S=state
+  const OBJL  = ["TF","enhancer","gene","state"];
+  // evidence on the SIX undirected pairs (note Section 5 "Tiny Numerical Check")
+  const EV = { "T-E":0.90, "E-G":0.80, "G-S":0.30, "S-T":0.65, "T-G":0.72, "E-S":0.22 };
+  // boundary cycle of the cell complex: T -> E -> G -> S -> T (the 4 cycle pairs)
+  const CYCLE = [["T","E"],["E","G"],["G","S"],["S","T"]];
+  // chords completing the clique (the two diagonals)
+  const CHORD = [["T","G"],["E","S"]];
+  const ALLPAIRS = CYCLE.concat(CHORD);             // 6 = k(k-1)/2 for k=4
+  const key=(a,b)=>EV[a+"-"+b]!=null?a+"-"+b:b+"-"+a;
+  const evOf=(a,b)=>EV[key(a,b)];
+
+  // square-ring layout of the 4 objects (deterministic)
+  const POS = {
+    T:[-2.4, 0,  2.4],
+    E:[ 2.4, 0,  2.4],
+    G:[ 2.4, 0, -2.4],
+    S:[-2.4, 0, -2.4]
+  };
+  const v3=(T,a)=>new T.Vector3(a[0],a[1],a[2]);
+
+  // clique edge count k(k-1)/2  (the pairwise-explosion diagnostic)
+  const cliqueEdges = k => k*(k-1)/2;
+
+  let sceneSnap={};
+
+  // ── shared helpers ────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const thr=s.threshold;                 // evidence threshold 0..1
+    const k=Math.round(s.groupSize);       // 4..10 for the explosion diagnostic
+    const closure=s.closure;               // simplicial closure strength 0..1
+    const orient=Math.round(s.orientation);// -1 / 0 / +1 cell boundary orientation
+
+    const gObj   = api.group("objects");
+    const gRel   = api.group("relations");
+    const gFace  = api.group("faces");
+    const gLbl   = api.group("labels");
+
+    const CY=new T.Color("#4dd7ff");  // graph / supported object
+    const AM=new T.Color("#fbbf24");  // hypergraph group
+    const GR=new T.Color("#34d399");  // strong / supported relation
+    const VI=new T.Color("#a78bfa");  // cell boundary / simplex fill
+    const RO=new T.Color("#fb7185");  // weak / forced-but-unsupported face
+    const SL=new T.Color("#54667c");
+
+    function lbl(txt,col,sz,p){const sp=api.bigLabel(txt,col,sz);sp.position.set(p[0],p[1],p[2]);gLbl.add(sp);}
+
+    // place the four object nodes (always present: closure forces the 0-cells)
+    function drawObjects(){
+      OBJ.forEach((o,i)=>{
+        const p=POS[o];
+        const col=i<2?CY:GR; // T,E cyan ; G,S green just to vary
+        const sph=new T.Mesh(new T.SphereGeometry(0.42,24,18),
+          new T.MeshStandardMaterial({color:col,emissive:col.clone().multiplyScalar(0.65),emissiveIntensity:0.7,roughness:0.35}));
+        sph.position.set(p[0],p[1],p[2]);
+        gObj.add(sph);
+        api.pick(sph,{object:{id:o,role:OBJL[i]}});
+        lbl(o,"#eaf6ff",1.5,[p[0],p[1]+0.95,p[2]]);
+        lbl(OBJL[i],"#8fa6b8",0.85,[p[0],p[1]-0.78,p[2]]);
+      });
+    }
+
+    // draw a pairwise relation cylinder; weak (<thr) = rose dashed
+    function drawPair(a,b,forced){
+      const pa=POS[a], pb=POS[b];
+      const ev=evOf(a,b);
+      const weak=ev<thr;
+      const va=v3(T,pa), vb=v3(T,pb);
+      const colHex = weak ? (forced?"#fb7185":"#7a4250") : "#34d399";
+      api.edge(va,vb,{color:colHex,width:weak?0.05:0.07,opacity:weak?0.9:0.95,group:"relations",dashed:weak});
+      // midpoint evidence chip
+      const mid=[(pa[0]+pb[0])/2,(pa[1]+pb[1])/2+0.35,(pa[2]+pb[2])/2];
+      lbl(ev.toFixed(2), weak?"#fb7185":"#9fe3b8", 0.78, mid);
+      return weak;
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 1: graph — every relation is pairwise; clique expansion explodes
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="graph"){
+      drawObjects();
+      let kept=0, dropped=0;
+      ALLPAIRS.forEach(([a,b])=>{const weak=drawPair(a,b,false);if(weak)dropped++;else kept++;});
+
+      // explosion bars: clique edges at k=4, k, 10
+      const ks=[4,k,10];
+      const labelsK=["k=4","k="+k,"k=10"];
+      const cols=[CY,AM,RO];
+      const baseX=-1.2, bx=1.3;
+      ks.forEach((kk,i)=>{
+        const ce=cliqueEdges(kk);
+        const h=0.2+ce/45*4.2;       // 45 = clique(10)
+        const x=baseX+i*bx;
+        const bar=new T.Mesh(new T.BoxGeometry(0.7,h,0.7),
+          new T.MeshStandardMaterial({color:cols[i],emissive:cols[i].clone().multiplyScalar(0.4),emissiveIntensity:0.45,roughness:0.4}));
+        bar.position.set(x,h/2,-5.2);
+        gFace.add(bar);
+        lbl(""+ce,cols[i].getStyle(),1.1,[x,h+0.45,-5.2]);
+        lbl(labelsK[i],"#8fa6b8",0.7,[x,-0.35,-5.2]);
+      });
+      lbl("clique edges k(k−1)/2","#8fa6b8",0.9,[0.1,-0.85,-5.2]);
+
+      const ce=cliqueEdges(k);
+      sceneSnap={mode,threshold:thr,groupSize:k,cliqueEdges:ce,keptEdges:kept,droppedEdges:dropped,closureViolations:0,overclaimRisk:+Math.min(1,0.15+kept/6*0.35+(ce/45)*0.4).toFixed(3),boundaryCoherence:0};
+      api.setMetric("cliqueEdges",""+ce);
+      api.setMetric("forcedFaces","0");
+      api.setMetric("droppedWeak",""+dropped);
+      api.setMetric("overclaim",(sceneSnap.overclaimRisk*100).toFixed(0)+"%");
+
+      return {
+        badge:"Graph · "+kept+" pairs kept / "+dropped+" dropped · clique(k="+k+")="+ce,
+        formula:"G=(V,E),  E⊆V×V  ·  clique(k)=k(k−1)/2",
+        insight:"Every relation is a pairwise edge. Strong pairs (green) survive the threshold; weak pairs G–S=0.30 and E–S=0.22 drop out (rose dashed). The bars show clique explosion: forcing a group of size k into pairwise edges invents k(k−1)/2 of them — 6 at k=4, 45 at k=10. Group facts become fake pairwise certainty.",
+        state:"At threshold "+thr.toFixed(2)+": "+kept+" of 6 pairs kept, "+dropped+" dropped. Clique(k="+k+")="+ce+" edges — mostly annotation practice, not biology.",
+        metrics:{cliqueEdges:""+ce,forcedFaces:"0",droppedWeak:""+dropped,overclaim:(sceneSnap.overclaimRisk*100).toFixed(0)+"%"},
+        focus:{center:[0,0,-1.4],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 2: hypergraph — one group object, NO forced pairwise edges
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="hypergraph"){
+      drawObjects();
+      // one translucent amber hull over all four objects = the single hyperedge
+      const order=["T","E","G","S"];
+      const pts=order.map(o=>v3(T,POS[o]));
+      // amber boundary ring (membership outline, not pairwise edges)
+      for(let i=0;i<order.length;i++){
+        const a=POS[order[i]], b=POS[order[(i+1)%order.length]];
+        api.edge(v3(T,a),v3(T,b),{color:"#fbbf24",width:0.05,opacity:0.55,group:"faces"});
+      }
+      // filled membership plane (centroid disk)
+      const fill=new T.Mesh(new T.PlaneGeometry(5.4,5.4),
+        new T.MeshBasicMaterial({color:AM.getHex(),transparent:true,opacity:0.16,side:T.DoubleSide,depthWrite:false}));
+      fill.rotation.x=-Math.PI/2; fill.position.set(0,-0.02,0);
+      gFace.add(fill);
+      // incidence spokes: each member -> hyperedge centroid
+      order.forEach(o=>{
+        api.edge(v3(T,POS[o]),new T.Vector3(0,1.1,0),{color:"#fbbf24",width:0.035,opacity:0.5,group:"relations"});
+      });
+      const hub=new T.Mesh(new T.SphereGeometry(0.34,20,14),
+        new T.MeshStandardMaterial({color:AM,emissive:AM.clone().multiplyScalar(0.7),emissiveIntensity:0.8,roughness:0.3}));
+      hub.position.set(0,1.1,0);
+      gObj.add(hub);
+      api.pick(hub,{object:{id:"h",role:"hyperedge {T,E,G,S}"}});
+      lbl("hyperedge h = {T,E,G,S}","#fbbf24",1.05,[0,2.05,0]);
+
+      // incidence density = members / clique(k)  (lower = less overclaim)
+      const ce=cliqueEdges(4);
+      const density=+(4/ce).toFixed(3);     // 4 incidences vs 6 possible pairs
+      const risk=+Math.max(0.08,0.26-closure*0.05).toFixed(3);
+      sceneSnap={mode,threshold:thr,groupSize:k,cliqueEdges:ce,keptEdges:4,droppedEdges:0,closureViolations:0,overclaimRisk:risk,boundaryCoherence:0,incidenceDensity:density};
+      api.setMetric("cliqueEdges","4 inc");
+      api.setMetric("forcedFaces","0");
+      api.setMetric("droppedWeak","0");
+      api.setMetric("overclaim",(risk*100).toFixed(0)+"%");
+
+      return {
+        badge:"Hypergraph · 1 group object · 0 forced pairs",
+        formula:"H=(V,𝓔),  h={T,E,G,S}∈𝓔  ·  no closure required",
+        insight:"The module is stored as ONE hyperedge h={T,E,G,S}. Each object connects to the group hub (amber spokes) — incidence, not interaction. No pairwise edge is invented, so weak pairs G–S and E–S never create false certainty. The cost: a hyperedge alone has no signed, oriented boundary.",
+        state:"One hyperedge holds all four objects. Incidence = 4 (one per member) vs "+ce+" possible pairs. Overclaim risk drops to "+(risk*100).toFixed(0)+"% — membership ≠ pairwise regulation.",
+        metrics:{cliqueEdges:"4 inc",forcedFaces:"0",droppedWeak:"0",overclaim:(risk*100).toFixed(0)+"%"},
+        focus:{center:[0,0.6,0],radius:12}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 3: simplicial — closure forces ALL faces; weak ones violate
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="simplicial"){
+      drawObjects();
+      // the 3-simplex σ={T,E,G,S}: draw all 6 edges (closure)
+      let violations=0;
+      ALLPAIRS.forEach(([a,b])=>{
+        const ev=evOf(a,b);
+        const weak=ev<thr;
+        if(weak) violations++;
+        drawPair(a,b,true);  // forced=true => weak edges are rose (closure-forced)
+      });
+      // the four triangular 2-faces of the tetrahedron, fill scaled by closure
+      const tris=[["T","E","G"],["T","E","S"],["T","G","S"],["E","G","S"]];
+      tris.forEach(tri=>{
+        const minEv=Math.min(...[[tri[0],tri[1]],[tri[1],tri[2]],[tri[0],tri[2]]].map(([a,b])=>evOf(a,b)));
+        const ok=minEv>=thr;
+        const a=POS[tri[0]],b=POS[tri[1]],c=POS[tri[2]];
+        const geo=new T.BufferGeometry();
+        geo.setAttribute("position",new T.Float32BufferAttribute([a[0],a[1],a[2],b[0],b[1],b[2],c[0],c[1],c[2]],3));
+        geo.computeVertexNormals();
+        const fcol=ok?VI:RO;
+        const m=new T.MeshBasicMaterial({color:fcol.getHex(),transparent:true,opacity:(ok?0.16:0.26)*(0.4+0.6*closure),side:T.DoubleSide,depthWrite:false});
+        gFace.add(new T.Mesh(geo,m));
+      });
+      // closure-violation flags float over weak forced faces
+      let flagY=0;
+      ALLPAIRS.forEach(([a,b])=>{
+        if(evOf(a,b)<thr){
+          const mid=[(POS[a][0]+POS[b][0])/2,1.1,(POS[a][2]+POS[b][2])/2];
+          const cone=new T.Mesh(new T.ConeGeometry(0.13,0.4,8),new T.MeshBasicMaterial({color:RO.getHex()}));
+          cone.position.set(mid[0],mid[1],mid[2]);
+          gFace.add(cone);
+        }
+      });
+      lbl("σ = {T,E,G,S}  (3-simplex, closure on)","#a78bfa",1.0,[0,3.0,0]);
+
+      const ce=cliqueEdges(4);
+      const risk=+Math.min(1,0.2+violations/4*0.55+closure*0.2).toFixed(3);
+      sceneSnap={mode,threshold:thr,groupSize:k,cliqueEdges:ce,keptEdges:6,droppedEdges:0,closureViolations:violations,overclaimRisk:risk,boundaryCoherence:0,closureStrength:+closure.toFixed(2)};
+      api.setMetric("cliqueEdges",""+ce);
+      api.setMetric("forcedFaces",""+violations);
+      api.setMetric("droppedWeak","0 (forced)");
+      api.setMetric("overclaim",(risk*100).toFixed(0)+"%");
+
+      return {
+        badge:"Simplicial · σ={T,E,G,S} · "+violations+" closure violation"+(violations===1?"":"s"),
+        formula:"σ∈K ⇒ every face(σ)∈K  ·  closure forces all "+ce+" edges",
+        insight:"Closure is the defining discipline: include the 3-simplex σ={T,E,G,S} and you must include all "+ce+" edges and 4 triangles. But G–S=0.30 and E–S=0.22 fall below threshold — closure FORCES them anyway (rose faces, red flags). That is topology inventing evidence the data never supported.",
+        state:"Closure forces all "+ce+" edges. "+violations+" of them are below threshold "+thr.toFixed(2)+" → closure violations. Raising closure strength deepens the forced fills without adding evidence.",
+        metrics:{cliqueEdges:""+ce,forcedFaces:""+violations,droppedWeak:"0 (forced)",overclaim:(risk*100).toFixed(0)+"%"},
+        focus:{center:[0,0.4,0],radius:12.5}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // MODE 4: cell complex — oriented boundary T→E→G→S→T, no forced clique
+    // ════════════════════════════════════════════════════════════════
+    if(mode==="cell"){
+      drawObjects();
+      // only the 4 boundary edges of the 2-cell; diagonals NOT forced
+      let weakOnBoundary=0;
+      CYCLE.forEach(([a,b])=>{ if(evOf(a,b)<thr) weakOnBoundary++; });
+      // oriented arrows around the boundary cycle (direction by `orient`)
+      const cyc = orient>=0 ? CYCLE : CYCLE.map(([a,b])=>[b,a]).reverse();
+      cyc.forEach(([a,b])=>{
+        const ev=evOf(a,b);
+        const weak=ev<thr;
+        if(orient===0){
+          api.edge(v3(T,POS[a]),v3(T,POS[b]),{color:weak?"#fb7185":"#a78bfa",width:0.06,opacity:0.95,group:"relations",dashed:weak});
+        }else{
+          api.arrow(v3(T,POS[a]),v3(T,POS[b]),{color:weak?"#fb7185":"#a78bfa",width:0.06,head:0.34,group:"relations"});
+        }
+        const mid=[(POS[a][0]+POS[b][0])/2,(POS[a][1]+POS[b][1])/2+0.35,(POS[a][2]+POS[b][2])/2];
+        lbl(ev.toFixed(2),weak?"#fb7185":"#cdb8ff",0.78,mid);
+      });
+      // the irregular 2-cell interior (quad fill, violet) — NOT a clique
+      const order=["T","E","G","S"];
+      const a=POS.T,b=POS.E,c=POS.G,d=POS.S;
+      const geo=new T.BufferGeometry();
+      geo.setAttribute("position",new T.Float32BufferAttribute([
+        a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2],
+        a[0],a[1],a[2], c[0],c[1],c[2], d[0],d[1],d[2]
+      ],3));
+      geo.computeVertexNormals();
+      gFace.add(new T.Mesh(geo,new T.MeshBasicMaterial({color:VI.getHex(),transparent:true,opacity:0.18,side:T.DoubleSide,depthWrite:false})));
+      // the two un-forced diagonals shown faint/absent to contrast with simplicial
+      CHORD.forEach(([a2,b2])=>{
+        api.edge(v3(T,POS[a2]),v3(T,POS[b2]),{color:"#33414f",width:0.02,opacity:0.28,group:"faces",dashed:true});
+      });
+      const arrowTxt = orient===0?"undirected boundary":(orient>0?"T→E→G→S→T":"S→G→E→T→S");
+      lbl("2-cell ∂ = "+arrowTxt,"#a78bfa",1.0,[0,3.0,0]);
+
+      // boundary coherence: fraction of boundary edges above threshold
+      const coherence=+((CYCLE.length-weakOnBoundary)/CYCLE.length).toFixed(3);
+      const ce=cliqueEdges(4);
+      const risk=+Math.min(1,0.16+weakOnBoundary*0.1+ (orient===0?0.06:0)).toFixed(3);
+      sceneSnap={mode,threshold:thr,groupSize:k,cliqueEdges:ce,keptEdges:4,droppedEdges:2,closureViolations:weakOnBoundary,overclaimRisk:risk,boundaryCoherence:coherence,orientation:orient};
+      api.setMetric("cliqueEdges","4 bnd");
+      api.setMetric("forcedFaces",""+weakOnBoundary);
+      api.setMetric("droppedWeak","2 diag");
+      api.setMetric("overclaim",(risk*100).toFixed(0)+"%");
+
+      return {
+        badge:"Cell · ∂="+arrowTxt+" · coherence "+(coherence*100).toFixed(0)+"%",
+        formula:"2-cell with ∂: T→E→G→S→T  ·  boundary specified, NOT a clique",
+        insight:"The module becomes one oriented 2-cell with boundary T→E→G→S→T. Only the 4 boundary edges exist; the two diagonals (faint grey) are NOT forced — so the boundary keeps weak G–S without claiming E–S or T–G. Orientation (sign of the boundary map) carries pathway-loop direction. The cost is auditing: the boundary must really be supported.",
+        state:"Boundary uses 4 edges, not "+ce+". "+weakOnBoundary+" boundary edge(s) below threshold "+thr.toFixed(2)+". Coherence "+(coherence*100).toFixed(0)+"%. Orientation "+(orient===0?"off":(orient>0?"+":"−"))+" sets ∂ direction.",
+        metrics:{cliqueEdges:"4 bnd",forcedFaces:""+weakOnBoundary,droppedWeak:"2 diag",overclaim:(risk*100).toFixed(0)+"%"},
+        focus:{center:[0,0.4,0],radius:12.5}
+      };
+    }
+
+    return {badge:"C06",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:12}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"c06",
+    kind:"cell-simplicial-complex-biological-relations",
+    eyebrow:"Block C · Geometric & Topological DL",
+    title:"C06 · Cell complexes, simplicial complexes & biological relations",
+    subtitle:"One module T–E–G–S, four ways to encode it. Choose the domain before the architecture: each choice changes which biological claims are forced.",
+    selectedLabel:"Object / relation",
+    selectedHint:"Click an object, edge, or hyperedge hub.",
+    modes:[
+      {value:"graph",       label:"Graph (pairwise · clique explodes)"},
+      {value:"hypergraph",  label:"Hypergraph (one group · no closure)"},
+      {value:"simplicial",  label:"Simplicial (closure forces all faces)"},
+      {value:"cell",        label:"Cell complex (oriented boundary)"}
+    ],
+    params:[
+      {key:"threshold",   label:"evidence threshold",min:0.2,max:0.95,step:0.01,value:0.60,
+       fmt:v=>v.toFixed(2)},
+      {key:"groupSize",   label:"group size k (clique diagnostic)",min:4,max:10,step:1,value:4,
+       fmt:v=>"k="+Math.round(v),modes:["graph"]},
+      {key:"closure",     label:"closure strength",min:0,max:1,step:0.01,value:0.7,
+       fmt:v=>v.toFixed(2),modes:["simplicial","hypergraph"]},
+      {key:"orientation", label:"boundary orientation (−1 / 0 / +1)",min:-1,max:1,step:1,value:1,
+       fmt:v=>["reverse","off","forward"][Math.round(v)+1],modes:["cell"]}
+    ],
+    metrics:[
+      {key:"cliqueEdges",label:"Pairwise / incidence load",accent:"cyan"},
+      {key:"forcedFaces",label:"Closure violations",accent:"rose"},
+      {key:"droppedWeak",label:"Weak relations dropped",accent:"green"},
+      {key:"overclaim",  label:"Overclaim risk",accent:"violet"}
+    ],
+    layers:[
+      {group:"objects",   label:"Objects (0-cells)"},
+      {group:"relations", label:"Pairwise relations"},
+      {group:"faces",     label:"Faces / group / boundary"},
+      {group:"labels",    label:"Labels"}
+    ],
+    primary:{
+      label:"Threshold 0.60",
+      on:api=>{api.setParam("threshold",0.60);}
+    },
+    secondary:{
+      label:"Strict 0.85",
+      on:api=>{api.setParam("threshold",0.85);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">cyan</span>/<span style="color:#34d399">green</span>=supported object/relation · <span style="color:#fbbf24">amber</span>=hyperedge group · <span style="color:#a78bfa">violet</span>=cell boundary / 2-face · <span style="color:#fb7185">rose</span>=weak relation forced by closure.',
+    onParam(api){
+      const s=api.state;
+      api.frame([0,0.4,s.mode==="graph"?-1.4:0],s.mode==="graph"?13:12.5);
+    },
+    onMode(api){
+      const s=api.state;
+      api.frame([0,0.4,s.mode==="graph"?-1.4:0],s.mode==="graph"?13:12.5);
+    },
+    onSelect(api,d){
+      if(d.object){
+        if(d.object.id==="h") api.setSelected("Hyperedge "+d.object.role);
+        else api.setSelected("Object "+d.object.id+" · "+d.object.role);
+      }
+    },
+    build,
+    snapshot(s){
+      const thr=s.threshold;
+      const k=Math.round(s.groupSize);
+      const ce=cliqueEdges(4);
+      const cliqueK=cliqueEdges(k);
+      // weak counts on the full clique vs the cell boundary cycle
+      let weakClique=0; ALLPAIRS.forEach(([a,b])=>{if(evOf(a,b)<thr)weakClique++;});
+      let weakBoundary=0; CYCLE.forEach(([a,b])=>{if(evOf(a,b)<thr)weakBoundary++;});
+      const violations = s.mode==="simplicial"?weakClique : s.mode==="cell"?weakBoundary : 0;
+      return {
+        mode:s.mode,
+        threshold:+thr.toFixed(2),
+        groupSize:k,
+        cliqueEdgesK:cliqueK,
+        cliqueEdges4:ce,
+        keptPairs:6-weakClique,
+        droppedPairs:weakClique,
+        closureViolations:violations,
+        boundaryCoherence:+((4-weakBoundary)/4).toFixed(3),
+        orientation:Math.round(s.orientation),
+        closureForcesUnsupported: s.mode==="simplicial" && weakClique>0
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

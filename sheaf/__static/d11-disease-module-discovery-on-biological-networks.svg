@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure D11 — One disease, three lenses — diffusion, enrichment, and hub bias</title>
+<desc id="d">Four-panel captioned figure: One disease, three lenses — diffusion, enrichment, and hub bias</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE D11 · BLOCK D · BIOLOGY GRAPHS</text>
+<text x="40" y="62" fill="#e8eef6" font-size="20" font-weight="700">One disease, three lenses — diffusion, enrichment, and hub bias</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">RWR steady state (α=0.4)</text>
+<text x="56" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">p* = α(I − (1−α)A_norm)⁻¹ p⁰</text>
+<text x="56" y="167.5" fill="#4dd7ff" font-size="11.5" font-weight="700">NOD2 (seed)</text>
+<text x="196" y="167.5" fill="#9fb4cc" font-size="11.5">0.270</text>
+<text x="56" y="187.5" fill="#fbbf24" font-size="11.5" font-weight="700">LRRK2 (cand)</text>
+<text x="196" y="187.5" fill="#9fb4cc" font-size="11.5">0.202</text>
+<text x="56" y="207.5" fill="#34d399" font-size="11.5" font-weight="700">MUC1 (off)</text>
+<text x="196" y="207.5" fill="#9fb4cc" font-size="11.5">0.068</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Disease enrichment E(M)</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">E(M) = (|M∩D|/|M|) / (|D|/|V|)</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">= (3/5) / (231/15783)</text>
+<text x="502" y="187.5" fill="#4dd7ff" font-size="11.5" font-weight="700">autophagy</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">×41</text>
+<text x="502" y="207.5" fill="#8a99ad" font-size="11">…</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">GNN module score</text>
+<rect x="56" y="292" width="12" height="64" rx="2" fill="#4dd7ff"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">autoph</text>
+<rect x="96" y="294.81" width="12" height="61.19" rx="2" fill="#34d399"/>
+<text x="102" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">IL23</text>
+<rect x="136" y="336.31" width="12" height="19.69" rx="2" fill="#fbbf24"/>
+<text x="142" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">mucin</text>
+<rect x="176" y="350.37" width="12" height="5.63" rx="2" fill="#a78bfa"/>
+<text x="182" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">cycle</text>
+<line x1="56" y1="320.84" x2="216" y2="320.84" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393" fill="#8a99ad" font-size="11">Two modules pass τ=0.5; mucin and cell-cycle are rejected.</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Hub trap (TP53)</text>
+<text x="502" y="301.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">E[|M∩hub|] = |D|·deg/|V|</text>
+<text x="502" y="329.5" fill="#fb7185" font-size="11.5" font-weight="700">TP53 deg</text>
+<text x="642" y="329.5" fill="#9fb4cc" font-size="11.5">3521</text>
+<text x="502" y="349.5" fill="#fbbf24" font-size="11.5" font-weight="700">by-chance hits</text>
+<text x="642" y="349.5" fill="#9fb4cc" font-size="11.5">51.5</text>
+<text x="502" y="369.5" fill="#4dd7ff" font-size="11.5" font-weight="700">NOD2 deg</text>
+<text x="642" y="369.5" fill="#9fb4cc" font-size="11.5">46</text>
+<text x="502" y="397" fill="#8a99ad" font-size="11">Degree-correction removes TP53; NOD2 survives as a real</text>
+<text x="502" y="417" fill="#8a99ad" font-size="11">target.</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure D11. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">Crohn's </text>
+<text x="208.79" y="538" fill="#c7d2dd" font-size="13">disease </text>
+<text x="273.27" y="538" fill="#c7d2dd" font-size="13">module </text>
+<text x="329.69" y="538" fill="#c7d2dd" font-size="13">discovery </text>
+<text x="410.29" y="538" fill="#c7d2dd" font-size="13">on </text>
+<text x="434.47" y="538" fill="#c7d2dd" font-size="13">the </text>
+<text x="466.71" y="538" fill="#c7d2dd" font-size="13">PPI </text>
+<text x="502.58" y="538" fill="#c7d2dd" font-size="13">network, </text>
+<text x="575.12" y="538" fill="#c7d2dd" font-size="13">three </text>
+<text x="623.48" y="538" fill="#c7d2dd" font-size="13">ways. </text>
+<text x="671.84" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="705.37" y="538" fill="#c7d2dd" font-size="13">Random </text>
+<text x="763" y="538" fill="#c7d2dd" font-size="13">walk </text>
+<text x="803.3" y="538" fill="#c7d2dd" font-size="13">with</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">restart </text>
+<text x="104.48" y="559" fill="#c7d2dd" font-size="13">(α=0.4) </text>
+<text x="168.96" y="559" fill="#c7d2dd" font-size="13">diffuses </text>
+<text x="241.5" y="559" fill="#c7d2dd" font-size="13">seed </text>
+<text x="281.8" y="559" fill="#c7d2dd" font-size="13">signal; </text>
+<text x="346.28" y="559" fill="#c7d2dd" font-size="13">LRRK2 </text>
+<text x="399.48" y="559" fill="#c7d2dd" font-size="13">(0.202) </text>
+<text x="463.96" y="559" fill="#c7d2dd" font-size="13">is </text>
+<text x="488.14" y="559" fill="#c7d2dd" font-size="13">elevated </text>
+<text x="560.68" y="559" fill="#c7d2dd" font-size="13">over </text>
+<text x="600.98" y="559" fill="#c7d2dd" font-size="13">the </text>
+<text x="633.22" y="559" fill="#c7d2dd" font-size="13">unrelated </text>
+<text x="713.82" y="559" fill="#c7d2dd" font-size="13">MUC1 </text>
+<text x="757.74" y="559" fill="#c7d2dd" font-size="13">(0.068). </text>
+<text x="830.28" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b)</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">Enrichment </text>
+<text x="129.87" y="580" fill="#c7d2dd" font-size="13">E(M) </text>
+<text x="172.59" y="580" fill="#c7d2dd" font-size="13">= </text>
+<text x="188.71" y="580" fill="#c7d2dd" font-size="13">×41 </text>
+<text x="227.4" y="580" fill="#c7d2dd" font-size="13">for </text>
+<text x="259.64" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="291.88" y="580" fill="#c7d2dd" font-size="13">autophagy </text>
+<text x="372.48" y="580" fill="#c7d2dd" font-size="13">and </text>
+<text x="404.72" y="580" fill="#c7d2dd" font-size="13">IL-23 </text>
+<text x="455.49" y="580" fill="#c7d2dd" font-size="13">modules, </text>
+<text x="528.03" y="580" fill="#c7d2dd" font-size="13">×0 </text>
+<text x="558.66" y="580" fill="#c7d2dd" font-size="13">for </text>
+<text x="590.9" y="580" fill="#c7d2dd" font-size="13">cell-cycle. </text>
+<text x="687.62" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="721.15" y="580" fill="#c7d2dd" font-size="13">The </text>
+<text x="754.6" y="580" fill="#c7d2dd" font-size="13">DiseaseModuleGNN</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">passes </text>
+<text x="96.42" y="601" fill="#c7d2dd" font-size="13">both </text>
+<text x="136.72" y="601" fill="#c7d2dd" font-size="13">disease </text>
+<text x="201.2" y="601" fill="#c7d2dd" font-size="13">modules </text>
+<text x="265.68" y="601" fill="#c7d2dd" font-size="13">above </text>
+<text x="314.04" y="601" fill="#c7d2dd" font-size="13">τ=0.5 </text>
+<text x="362.4" y="601" fill="#c7d2dd" font-size="13">and </text>
+<text x="394.64" y="601" fill="#c7d2dd" font-size="13">rejects </text>
+<text x="459.12" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="491.36" y="601" fill="#c7d2dd" font-size="13">rest. </text>
+<text x="539.72" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="573.25" y="601" fill="#c7d2dd" font-size="13">TP53 </text>
+<text x="615.97" y="601" fill="#c7d2dd" font-size="13">(deg </text>
+<text x="656.27" y="601" fill="#c7d2dd" font-size="13">3521) </text>
+<text x="704.63" y="601" fill="#c7d2dd" font-size="13">touches </text>
+<text x="769.11" y="601" fill="#c7d2dd" font-size="13">51.5 </text>
+<text x="809.41" y="601" fill="#c7d2dd" font-size="13">of </text>
+<text x="833.59" y="601" fill="#c7d2dd" font-size="13">the </text>
+<text x="865.83" y="601" fill="#c7d2dd" font-size="13">231</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">seeds </text>
+<text x="88.36" y="622" fill="#c7d2dd" font-size="13">by </text>
+<text x="112.54" y="622" fill="#c7d2dd" font-size="13">chance </text>
+<text x="168.96" y="622" fill="#c7d2dd" font-size="13">— </text>
+<text x="191.53" y="622" fill="#c7d2dd" font-size="13">degree-correction </text>
+<text x="336.61" y="622" fill="#c7d2dd" font-size="13">kills </text>
+<text x="384.97" y="622" fill="#c7d2dd" font-size="13">the </text>
+<text x="417.21" y="622" fill="#c7d2dd" font-size="13">hub </text>
+<text x="449.45" y="622" fill="#c7d2dd" font-size="13">trap.</text>
+</svg>

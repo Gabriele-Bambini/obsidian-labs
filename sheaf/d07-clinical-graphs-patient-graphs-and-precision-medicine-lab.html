@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D07 · Clinical graphs, patient graphs, and precision medicine</title>
+<link rel="stylesheet" href="shared/lab-engine.css">
+</head>
+<body>
+<script src="shared/three.min.js"></script>
+<script src="shared/lab-engine.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ── deterministic pseudo-random (hash-based; no RNG, no clock) ───────────
+  const frac=v=>{const a=v-Math.floor(v);return a<0?a+1:a;};
+  const prand=i=>frac(Math.sin(i*127.1+31.7)*43758.5453);
+
+  // ── scene snapshot state ─────────────────────────────────────────────────
+  let sceneSnap={};
+
+  // ── lesson FACTS (Section 5: TCGA colorectal cancer worked example) ──────
+  const FACTS={
+    cohort:500,            // TCGA colorectal patients
+    krasFreq:0.35,         // KRAS G12D frequency in CRC
+    krasPatients:175,      // 0.35 * 500 -> hub node degree
+    aurocRandom:0.74,      // 5-year OS, random split
+    aurocTemporal:0.68,    // temporal split (enrol 2006-10 / test 2011-13)
+    domainGap:0.06,        // 0.74 - 0.68
+    rgcnLayers:2,          // 2-layer RGCN genotype->treatment reasoning
+    leakMin:2.0,           // temporal leakage inflates metrics 2-5x
+    leakMax:5.0
+  };
+
+  // ── colours: 3Blue1Brown-ish (3 blues + 1 brown/amber) ──────────────────
+  const C_BLUE ="#4dd7ff"; // primary cyan-blue (patient / valid)
+  const C_BLUE2="#3b82f6"; // mid blue (genomic level)
+  const C_BLUE3="#a78bfa"; // violet-blue (phenotype / gap)
+  const C_BROWN="#d8893b"; // brown/amber accent (drugs / leakage / hub)
+  const C_GREEN="#34d399"; // valid / forward-in-time
+  const C_ROSE ="#f4708a"; // leak / backward edge
+  const C_SLATE="#54667c"; // muted
+
+  // ── deterministic AUROC model for the split contrast ────────────────────
+  // leakLevel 0..1 -> how much future info leaks in (temporal mode)
+  function leakyAuroc(leakLevel){
+    const base=FACTS.aurocTemporal;             // honest 0.68
+    const v=base+(0.97-base)*Math.pow(leakLevel,0.7);
+    return Math.max(0.5,Math.min(0.985,v));
+  }
+  // split contrast: random vs temporal, with treatment-era drift slider 0..1
+  function splitAuroc(isTemporal,drift){
+    if(!isTemporal) return FACTS.aurocRandom;   // random split fixed ref 0.74
+    return Math.max(0.55,FACTS.aurocRandom-FACTS.domainGap*(0.4+0.6*drift)/0.6);
+  }
+  // hub message dilution: degree d. unnormalized -> 1/d (collapse);
+  // GCN symmetric norm D^-1/2 A D^-1/2 -> 1/sqrt(d) (preserved)
+  function hubSignal(degree,normOn){
+    const d=Math.max(1,degree);
+    return normOn? 1/Math.sqrt(d) : 1/d;
+  }
+
+  // ── build ────────────────────────────────────────────────────────────────
+  function build(api){
+    const T=api.THREE, s=api.state;
+    const mode=s.mode;
+    const nMut   =Math.round(s.nMut);
+    const krasDeg=Math.round(s.krasDeg);
+    const leak   =s.leak;
+    const drift  =s.drift;
+    const symNorm=Math.round(s.symNorm);
+
+    const gGraph =api.group("graph");
+    const gEdges =api.group("edges");
+    const gBars  =api.group("bars");
+    const gLabels=api.group("labels");
+
+    function L(txt,col,sz,x,y,z){const sp=api.bigLabel(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+    function l(txt,col,sz,x,y,z){const sp=api.label(txt,col,sz);sp.position.set(x,y,z);gLabels.add(sp);}
+
+    const CB=new T.Color(C_BLUE),CB2=new T.Color(C_BLUE2),CB3=new T.Color(C_BLUE3),
+          CBR=new T.Color(C_BROWN),CG=new T.Color(C_GREEN),CR=new T.Color(C_ROSE),CS=new T.Color(C_SLATE);
+
+    function sphere(pos,r,c,emi){
+      const m=new T.Mesh(new T.SphereGeometry(r,20,16),
+        new T.MeshStandardMaterial({color:c,emissive:new T.Color(c).multiplyScalar(emi==null?0.55:emi),emissiveIntensity:0.85,roughness:0.38}));
+      m.position.set(pos[0],pos[1],pos[2]);return m;
+    }
+    function line(a,b,c,op){
+      return new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(a[0],a[1],a[2]),new T.Vector3(b[0],b[1],b[2])]),
+        new T.LineBasicMaterial({color:new T.Color(c).getHex(),transparent:true,opacity:op==null?0.6:op}));
+    }
+    function coneAt(pos,c,down){
+      const m=new T.Mesh(new T.ConeGeometry(0.12,0.34,10),new T.MeshBasicMaterial({color:new T.Color(c).getHex()}));
+      m.position.set(pos[0],pos[1],pos[2]); if(down)m.rotation.z=Math.PI; return m;
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 1: multilevel — heterogeneous multi-level patient graph
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="multilevel"){
+      const pPos=[0,0,0];
+      gGraph.add(sphere(pPos,0.62,CB,0.65));
+      L("Patient A · stage IIIC · MSS","#4dd7ff",1.5,0,1.15,0);
+
+      const yGen=2.4, yPhe=0.2, yTrt=-2.2;
+
+      // genomic level — somatic mutations; KRAS G12D highlighted as driver hub
+      const mutNames=["KRAS G12D","APC R1450*","TP53 R273H","SMAD4 del","PIK3CA","FBXW7","BRAF","NRAS"];
+      const genN=Math.max(2,Math.min(8,nMut));
+      let krasXYZ=null;
+      for(let i=0;i<genN;i++){
+        const ang=(i/genN)*Math.PI*2;
+        const px=-4.4+Math.cos(ang)*1.7, pz=Math.sin(ang)*1.7;
+        const isKras=(i===0); if(isKras)krasXYZ=[px,yGen,pz];
+        const c=isKras?CBR:CB2;
+        const node=sphere([px,yGen,pz],isKras?0.42:0.30,c,isKras?0.8:0.5);
+        gGraph.add(node);
+        api.pick(node,{node:{kind:"mutation",name:mutNames[i],driver:isKras}});
+        gEdges.add(line([px,yGen,pz],pPos,isKras?C_BROWN:C_BLUE2,isKras?0.85:0.5));
+      }
+      L("genomic · somatic mutations","#3b82f6",1.2,-4.4,yGen+1.55,0);
+
+      // phenotype level — ICD diagnoses
+      const dx=["C18.2 colon","K92.1 melena"];
+      for(let i=0;i<2;i++){
+        const px=2.1, pz=(i-0.5)*2.4;
+        const node=sphere([px,yPhe,pz],0.34,CB3,0.55);
+        gGraph.add(node);
+        api.pick(node,{node:{kind:"diagnosis",name:dx[i]}});
+        gEdges.add(line([px,yPhe,pz],pPos,C_BLUE3,0.55));
+        l(dx[i],"#a78bfa",0.40,px,yPhe+0.62,pz);
+      }
+      L("phenotype · ICD-10","#a78bfa",1.2,3.0,yPhe+1.3,0);
+
+      // treatment level — drugs
+      const drugs=["FOLFOX","Bevacizumab"];
+      for(let i=0;i<2;i++){
+        const px=-1.4+i*2.8, pz=-1.4;
+        const node=sphere([px,yTrt,pz],0.36,CBR,0.55);
+        gGraph.add(node);
+        api.pick(node,{node:{kind:"drug",name:drugs[i]}});
+        gEdges.add(line([px,yTrt,pz],pPos,C_BROWN,0.5));
+        l(drugs[i],"#d8893b",0.42,px,yTrt-0.62,pz);
+      }
+      L("treatment · RxNorm","#d8893b",1.2,0,yTrt-1.35,0);
+
+      // cross-level edge: KRAS G12D -> MAPK pathway (the 2-hop genotype->treatment prior)
+      const mapk=[-2.2,yGen-1.0,2.6];
+      gGraph.add(sphere(mapk,0.26,CG,0.5));
+      l("MAPK pathway","#34d399",0.4,mapk[0],mapk[1]+0.5,mapk[2]);
+      if(krasXYZ) gEdges.add(line(krasXYZ,mapk,C_GREEN,0.7));
+
+      const nodes=1+genN+2+2+1;
+      sceneSnap={mode,nMut:genN,krasDeg:0,leak:0,drift:0,symNorm:0,
+                 nodeCount:nodes,levels:3,aurocRandom:FACTS.aurocRandom,aurocTemporal:FACTS.aurocTemporal,
+                 domainGap:FACTS.domainGap,leakInflation:0,hubWeight:0};
+
+      return {
+        badge:"Multi-level patient graph · "+genN+" mutations · "+nodes+" nodes",
+        formula:"h<sub>patient</sub> = RGCN<sub>2</sub>( genomic ⊕ phenotype ⊕ treatment )",
+        insight:"One heterogeneous graph fuses three modalities onto a single patient node. The 2-layer RGCN reasons genotype → pathway → drug response: KRAS G12D (brown) activates MAPK (green), which conditions response to FOLFOX / Bevacizumab. No single-modality model integrates all of these at once — that integration is the promise of clinical graph learning.",
+        state:"Patient A: KRAS G12D + high MYC + MSS + stage IIIC → known poor-prognosis combination. "+genN+" somatic mutations attached. Add or remove mutation nodes with the slider.",
+        metrics:{nodeCount:""+nodes,domainGap:"—",leakInflation:"—",hubWeight:"—"},
+        focus:{center:[-0.5,0,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 2: temporal — temporal leakage vs forward-in-time edges
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="temporal"){
+      const events=[
+        {t:0,name:"admit · fever",  c:CB ,kind:"visit"},
+        {t:1,name:"blood culture",  c:CB ,kind:"lab"},
+        {t:2,name:"antibiotics",    c:CBR,kind:"drug"},
+        {t:3,name:"sepsis Dx",      c:CB3,kind:"diagnosis"},
+        {t:4,name:"ICU transfer",   c:CB ,kind:"outcome"}
+      ];
+      const xS=2.2, x0=-4.4;
+      gEdges.add(line([x0-0.6,0,0],[x0+events.length*xS-1.2,0,0],"#2a3d52",0.8));
+
+      // prediction time: honest leak=0 -> predict only from history (early cut);
+      // larger leak -> include later (future) events as features.
+      const predIdx=1+Math.round(leak*3); // index of last *included* event
+      events.forEach((e,i)=>{
+        const x=x0+i*xS;
+        const used=(i<=predIdx);
+        const node=sphere([x,0,0],0.36,e.c,used?0.6:0.22);
+        if(!used){node.material.opacity=0.5;node.material.transparent=true;}
+        gGraph.add(node);
+        api.pick(node,{node:{kind:e.kind,name:e.name,t:e.t,used:used}});
+        l("t"+e.t,"#8a99ad",0.42,x,-0.62,0);
+        L(e.name,used?e.c.getStyle():"#54667c",1.05,x,0.7,0);
+        if(i<events.length-1){
+          const xn=x0+(i+1)*xS;
+          gEdges.add(line([x,0,0],[xn,0,0],C_GREEN,0.7));
+          gGraph.add(coneAt([(x+xn)/2+0.5,0,0],C_GREEN,false));
+        }
+      });
+
+      // leakage backward arc: future antibiotics(t2) used to predict past sepsis(t3)
+      if(leak>0.05){
+        const xA=x0+2*xS, x3=x0+3*xS;
+        const mid=[(xA+x3)/2,1.6,0];
+        gEdges.add(line([x3,0.25,0],mid,C_ROSE,0.9));
+        gEdges.add(line(mid,[xA,0.25,0],C_ROSE,0.9));
+        gGraph.add(coneAt([xA+0.25,0.6,0],C_ROSE,false));
+        L("LEAK: t2 drug → t3 Dx","#f4708a",1.2,(xA+x3)/2,2.1,0);
+      }
+
+      // prediction-time marker
+      const xPred=x0+predIdx*xS+xS*0.5;
+      gEdges.add(line([xPred,-1.1,0],[xPred,1.1,0],"#fde68a",0.85));
+      l("prediction time","#fbbf24",0.42,xPred,-1.45,0);
+
+      const auroc=leakyAuroc(leak);
+      const inflation=auroc/FACTS.aurocTemporal;
+      sceneSnap={mode,nMut:0,krasDeg:0,leak:+leak.toFixed(3),drift:0,symNorm:0,
+                 nodeCount:events.length,levels:0,aurocRandom:FACTS.aurocRandom,aurocTemporal:FACTS.aurocTemporal,
+                 domainGap:FACTS.domainGap,leakInflation:+inflation.toFixed(3),hubWeight:0,
+                 reportedAuroc:+auroc.toFixed(3),honestAuroc:FACTS.aurocTemporal};
+
+      return {
+        badge:"Temporal integrity · leak="+leak.toFixed(2)+" · AUROC "+auroc.toFixed(2),
+        formula:"valid feature ⇔ τ(e) &lt; t<sub>pred</sub>   (else leakage)",
+        insight:"Forward-in-time edges (green) are legal. The rose arc is temporal leakage: the antibiotic at t2 becomes a feature to 'predict' the sepsis diagnosis at t3 — but antibiotics ARE the clinical response to suspected sepsis, so the predictor is circular. Including future events inflates the reported AUROC far above the honest "+FACTS.aurocTemporal.toFixed(2)+".",
+        state:"Reported AUROC "+(auroc*100).toFixed(0)+"% vs honest "+(FACTS.aurocTemporal*100).toFixed(0)+"% → "+inflation.toFixed(2)+"× inflation. Leakage inflates metrics by "+FACTS.leakMin.toFixed(0)+"–"+FACTS.leakMax.toFixed(0)+"× on contaminated sets. Drag leakage to 0 for an honest split.",
+        metrics:{nodeCount:""+events.length,domainGap:"—",leakInflation:inflation.toFixed(2)+"×",hubWeight:"—"},
+        focus:{center:[0,0.3,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 3: splits — random split vs temporal split (domain shift)
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="splits"){
+      const aRand=splitAuroc(false,drift);
+      const aTemp=splitAuroc(true,drift);
+      const gap=aRand-aTemp;
+      const bars=[
+        {x:-2.2,lbl:"random",  v:aRand,c:CB ,note:"optimistic"},
+        {x: 2.2,lbl:"temporal",v:aTemp,c:CBR,note:"honest"}
+      ];
+      gEdges.add(line([-5.5,0,0],[5.5,0,0],"#1e3046",0.8));
+      bars.forEach(b=>{
+        const h=0.2+b.v*5.5;
+        const bar=new T.Mesh(new T.BoxGeometry(1.7,h,1.4),
+          new T.MeshStandardMaterial({color:b.c,emissive:new T.Color(b.c).multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+        bar.position.set(b.x,h/2,0);
+        gBars.add(bar);
+        api.pick(bar,{bar:{split:b.lbl,auroc:b.v}});
+        L(b.v.toFixed(2),b.c.getStyle(),1.7,b.x,h+0.5,0);
+        l(b.lbl+" split","#cfe0f0",0.46,b.x,-0.5,0);
+        l(b.note,b.c.getStyle(),0.4,b.x,-0.95,0);
+      });
+      const hR=0.2+aRand*5.5, hT=0.2+aTemp*5.5;
+      gEdges.add(line([-2.2,hR,0.9],[2.2,hR,0.9],C_BLUE3,0.7));
+      gEdges.add(line([2.2,hR,0.9],[2.2,hT,0.9],C_BLUE3,0.9));
+      L("gap "+gap.toFixed(2),"#a78bfa",1.4,0,hR+0.55,0.9);
+      l("treatment-standard drift →","#8a99ad",0.42,0,-1.5,0);
+
+      sceneSnap={mode,nMut:0,krasDeg:0,leak:0,drift:+drift.toFixed(3),symNorm:0,
+                 nodeCount:2,levels:0,aurocRandom:+aRand.toFixed(3),aurocTemporal:+aTemp.toFixed(3),
+                 domainGap:+gap.toFixed(3),leakInflation:0,hubWeight:0};
+
+      return {
+        badge:"Random vs temporal split · gap "+gap.toFixed(2)+" AUROC",
+        formula:"gap = AUROC<sub>random</sub> − AUROC<sub>temporal</sub>",
+        insight:"A random split lets the model see patients from the same era in train and test, flattering it. The temporal split (train 2006–2010, test 2011–2013) holds out a later treatment era — FOLFOX routinely added bevacizumab in 2012 — so it measures real domain shift. The honest "+FACTS.domainGap.toFixed(2)+" gap is the price of generalising forward in time.",
+        state:"Random "+aRand.toFixed(2)+" vs temporal "+aTemp.toFixed(2)+" → "+gap.toFixed(2)+" AUROC gap ("+(gap*100).toFixed(0)+"pp). Report the temporal number, not the random one. Drag drift to widen the era gap.",
+        metrics:{nodeCount:"2",domainGap:gap.toFixed(2),leakInflation:"—",hubWeight:"—"},
+        focus:{center:[0,2.2,0],radius:13}
+      };
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // MODE 4: hub — KRAS G12D hub-node problem + GCN normalization
+    // ════════════════════════════════════════════════════════════════════
+    if(mode==="hub"){
+      const deg=Math.max(2,Math.min(40,krasDeg));
+      const hubPos=[0,0,0];
+      gGraph.add(sphere(hubPos,0.7,CBR,0.7));
+      L("KRAS G12D hub","#d8893b",1.5,0,1.25,0);
+      l("35% of cohort · "+FACTS.krasPatients+" patients","#d8893b",0.42,0,-1.35,0);
+
+      const w=hubSignal(deg,symNorm===1);
+      const R=4.0;
+      for(let i=0;i<deg;i++){
+        const ang=(i/deg)*Math.PI*2;
+        const px=Math.cos(ang)*R, pz=Math.sin(ang)*R;
+        const op=Math.max(0.12,Math.min(0.95,w*(symNorm===1?5.5:14)));
+        gEdges.add(line(hubPos,[px,0,pz],symNorm===1?C_BLUE:C_ROSE,op));
+        const pnode=sphere([px,0,pz],0.16,CB,0.5);
+        gGraph.add(pnode);
+        if(i<3) api.pick(pnode,{node:{kind:"patient",name:"patient sharing KRAS G12D"}});
+      }
+      const colH=0.2+Math.min(1,w*(symNorm===1?6:14))*4.0;
+      const wbar=new T.Mesh(new T.BoxGeometry(0.9,colH,0.9),
+        new T.MeshStandardMaterial({color:symNorm===1?CB:CR,emissive:new T.Color(symNorm===1?C_BLUE:C_ROSE).multiplyScalar(0.6),emissiveIntensity:0.7,roughness:0.4}));
+      wbar.position.set(0,colH/2,R+1.6);
+      gBars.add(wbar);
+      L("w = "+w.toFixed(3),symNorm===1?"#4dd7ff":"#f4708a",1.4,0,colH+0.5,R+1.6);
+      l(symNorm===1?"D^-1/2 A D^-1/2  (1/√d)":"unnormalized  (1/d collapse)",symNorm===1?"#4dd7ff":"#f4708a",0.42,0,-0.5,R+1.6);
+
+      sceneSnap={mode,nMut:0,krasDeg:deg,leak:0,drift:0,symNorm:symNorm,
+                 nodeCount:deg+1,levels:0,aurocRandom:FACTS.aurocRandom,aurocTemporal:FACTS.aurocTemporal,
+                 domainGap:FACTS.domainGap,leakInflation:0,hubWeight:+w.toFixed(4)};
+
+      return {
+        badge:"KRAS hub · degree "+deg+" · "+(symNorm===1?"sym-norm":"raw")+" · w="+w.toFixed(3),
+        formula:symNorm===1? "w = 1/√d   (GCN  D<sup>−½</sup> A D<sup>−½</sup>)" : "w = 1/d   (raw mean over neighbours)",
+        insight:"KRAS G12D appears in 35% of CRC tumours, so it is a hub like TP53 in PPI networks (D02): it receives messages from "+FACTS.krasPatients+" patients and averages their diverse features into mush. Symmetric GCN normalization divides each patient's contribution by √d instead of d, so high-degree hubs are down-weighted gently rather than collapsing to noise. Toggle sym-norm and watch the per-patient weight change.",
+        state:"Hub degree "+deg+": per-patient message weight w = "+w.toFixed(3)+" ("+(symNorm===1?"1/√d, preserved":"1/d, collapsed")+"). GAT attention is the alternative: learn which patients' KRAS mutations matter for the task.",
+        metrics:{nodeCount:""+(deg+1),domainGap:"—",leakInflation:"—",hubWeight:w.toFixed(3)},
+        focus:{center:[0,0.5,1.5],radius:13}
+      };
+    }
+
+    return {badge:"D07",formula:"",insight:"",state:"",metrics:{},focus:{center:[0,0,0],radius:13}};
+  }
+
+  // ── MathLab.create ────────────────────────────────────────────────────────
+  MathLab.create({
+    id:"d07",
+    kind:"clinical-graphs-precision-medicine",
+    eyebrow:"Block D · Biology Graphs",
+    title:"D07 · Clinical graphs, patient graphs, and precision medicine",
+    subtitle:"A TCGA colorectal cohort (n=500) as a temporal heterogeneous patient graph. Four views: multi-level integration, temporal leakage, random-vs-temporal splits, and the KRAS hub problem.",
+    selectedLabel:"Entity",
+    selectedHint:"Click a node, bar, or edge endpoint.",
+    modes:[
+      {value:"multilevel", label:"Multi-level patient graph (genomic+phenotype+drug)"},
+      {value:"temporal",   label:"Temporal leakage vs forward edges"},
+      {value:"splits",     label:"Random vs temporal split (domain shift)"},
+      {value:"hub",        label:"KRAS G12D hub + GCN normalization"}
+    ],
+    params:[
+      {key:"nMut",   label:"# somatic mutations on patient",min:2,max:8,step:1,value:4,
+       fmt:v=>Math.round(v).toString(),modes:["multilevel"]},
+      {key:"leak",   label:"future-info leakage (0=honest 1=leaky)",min:0,max:1,step:0.05,value:0,
+       fmt:v=>v.toFixed(2),modes:["temporal"]},
+      {key:"drift",  label:"treatment-standard drift (era gap)",min:0,max:1,step:0.05,value:0.6,
+       fmt:v=>v.toFixed(2),modes:["splits"]},
+      {key:"krasDeg",label:"KRAS hub degree (patients sharing it)",min:2,max:40,step:1,value:18,
+       fmt:v=>Math.round(v).toString(),modes:["hub"]},
+      {key:"symNorm",label:"GCN sym-norm D^-1/2 A D^-1/2 (0=off 1=on)",min:0,max:1,step:1,value:1,
+       fmt:v=>Math.round(v)===1?"on":"off",modes:["hub"]}
+    ],
+    metrics:[
+      {key:"nodeCount",     label:"Graph nodes",          accent:"cyan"},
+      {key:"domainGap",     label:"Random−temporal gap",  accent:"violet"},
+      {key:"leakInflation", label:"Leakage inflation",    accent:"amber"},
+      {key:"hubWeight",     label:"Hub per-patient w",    accent:"green"}
+    ],
+    layers:[
+      {group:"graph",  label:"Nodes"},
+      {group:"edges",  label:"Edges / arrows"},
+      {group:"bars",   label:"Bars / readouts"},
+      {group:"labels", label:"Labels"}
+    ],
+    primary:{
+      label:"Honest split (leak=0)",
+      on:api=>{api.setParam("leak",0);}
+    },
+    secondary:{
+      label:"Worst leakage (leak=1)",
+      on:api=>{api.setParam("leak",1);}
+    },
+    defaultCam:{theta:-0.5,phi:0.62,r:13},
+    hint:'<span style="color:#4dd7ff">blue</span>=patient/valid · <span style="color:#3b82f6">blue</span>=genomic · <span style="color:#a78bfa">violet</span>=phenotype/gap · <span style="color:#d8893b">brown</span>=drug/hub · <span style="color:#34d399">green</span>=forward-in-time · <span style="color:#f4708a">rose</span>=leakage.',
+    onParam(api){
+      const s=api.state;
+      if(s.mode==="splits") api.frame([0,2.2,0],13);
+      else if(s.mode==="hub") api.frame([0,0.5,1.5],13);
+      else if(s.mode==="multilevel") api.frame([-0.5,0,0],13);
+      else api.frame([0,0.3,0],13);
+    },
+    onSelect(api,d){
+      if(d.node) api.setSelected(d.node.kind+" · "+d.node.name+(d.node.driver?" · DRIVER":"")+(d.node.t!=null?" · t"+d.node.t:"")+(d.node.used===false?" · EXCLUDED":""));
+      if(d.bar)  api.setSelected(d.bar.split+" split · AUROC "+d.bar.auroc.toFixed(2));
+    },
+    build,
+    snapshot(s){
+      const nMut=Math.round(s.nMut), kras=Math.max(2,Math.min(40,Math.round(s.krasDeg)));
+      const leak=Math.max(0,Math.min(1,s.leak)), drift=Math.max(0,Math.min(1,s.drift));
+      const symNorm=Math.round(s.symNorm);
+      const aRand=splitAuroc(false,drift), aTemp=splitAuroc(true,drift);
+      const w=hubSignal(kras,symNorm===1);
+      const auroc=leakyAuroc(leak);
+      return {
+        mode:s.mode,
+        nMut:nMut,
+        krasDeg:kras,
+        leak:+leak.toFixed(3),
+        drift:+drift.toFixed(3),
+        symNorm:symNorm,
+        aurocRandom:+aRand.toFixed(3),
+        aurocTemporal:+aTemp.toFixed(3),
+        domainGap:+(aRand-aTemp).toFixed(3),
+        leakInflation:+(auroc/FACTS.aurocTemporal).toFixed(3),
+        reportedAuroc:+auroc.toFixed(3),
+        hubWeight:+w.toFixed(4),
+        temporalLeakagePresent:leak>0.05
+      };
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 940 664" font-family="Inter, 'Segoe UI', system-ui, sans-serif" role="img" aria-labelledby="t d">
+<title id="t">Figure I01 — The Data object: three tensors that must stay aligned</title>
+<desc id="d">Four-panel captioned figure: The Data object: three tensors that must stay aligned</desc>
+<rect x="0" y="0" width="940" height="664" fill="#070b14"/>
+<circle cx="160" cy="70" r="230" fill="#4dd7ff" opacity="0.05"/>
+<circle cx="800" cy="450" r="250" fill="#a78bfa" opacity="0.05"/>
+<text x="40" y="34" fill="#4dd7ff" font-size="12" font-weight="700" letter-spacing="2.5">FIGURE I01 · BLOCK I · IMPLEMENTATION</text>
+<text x="40" y="62" fill="#e8eef6" font-size="24" font-weight="700">The Data object: three tensors that must stay aligned</text>
+<rect x="40" y="82" width="430" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="82" width="430" height="4" rx="2" fill="#4dd7ff"/>
+<circle cx="64" cy="108" r="13" fill="#0e2740" stroke="#4dd7ff" stroke-width="1"/>
+<text x="64" y="113" fill="#9fe0ff" font-size="14" font-weight="700" text-anchor="middle">a</text>
+<text x="86" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Data object (DREAM4 GRN)</text>
+<text x="56" y="139.5" fill="#4dd7ff" font-size="11.5" font-weight="700">x</text>
+<text x="196" y="139.5" fill="#9fb4cc" font-size="11.5">[10, 100]</text>
+<text x="56" y="159.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edge_index</text>
+<text x="196" y="159.5" fill="#9fb4cc" font-size="11.5">[2, 14]</text>
+<text x="56" y="179.5" fill="#4dd7ff" font-size="11.5" font-weight="700">edge_attr</text>
+<text x="196" y="179.5" fill="#9fb4cc" font-size="11.5">[14, 3]</text>
+<text x="56" y="199.5" fill="#4dd7ff" font-size="11.5" font-weight="700">y</text>
+<text x="196" y="199.5" fill="#9fb4cc" font-size="11.5">[10]  (6 TF)</text>
+<rect x="486" y="82" width="414" height="150" rx="12" fill="#0c1322" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="82" width="414" height="4" rx="2" fill="#fb7185"/>
+<circle cx="510" cy="108" r="13" fill="#3a1420" stroke="#fb7185" stroke-width="1"/>
+<text x="510" y="113" fill="#fda4b0" font-size="14" font-weight="700" text-anchor="middle">b</text>
+<text x="532" y="106" fill="#cfe0f0" font-size="14" font-weight="700">Alignment invariant</text>
+<text x="502" y="139.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">col k of edge_index ↔ row k of edge_attr</text>
+<text x="502" y="159.5" fill="#cfe0f0" font-size="11.5" font-family="Cascadia Code, 'Cascadia Mono', Consolas, monospace">filter both with the SAME mask</text>
+<text x="502" y="187.5" fill="#34d399" font-size="11.5" font-weight="700">edge_index[:,mas…</text>
+<text x="642" y="187.5" fill="#9fb4cc" font-size="11.5">[2, 4]</text>
+<text x="502" y="207.5" fill="#fb7185" font-size="11.5" font-weight="700">edge_attr unfilt…</text>
+<text x="642" y="207.5" fill="#9fb4cc" font-size="11.5">[14, 3]</text>
+<rect x="40" y="244" width="430" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="40" y="244" width="430" height="4" rx="2" fill="#fbbf24"/>
+<circle cx="64" cy="270" r="13" fill="#33270a" stroke="#fbbf24" stroke-width="1"/>
+<text x="64" y="275" fill="#fde68a" font-size="14" font-weight="700" text-anchor="middle">c</text>
+<text x="86" y="268" fill="#cfe0f0" font-size="14" font-weight="700">Confidence filter</text>
+<rect x="56" y="292" width="12" height="64" rx="2" fill="#fbbf24"/>
+<text x="62" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">all</text>
+<rect x="85" y="337.71" width="12" height="18.29" rx="2" fill="#34d399"/>
+<text x="91" y="368" fill="#8a99ad" font-size="9" text-anchor="middle">kept</text>
+<line x1="56" y1="292" x2="114" y2="292" stroke="#fb7185" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="56" y="393.5" fill="#fbbf24" font-size="11.5" font-weight="700">threshold</text>
+<text x="196" y="393.5" fill="#9fb4cc" font-size="11.5">conf ≥ 0.70</text>
+<text x="56" y="413.5" fill="#fbbf24" font-size="11.5" font-weight="700">kept</text>
+<text x="196" y="413.5" fill="#9fb4cc" font-size="11.5">4 / 14</text>
+<text x="56" y="433.5" fill="#fbbf24" font-size="11.5" font-weight="700">dropped</text>
+<text x="196" y="433.5" fill="#9fb4cc" font-size="11.5">10</text>
+<rect x="486" y="244" width="414" height="248" rx="12" fill="#0a1120" stroke="rgba(150,170,200,.18)"/>
+<rect x="486" y="244" width="414" height="4" rx="2" fill="#a78bfa"/>
+<circle cx="510" cy="270" r="13" fill="#241a40" stroke="#a78bfa" stroke-width="1"/>
+<text x="510" y="275" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle">d</text>
+<text x="532" y="268" fill="#cfe0f0" font-size="14" font-weight="700">DataLoader batching</text>
+<text x="502" y="301.5" fill="#a78bfa" font-size="11.5" font-weight="700">graphs</text>
+<text x="642" y="301.5" fill="#9fb4cc" font-size="11.5">3</text>
+<text x="502" y="321.5" fill="#a78bfa" font-size="11.5" font-weight="700">batch.x</text>
+<text x="642" y="321.5" fill="#9fb4cc" font-size="11.5">[30, 100]</text>
+<text x="502" y="341.5" fill="#a78bfa" font-size="11.5" font-weight="700">edge_index</text>
+<text x="642" y="341.5" fill="#9fb4cc" font-size="11.5">[2, 42]</text>
+<text x="502" y="361.5" fill="#a78bfa" font-size="11.5" font-weight="700">max node idx</text>
+<text x="642" y="361.5" fill="#9fb4cc" font-size="11.5">29</text>
+<line x1="40" y1="512" x2="900" y2="512" stroke="rgba(150,170,200,.18)" stroke-width="1"/>
+<text x="40" y="538" fill="#e8eef6" font-size="13" font-weight="700">Figure I01. </text>
+<text x="143.1" y="538" fill="#c7d2dd" font-size="13">The </text>
+<text x="176.55" y="538" fill="#c7d2dd" font-size="13">PyG </text>
+<text x="211.21" y="538" fill="#c7d2dd" font-size="13">Data </text>
+<text x="252.72" y="538" fill="#c7d2dd" font-size="13">object </text>
+<text x="309.14" y="538" fill="#c7d2dd" font-size="13">for </text>
+<text x="341.38" y="538" fill="#c7d2dd" font-size="13">a </text>
+<text x="357.5" y="538" fill="#c7d2dd" font-size="13">DREAM4 </text>
+<text x="419.96" y="538" fill="#c7d2dd" font-size="13">10-gene </text>
+<text x="484.44" y="538" fill="#c7d2dd" font-size="13">GRN </text>
+<text x="520.31" y="538" fill="#c7d2dd" font-size="13">is </text>
+<text x="544.49" y="538" fill="#c7d2dd" font-size="13">three </text>
+<text x="592.85" y="538" fill="#c7d2dd" font-size="13">aligned </text>
+<text x="657.33" y="538" fill="#c7d2dd" font-size="13">tensors. </text>
+<text x="729.87" y="538" fill="#9fe0ff" font-size="13" font-weight="700">(a) </text>
+<text x="763.4" y="538" fill="#c7d2dd" font-size="13">x </text>
+<text x="779.52" y="538" fill="#c7d2dd" font-size="13">[10,100],</text>
+<text x="40" y="559" fill="#c7d2dd" font-size="13">edge_index </text>
+<text x="128.66" y="559" fill="#c7d2dd" font-size="13">[2,14], </text>
+<text x="193.14" y="559" fill="#c7d2dd" font-size="13">edge_attr </text>
+<text x="273.74" y="559" fill="#c7d2dd" font-size="13">[14,3], </text>
+<text x="338.22" y="559" fill="#c7d2dd" font-size="13">y </text>
+<text x="354.34" y="559" fill="#c7d2dd" font-size="13">[10] </text>
+<text x="394.64" y="559" fill="#c7d2dd" font-size="13">with </text>
+<text x="434.94" y="559" fill="#c7d2dd" font-size="13">6 </text>
+<text x="451.06" y="559" fill="#c7d2dd" font-size="13">TFs. </text>
+<text x="493.78" y="559" fill="#fda4b0" font-size="13" font-weight="700">(b) </text>
+<text x="527.31" y="559" fill="#c7d2dd" font-size="13">The </text>
+<text x="560.76" y="559" fill="#c7d2dd" font-size="13">invariant: </text>
+<text x="649.42" y="559" fill="#c7d2dd" font-size="13">column </text>
+<text x="705.84" y="559" fill="#c7d2dd" font-size="13">k </text>
+<text x="721.96" y="559" fill="#c7d2dd" font-size="13">of </text>
+<text x="746.14" y="559" fill="#c7d2dd" font-size="13">edge_index </text>
+<text x="834.8" y="559" fill="#c7d2dd" font-size="13">is</text>
+<text x="40" y="580" fill="#c7d2dd" font-size="13">bound </text>
+<text x="88.36" y="580" fill="#c7d2dd" font-size="13">to </text>
+<text x="112.54" y="580" fill="#c7d2dd" font-size="13">row </text>
+<text x="144.78" y="580" fill="#c7d2dd" font-size="13">k </text>
+<text x="160.9" y="580" fill="#c7d2dd" font-size="13">of </text>
+<text x="185.08" y="580" fill="#c7d2dd" font-size="13">edge_attr; </text>
+<text x="273.74" y="580" fill="#c7d2dd" font-size="13">both </text>
+<text x="314.04" y="580" fill="#c7d2dd" font-size="13">must </text>
+<text x="354.34" y="580" fill="#c7d2dd" font-size="13">be </text>
+<text x="378.52" y="580" fill="#c7d2dd" font-size="13">filtered </text>
+<text x="451.06" y="580" fill="#c7d2dd" font-size="13">by </text>
+<text x="475.24" y="580" fill="#c7d2dd" font-size="13">the </text>
+<text x="507.48" y="580" fill="#c7d2dd" font-size="13">same </text>
+<text x="547.78" y="580" fill="#c7d2dd" font-size="13">mask. </text>
+<text x="596.14" y="580" fill="#fde68a" font-size="13" font-weight="700">(c) </text>
+<text x="629.67" y="580" fill="#c7d2dd" font-size="13">Thresholding </text>
+<text x="735.66" y="580" fill="#c7d2dd" font-size="13">confidence </text>
+<text x="824.32" y="580" fill="#c7d2dd" font-size="13">at </text>
+<text x="848.5" y="580" fill="#c7d2dd" font-size="13">0.70</text>
+<text x="40" y="601" fill="#c7d2dd" font-size="13">keeps </text>
+<text x="88.36" y="601" fill="#c7d2dd" font-size="13">4 </text>
+<text x="104.48" y="601" fill="#c7d2dd" font-size="13">of </text>
+<text x="128.66" y="601" fill="#c7d2dd" font-size="13">14 </text>
+<text x="152.84" y="601" fill="#c7d2dd" font-size="13">edges </text>
+<text x="201.2" y="601" fill="#c7d2dd" font-size="13">— </text>
+<text x="223.77" y="601" fill="#c7d2dd" font-size="13">drop </text>
+<text x="264.07" y="601" fill="#c7d2dd" font-size="13">10. </text>
+<text x="296.31" y="601" fill="#c4b5fd" font-size="13" font-weight="700">(d) </text>
+<text x="329.84" y="601" fill="#c7d2dd" font-size="13">DataLoader </text>
+<text x="420.92" y="601" fill="#c7d2dd" font-size="13">concatenates </text>
+<text x="525.7" y="601" fill="#c7d2dd" font-size="13">3 </text>
+<text x="541.82" y="601" fill="#c7d2dd" font-size="13">graphs, </text>
+<text x="606.3" y="601" fill="#c7d2dd" font-size="13">offsetting </text>
+<text x="694.96" y="601" fill="#c7d2dd" font-size="13">node </text>
+<text x="735.26" y="601" fill="#c7d2dd" font-size="13">indices </text>
+<text x="799.74" y="601" fill="#c7d2dd" font-size="13">by </text>
+<text x="823.92" y="601" fill="#c7d2dd" font-size="13">N=10 </text>
+<text x="865.42" y="601" fill="#c7d2dd" font-size="13">so</text>
+<text x="40" y="622" fill="#c7d2dd" font-size="13">edge_index.max() </text>
+<text x="177.02" y="622" fill="#c7d2dd" font-size="13">= </text>
+<text x="193.14" y="622" fill="#c7d2dd" font-size="13">29.</text>
+</svg>
